@@ -1901,6 +1901,38 @@ HTML_TEMPLATE = """
             window.editingImage = null;
         }
 
+        async function compressImageFile(file, quality = 0.05, maxWidth = 800, maxHeight = 800) {
+            return new Promise((resolve, reject) => {
+                const url = URL.createObjectURL(file);
+                const img = new Image();
+                img.onload = async () => {
+                    let width = img.width;
+                    let height = img.height;
+                    const scale = Math.min(1, maxWidth / width, maxHeight / height);
+                    if (scale < 1) {
+                        width = Math.round(width * scale);
+                        height = Math.round(height * scale);
+                    }
+
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    const supportedType = canvas.toDataURL('image/webp', quality).startsWith('data:image/webp') ? 'image/webp' : 'image/jpeg';
+                    const result = canvas.toDataURL(supportedType, quality);
+                    URL.revokeObjectURL(url);
+                    resolve(result);
+                };
+                img.onerror = (err) => {
+                    URL.revokeObjectURL(url);
+                    reject(err);
+                };
+                img.src = url;
+            });
+        }
+
         async function saveCategory() {
             const id = document.getElementById('cat_id').value;
             const name = document.getElementById('cat_name').value;
@@ -1911,11 +1943,16 @@ HTML_TEMPLATE = """
 
             let imageUrl = window.editingImage || null;
             if (fileInput.files.length > 0) {
-                imageUrl = await new Promise((resolve) => {
-                    const reader = new FileReader();
-                    reader.onload = (e) => resolve(e.target.result);
-                    reader.readAsDataURL(fileInput.files[0]);
-                });
+                try {
+                    imageUrl = await compressImageFile(fileInput.files[0], 0.05, 800, 800);
+                } catch (err) {
+                    console.warn('Image compression failed', err);
+                    imageUrl = await new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onload = (e) => resolve(e.target.result);
+                        reader.readAsDataURL(fileInput.files[0]);
+                    });
+                }
             }
 
             const endpoint = id ? '/api/admin/category/update' : '/api/admin/category/add';
