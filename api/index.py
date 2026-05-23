@@ -1330,8 +1330,6 @@ HTML_TEMPLATE = """
             });
             document.getElementById('cats-container').innerHTML = catsHtml;
         }
-            }
-        }
 
         function selectWinLimit(el, val) {
             document.querySelectorAll('.win-opt').forEach(opt => opt.classList.remove('selected'));
