@@ -50,11 +50,18 @@ def init_db():
                     is_ready BOOLEAN DEFAULT FALSE,
                     PRIMARY KEY (room_code, user_id)
                 );
+                CREATE TABLE IF NOT EXISTS categories (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT UNIQUE,
+                    image_url TEXT
+                );
                 CREATE TABLE IF NOT EXISTS words (
                     id SERIAL PRIMARY KEY,
-                    category TEXT,
+                    category TEXT REFERENCES categories(name) ON DELETE CASCADE,
                     word TEXT
                 );
+                -- تحديث جدول المستخدمين ليشمل إحصائيات
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS total_wins INTEGER DEFAULT 0;
             """)
             conn.commit()
     finally: conn.close()
@@ -130,7 +137,19 @@ async def update_profile(data: dict):
 async def start_game(data: dict):
     players = data.get('players', [])
     category = data.get('category', 'أكلات')
-    words = CATEGORIES.get(category, CATEGORIES["أكلات"])
+
+    conn = get_db_conn()
+    words = []
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT word FROM words WHERE category = %s", (category,))
+                words = [r[0] for r in cur.fetchall()]
+        finally: conn.close()
+
+    if not words:
+        words = CATEGORIES.get(category, CATEGORIES["أكلات"])
+
     correct = random.choice(words)
     roles = ["in"] * len(players)
     spy_idx = random.randint(0, len(players)-1)
@@ -246,6 +265,88 @@ async def get_words():
             return cur.fetchall()
     finally: conn.close()
 
+# --- Admin Dashboard APIs ---
+
+@app.get("/api/admin/players")
+async def admin_get_players():
+    conn = get_db_conn()
+    if not conn: return []
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT user_id, username_key, player_name, total_wins FROM users ORDER BY total_wins DESC")
+            return cur.fetchall()
+    finally: conn.close()
+
+@app.get("/api/categories")
+async def get_categories():
+    conn = get_db_conn()
+    if not conn: return []
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM categories ORDER BY name")
+            cats = cur.fetchall()
+            # إذا الجدول فارغ، نعبئه بالبيانات الافتراضية
+            if not cats:
+                default_cats = ["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"]
+                for c in default_cats:
+                    cur.execute("INSERT INTO categories (name) VALUES (%s) ON CONFLICT DO NOTHING", (c,))
+                conn.commit()
+                cur.execute("SELECT * FROM categories ORDER BY name")
+                cats = cur.fetchall()
+            return cats
+    finally: conn.close()
+
+@app.post("/api/admin/category/add")
+async def add_category(data: dict):
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO categories (name, image_url) VALUES (%s, %s)", (data['name'], data.get('image_url')))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
+@app.post("/api/admin/category/update")
+async def update_category(data: dict):
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE categories SET name = %s, image_url = %s WHERE id = %s", (data['name'], data.get('image_url'), data['id']))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
+@app.post("/api/admin/category/delete")
+async def delete_category(data: dict):
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM categories WHERE id = %s", (data['id'],))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
+@app.post("/api/admin/word/delete")
+async def delete_word(data: dict):
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM words WHERE id = %s", (data['id'],))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
+@app.post("/api/game/report_winner")
+async def report_winner(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET total_wins = total_wins + 1 WHERE player_name = %s", (data['player_name'],))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -277,6 +378,12 @@ HTML_TEMPLATE = """
         .q-badge { background: var(--error); padding: 4px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 15px; display: inline-block; }
         .shuffling { animation: rotate 1s infinite linear; font-size: 50px; margin: 20px; display:inline-block; }
         .score-item { display: flex; justify-content: space-between; background: #0f0c29; padding: 10px 20px; border-radius: 10px; margin: 5px 0; border: 1px solid #3c339e; }
+        .cat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 20px 0; max-height: 300px; overflow-y: auto; padding: 10px; }
+        .cat-card { background: #130f40; border-radius: 15px; padding: 10px; cursor: pointer; border: 2px solid transparent; transition: 0.3s; display: flex; flex-direction: column; align-items: center; }
+        .cat-card img { width: 100%; height: 60px; object-fit: cover; border-radius: 10px; margin-bottom: 5px; }
+        .cat-card.selected { border-color: var(--accent); background: #1b1464; box-shadow: 0 0 15px var(--accent); }
+        .cat-card span { font-size: 12px; font-weight: bold; }
+        .no-img { width: 100%; height: 60px; background: #2f278c; display: flex; align-items: center; justify-content: center; border-radius: 10px; font-size: 24px; }
         @keyframes rotate { from { transform: rotate(0); } to { transform: rotate(360deg); } }
     </style>
 </head>
@@ -487,7 +594,7 @@ HTML_TEMPLATE = """
             showSetup(2);
         }
 
-        function showSetup(step) {
+        async function showSetup(step) {
             if(step === 1) {
                 let savedCount = localStorage.getItem('pCount') || 3;
                 document.getElementById('main-ui').innerHTML = `
@@ -513,13 +620,23 @@ HTML_TEMPLATE = """
                     </div>`;
             } else if(step === 3) {
                 window.pNamesSave = Array.from(document.querySelectorAll('.pn')).map(i => i.value);
+                const res = await fetch('/api/categories');
+                const cats = await res.json();
+
                 let catsHtml = "";
-                const cats = ["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"];
-                cats.forEach(c => catsHtml += `<option value="${c}">${c}</option>`);
+                cats.forEach(c => {
+                    catsHtml += `
+                        <div class="cat-card" onclick="selectCat(this, '${c.name}')">
+                            ${c.image_url ? `<img src="${c.image_url}">` : '<div class="no-img">؟</div>'}
+                            <span>${c.name}</span>
+                        </div>`;
+                });
+
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
-                        <h2>إعدادات الجولة</h2>
-                        <select id="g_cat">${catsHtml}</select>
+                        <h2>اختر نوع السالفة</h2>
+                        <div class="cat-grid">${catsHtml}</div>
+                        <input type="hidden" id="selected_cat">
                         <p>حد الفوز (نقاط):</p>
                         <select id="win_limit_sel">
                             <option value="5">5 نقاط</option>
@@ -527,15 +644,28 @@ HTML_TEMPLATE = """
                             <option value="15">15 نقطة</option>
                             <option value="20">20 نقطة</option>
                         </select>
-                        <button onclick="winLimit = parseInt(win_limit_sel.value); start()">ابدأ اللعب الآن</button>
+                        <button onclick="startGameFinal()">ابدأ اللعب الآن</button>
                     </div>`;
             }
         }
 
-        async function start() {
+        function selectCat(el, name) {
+            document.querySelectorAll('.cat-card').forEach(c => c.classList.remove('selected'));
+            el.classList.add('selected');
+            document.getElementById('selected_cat').value = name;
+        }
+
+        function startGameFinal() {
+            const cat = document.getElementById('selected_cat').value;
+            if(!cat) return alert("اختر فئة أولاً!");
+            winLimit = parseInt(win_limit_sel.value);
+            start(cat);
+        }
+
+        async function start(category) {
             const players = window.pNamesSave;
             if(Object.keys(totalScores).length === 0) players.forEach(p => totalScores[p] = 0);
-            const res = await fetch('/api/game/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({players, category: g_cat.value})});
+            const res = await fetch('/api/game/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({players, category})});
             game = await res.json(); game.players = players; game.curr = 0; game.qIdx = 0; showRole();
         }
 
@@ -635,15 +765,15 @@ HTML_TEMPLATE = """
             const spyGuessedRight = (guessedWord === game.word);
             let roundMsg = "";
 
-            // توزيع النقاط حسب طلب المستخدم
-            // 1. كل لاعب عرف الجاسوس (صوّت عليه صح) ياخذ نقطة
+            // توزيع النقاط حسب القواعد الصحيحة:
+            // 1. اللاعبين (غير الجاسوس) اللي صوّتوا صح على الجاسوس ياخذون نقطة
             game.players.forEach(p => {
-                if(p_votes[p] === spy) {
+                if(p !== spy && p_votes[p] === spy) {
                     totalScores[p] = (totalScores[p] || 0) + 1;
                 }
             });
 
-            // 2. الجاسوس إذا عرف الشغلة (الكلمة) ياخذ نقطة
+            // 2. الجاسوس ياخذ نقطة فقط إذا عرف الكلمة (الشغلة)
             if (spyGuessedRight) {
                 totalScores[spy] = (totalScores[spy] || 0) + 1;
                 roundMsg = "الجاسوس عرف السالفة وأخذ نقطة!";
@@ -654,7 +784,7 @@ HTML_TEMPLATE = """
             if (game.spyCaught) {
                 roundMsg += " وتم كشفه من اللاعبين (نقاط لمن صوّت صح)!";
             } else {
-                roundMsg += " وبالرغم من كذا هرب من التصويت!";
+                roundMsg += " وهرب من التصويت!";
             }
 
             // فحص الفائز النهائي
@@ -705,30 +835,118 @@ HTML_TEMPLATE = """
         function updateSidebar() { if(currentUser) {
             document.getElementById('user-display').innerText = currentUser.player_name;
             if(currentUser.username_key === 'admin') {
-                let btn = document.createElement('button');
-                btn.innerText = "لوحة التحكم (كلمات)";
-                btn.style.background = "var(--accent)";
-                btn.style.color = "black";
-                btn.onclick = showAdminWords;
-                document.getElementById('sidebar').appendChild(btn);
+                if(!document.getElementById('admin-btn')) {
+                    let btn = document.createElement('button');
+                    btn.id = 'admin-btn';
+                    btn.innerText = "🛠️ لوحة الإدارة";
+                    btn.style.background = "var(--accent)";
+                    btn.style.color = "black";
+                    btn.onclick = showAdminDashboard;
+                    document.getElementById('sidebar').appendChild(btn);
+                }
             }
         }}
 
-        async function showAdminWords() {
+        async function showAdminDashboard() {
             toggleSidebar();
-            const res = await fetch('/api/admin/words');
-            const words = await res.json();
-            let h = `<h2>إدارة الكلمات</h2>
-                    <input id="new_cat" placeholder="الفئة">
-                    <input id="new_word" placeholder="الكلمة">
-                    <button onclick="addWord()">إضافة</button><hr>`;
-            words.forEach(w => h += `<div style="display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #333"><span>${w.category}</span> <b>${w.word}</b></div>`);
-            document.getElementById('main-ui').innerHTML = `<div class="card" style="max-height:80vh; overflow-y:auto;">${h}</div>`;
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>لوحة التحكم الإدارية</h2>
+                    <button onclick="adminManagePlayers()">👥 إدارة اللاعبين</button>
+                    <button onclick="adminManageCategories()">📂 إدارة الفئات والكلمات</button>
+                    <button style="background:#636e72" onclick="showMenu()">رجوع</button>
+                </div>`;
         }
 
-        async function addWord() {
-            await fetch('/api/admin/add_word', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({category:new_cat.value, word:new_word.value})});
-            showAdminWords();
+        async function adminManagePlayers() {
+            const res = await fetch('/api/admin/players');
+            const players = await res.json();
+            let h = `<h2>قائمة اللاعبين</h2><div style="max-height:400px; overflow-y:auto;">`;
+            players.forEach(p => {
+                h += `<div class="score-item">
+                    <div style="text-align:right">
+                        <b>${p.player_name}</b> (@${p.username_key})<br>
+                        <small>الفوز الإجمالي: ${p.total_wins || 0}</small>
+                    </div>
+                </div>`;
+            });
+            h += `</div><button onclick="showAdminDashboard()">رجوع</button>`;
+            document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+        }
+
+        async function adminManageCategories() {
+            const res = await fetch('/api/categories');
+            const cats = await res.json();
+            let h = `<h2>الفئات (الأنواع)</h2>
+                <div style="margin-bottom:20px;">
+                    <input id="new_cat_name" placeholder="اسم فئة جديدة (مثلاً: ابطال خارقين)">
+                    <input id="new_cat_img" placeholder="رابط صورة الفئة (اختياري)">
+                    <button onclick="addCategory()">إضافة فئة</button>
+                </div>
+                <div style="max-height:400px; overflow-y:auto; text-align:right;">`;
+            cats.forEach(c => {
+                h += `<div class="score-item" style="flex-direction:column; align-items:flex-start;">
+                    <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+                        <div style="display:flex; align-items:center;">
+                            ${c.image_url ? `<img src="${c.image_url}" style="width:40px; height:40px; border-radius:10px; margin-left:10px;">` : ''}
+                            <b style="font-size:18px;">${c.name}</b>
+                        </div>
+                        <div>
+                            <button style="width:auto; padding:5px 10px; margin:0; background:var(--success)" onclick="manageWords('${c.name}')">الكلمات</button>
+                            <button style="width:auto; padding:5px 10px; margin:0; background:var(--error)" onclick="deleteCategory(${c.id})">حذف</button>
+                        </div>
+                    </div>
+                </div>`;
+            });
+            h += `</div><button onclick="showAdminDashboard()">رجوع</button>`;
+            document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+        }
+
+        async function addCategory() {
+            const name = document.getElementById('new_cat_name').value;
+            const img = document.getElementById('new_cat_img').value;
+            if(!name) return;
+            await fetch('/api/admin/category/add', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, image_url: img})});
+            adminManageCategories();
+        }
+
+        async function deleteCategory(id) {
+            if(!confirm("هل أنت متأكد من حذف هذه الفئة وكل كلماتها؟")) return;
+            await fetch('/api/admin/category/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})});
+            adminManageCategories();
+        }
+
+        async function manageWords(catName) {
+            const res = await fetch('/api/admin/words');
+            const allWords = await res.json();
+            const words = allWords.filter(w => w.category === catName);
+
+            let h = `<h2>كلمات قسم: ${catName}</h2>
+                <div style="margin-bottom:20px;">
+                    <input id="new_word_val" placeholder="إضافة كلمة جديدة">
+                    <button onclick="addWordToCat('${catName}')">إضافة</button>
+                </div>
+                <div style="max-height:400px; overflow-y:auto;">`;
+            words.forEach(w => {
+                h += `<div class="score-item">
+                    <span>${w.word}</span>
+                    <button style="width:auto; padding:5px 10px; margin:0; background:var(--error)" onclick="deleteWord(${w.id}, '${catName}')">حذف</button>
+                </div>`;
+            });
+            h += `</div><button onclick="adminManageCategories()">رجوع للفئات</button>`;
+            document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+        }
+
+        async function addWordToCat(cat) {
+            const word = document.getElementById('new_word_val').value;
+            if(!word) return;
+            await fetch('/api/admin/add_word', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({category: cat, word})});
+            manageWords(cat);
+        }
+
+        async function deleteWord(id, cat) {
+            await fetch('/api/admin/word/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})});
+            manageWords(cat);
         }
         function logout() { localStorage.clear(); location.reload(); }
 
