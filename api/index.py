@@ -1264,11 +1264,11 @@ HTML_TEMPLATE = """
             } else if(step === 3) {
                 const cachedCats = getCachedCategories();
                 if (cachedCats && cachedCats.length) {
-                    renderCategorySelection(cachedCats, true);
+                    await renderCategorySelection(cachedCats, true);
                     prefetchCategoryImages(cachedCats);
                 } else {
                     const defaultCats = DEFAULT_CATEGORIES.map(name => ({ name }));
-                    renderCategorySelection(defaultCats, false, true);
+                    await renderCategorySelection(defaultCats, false, true);
                 }
 
                 try {
@@ -1277,7 +1277,7 @@ HTML_TEMPLATE = """
                         const cats = await res.json();
                         if (cats && cats.length) {
                             saveCachedCategories(cats);
-                            renderCategorySelection(cats);
+                            await renderCategorySelection(cats);
                             prefetchCategoryImages(cats);
                         } else if (!cachedCats || !cachedCats.length) {
                             showCategoryError();
@@ -1306,6 +1306,9 @@ HTML_TEMPLATE = """
             document.getElementById('selected_cat').value = name;
         }
 
+        const THUMB_DB_NAME = 'alsalfa-thumbnails-v1';
+        const THUMB_STORE_NAME = 'thumbnails';
+
         function getCachedCategories() {
             try {
                 return JSON.parse(localStorage.getItem('cachedCategories') || '[]');
@@ -1322,6 +1325,76 @@ HTML_TEMPLATE = """
             }
         }
 
+        function openThumbnailDB() {
+            return new Promise((resolve, reject) => {
+                if (!('indexedDB' in window)) return reject(new Error('IndexedDB not supported'));
+                const request = indexedDB.open(THUMB_DB_NAME, 1);
+                request.onupgradeneeded = () => {
+                    const db = request.result;
+                    if (!db.objectStoreNames.contains(THUMB_STORE_NAME)) {
+                        db.createObjectStore(THUMB_STORE_NAME);
+                    }
+                };
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        function getCachedCategoryThumbnails() {
+            if (!('indexedDB' in window)) {
+                try {
+                    return Promise.resolve(JSON.parse(localStorage.getItem('cachedCategoryThumbnails') || '{}'));
+                } catch (err) {
+                    return Promise.resolve({});
+                }
+            }
+            return openThumbnailDB().then(db => new Promise((resolve, reject) => {
+                const tx = db.transaction(THUMB_STORE_NAME, 'readonly');
+                const store = tx.objectStore(THUMB_STORE_NAME);
+                const request = store.openCursor();
+                const result = {};
+                request.onsuccess = (event) => {
+                    const cursor = event.target.result;
+                    if (cursor) {
+                        result[cursor.key] = cursor.value;
+                        cursor.continue();
+                    } else {
+                        resolve(result);
+                    }
+                };
+                request.onerror = () => reject(request.error);
+            })).catch(() => {
+                try {
+                    return JSON.parse(localStorage.getItem('cachedCategoryThumbnails') || '{}');
+                } catch (err) {
+                    return {};
+                }
+            });
+        }
+
+        function saveCachedCategoryThumbnail(name, dataUrl) {
+            if (!name || !dataUrl) return;
+            if (!('indexedDB' in window)) {
+                try {
+                    const thumbs = JSON.parse(localStorage.getItem('cachedCategoryThumbnails') || '{}');
+                    thumbs[name] = dataUrl;
+                    localStorage.setItem('cachedCategoryThumbnails', JSON.stringify(thumbs));
+                } catch (err) {
+                    console.warn('Unable to save category thumbnail', err);
+                }
+                return;
+            }
+            openThumbnailDB().then(db => {
+                const tx = db.transaction(THUMB_STORE_NAME, 'readwrite');
+                const store = tx.objectStore(THUMB_STORE_NAME);
+                store.put(dataUrl, name);
+                tx.oncomplete = () => db.close();
+                tx.onerror = () => db.close();
+            }).catch(err => {
+                console.warn('Unable to save category thumbnail to IndexedDB', err);
+            });
+        }
+
         function prefetchCategories() {
             fetch('/api/categories')
                 .then(res => {
@@ -1332,6 +1405,7 @@ HTML_TEMPLATE = """
                     if (cats && cats.length) {
                         saveCachedCategories(cats);
                         prefetchCategoryImages(cats);
+                        prefetchCategoryThumbnails(cats);
                     }
                 })
                 .catch(err => console.warn('Prefetch categories failed', err));
@@ -1346,6 +1420,56 @@ HTML_TEMPLATE = """
                 img.onload = () => { cacheImage(cat.image_url); };
                 img.onerror = () => { cacheImage(cat.image_url); };
             });
+        }
+
+        function prefetchCategoryThumbnails(cats) {
+            if (!Array.isArray(cats)) return;
+            getCachedCategoryThumbnails().then(thumbs => {
+                cats.forEach(cat => {
+                    if (!cat.image_url || thumbs[cat.name]) return;
+                    const img = new Image();
+                    img.crossOrigin = 'Anonymous';
+                    img.src = cat.image_url;
+                    img.onload = () => createThumbnailFromImage(img, cat.name);
+                    img.onerror = () => { /* ignore */ };
+                });
+            }).catch(() => {
+                // fallback: still attempt to generate thumbnails without cache check
+                cats.forEach(cat => {
+                    if (!cat.image_url) return;
+                    const img = new Image();
+                    img.crossOrigin = 'Anonymous';
+                    img.src = cat.image_url;
+                    img.onload = () => createThumbnailFromImage(img, cat.name);
+                    img.onerror = () => { /* ignore */ };
+                });
+            });
+        }
+
+        function createThumbnailFromImage(img, name) {
+            if (!img || !img.src || !name) return;
+            if (img.src.startsWith('data:')) return;
+            try {
+                const maxWidth = 400;
+                const maxHeight = 400;
+                let width = img.width;
+                let height = img.height;
+                const scale = Math.min(1, maxWidth / width, maxHeight / height);
+                if (scale < 1) {
+                    width = Math.round(width * scale);
+                    height = Math.round(height * scale);
+                }
+
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                const dataUrl = canvas.toDataURL('image/webp', 0.1);
+                saveCachedCategoryThumbnail(name, dataUrl);
+            } catch (err) {
+                console.warn('Thumbnail creation failed', err);
+            }
         }
 
         function cacheImage(url) {
@@ -1380,16 +1504,20 @@ HTML_TEMPLATE = """
                 </div>`;
         }
 
-        function renderCategorySelection(cats, fromCache = false, isFallback = false) {
-            const catsHtml = cats.map(c => `
+        async function renderCategorySelection(cats, fromCache = false, isFallback = false) {
+            const thumbs = await getCachedCategoryThumbnails();
+            const catsHtml = cats.map(c => {
+                const thumbnail = thumbs[c.name];
+                return `
                 <div class="cat-card" data-cat-name="${c.name}">
                     ${c.image_url ? `
                         <div class="cat-image-wrapper">
                             <div class="image-placeholder">⌛</div>
-                            <img src="${c.image_url}" alt="${c.name}" loading="lazy">
+                            <img src="${thumbnail || c.image_url}" alt="${c.name}" loading="lazy" ${thumbnail ? '' : 'crossorigin="anonymous"'}>
                         </div>` : '<div class="no-img">؟</div>'}
                     <span>${c.name}</span>
-                </div>`).join('');
+                </div>`;
+            }).join('');
 
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
@@ -1435,6 +1563,10 @@ HTML_TEMPLATE = """
                     if (wrapper) {
                         const placeholder = wrapper.querySelector('.image-placeholder');
                         if (placeholder) placeholder.remove();
+                    }
+                    const name = img.closest('.cat-card')?.dataset.catName;
+                    if (name && !thumbs[name] && img.src && !img.src.startsWith('data:')) {
+                        createThumbnailFromImage(img, name);
                     }
                 };
                 img.onerror = () => {
