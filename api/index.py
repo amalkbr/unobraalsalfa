@@ -759,6 +759,7 @@ HTML_TEMPLATE = """
             }
 
             updateSidebar();
+            prefetchCategories();
             if (currentUser && localStorage.getItem('pendingJoin')) {
                 const code = localStorage.getItem('pendingJoin');
                 localStorage.removeItem('pendingJoin');
@@ -1313,6 +1314,18 @@ HTML_TEMPLATE = """
             } catch (err) {
                 console.warn('Unable to save categories cache', err);
             }
+        }
+
+        function prefetchCategories() {
+            fetch('/api/categories')
+                .then(res => {
+                    if (!res.ok) throw new Error('Category fetch failed');
+                    return res.json();
+                })
+                .then(cats => {
+                    if (cats && cats.length) saveCachedCategories(cats);
+                })
+                .catch(err => console.warn('Prefetch categories failed', err));
         }
 
         function showCategoryLoadingSkeleton() {
