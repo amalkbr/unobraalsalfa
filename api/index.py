@@ -670,8 +670,23 @@ HTML_TEMPLATE = """
     </div>
     <div class="flex-center"><div class="container" id="main-ui"></div></div>
     <script>
-        let currentUser = JSON.parse(localStorage.getItem('user')) || null;
+        window.onerror = function(msg, url, lineNo, columnNo, error) {
+            console.error('Error: ' + msg + '\nScript: ' + url + '\nLine: ' + lineNo + '\nColumn: ' + columnNo + '\nStackTrace: ' + (error ? error.stack : 'N/A'));
+            return false;
+        };
+
+        let currentUser = null;
+        try {
+            currentUser = JSON.parse(localStorage.getItem('user'));
+        } catch (e) {
+            console.error("Error parsing user from localStorage", e);
+            localStorage.removeItem('user');
+        }
+
         let game = null;
+        let lastPhase = null;
+        let actionInFlight = false;
+        let pollErrorCount = 0;
         let p_votes = {};
         let totalScores = {}; // نقاط الجلسة
         let winLimit = 1000;
@@ -718,36 +733,41 @@ HTML_TEMPLATE = """
         };
 
         function init() {
-            fetchSettings();
-            // Check for /join/CODE path
-            const pathParts = window.location.pathname.split('/');
-            let joinCode = null;
-            if (pathParts[1] === 'join' && pathParts[2]) {
-                joinCode = pathParts[2];
-                window.history.replaceState({}, document.title, "/");
-            }
+            try {
+                fetchSettings();
+                // Check for /join/CODE path
+                const pathParts = window.location.pathname.split('/');
+                let joinCode = null;
+                if (pathParts[1] === 'join' && pathParts[2]) {
+                    joinCode = pathParts[2];
+                    window.history.replaceState({}, document.title, "/");
+                }
 
-            // Also check for ?join=CODE param
-            const urlParams = new URLSearchParams(window.location.search);
-            if (!joinCode) joinCode = urlParams.get('join');
+                // Also check for ?join=CODE param
+                const urlParams = new URLSearchParams(window.location.search);
+                if (!joinCode) joinCode = urlParams.get('join');
 
-            if (joinCode) {
-                if (!urlParams.get('join')) window.history.replaceState({}, document.title, window.location.pathname);
-                localStorage.setItem('pendingJoin', joinCode);
-            }
+                if (joinCode) {
+                    if (!urlParams.get('join')) window.history.replaceState({}, document.title, window.location.pathname);
+                    localStorage.setItem('pendingJoin', joinCode);
+                }
 
-            if (currentUser) {
-                showMenu(false);
-                history.replaceState({ screen: 'menu' }, "");
-            } else {
+                if (currentUser) {
+                    showMenu(false);
+                    history.replaceState({ screen: 'menu' }, "");
+                } else {
+                    showAuth();
+                }
+
+                updateSidebar();
+                if (currentUser && localStorage.getItem('pendingJoin')) {
+                    const code = localStorage.getItem('pendingJoin');
+                    localStorage.removeItem('pendingJoin');
+                    joinRoomByCode(code);
+                }
+            } catch (e) {
+                console.error("Initialization error:", e);
                 showAuth();
-            }
-
-            updateSidebar();
-            if (currentUser && localStorage.getItem('pendingJoin')) {
-                const code = localStorage.getItem('pendingJoin');
-                localStorage.removeItem('pendingJoin');
-                joinRoomByCode(code);
             }
         }
 
@@ -765,16 +785,45 @@ HTML_TEMPLATE = """
         }
 
         async function login() {
-            const res = await fetch('/api/auth/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u_name.value, password: u_pass.value})});
-            const d = await res.json();
-            if(d.success) { localStorage.setItem('user', JSON.stringify(d.user)); currentUser = d.user; init(); } else alert(d.msg);
+            const u = document.getElementById('u_name').value;
+            const p = document.getElementById('u_pass').value;
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username: u, password: p})
+                });
+                const d = await res.json();
+                if(d.success) {
+                    localStorage.setItem('user', JSON.stringify(d.user));
+                    currentUser = d.user;
+                    init();
+                } else {
+                    alert(d.msg);
+                }
+            } catch (e) {
+                console.error("Login failed", e);
+                alert("حدث خطأ في الاتصال بالسيرفر");
+            }
         }
 
         async function register() {
-            if(!u_name.value || !u_pass.value || !r_nick.value) return alert("املأ كل الحقول!");
-            const res = await fetch('/api/auth/register', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u_name.value, password: u_pass.value, name: r_nick.value})});
-            const d = await res.json();
-            d.success ? alert("تم التسجيل! ادخل الآن") : alert(d.msg);
+            const u = document.getElementById('u_name').value;
+            const p = document.getElementById('u_pass').value;
+            const n = document.getElementById('r_nick').value;
+            if(!u || !p || !n) return alert("املأ كل الحقول!");
+            try {
+                const res = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username: u, password: p, name: n})
+                });
+                const d = await res.json();
+                d.success ? alert("تم التسجيل! ادخل الآن") : alert(d.msg);
+            } catch (e) {
+                console.error("Registration failed", e);
+                alert("حدث خطأ في الاتصال بالسيرفر");
+            }
         }
 
         function showMenu(push = true) {
@@ -874,28 +923,56 @@ HTML_TEMPLATE = """
         }
 
         async function updateRoomState() {
-            if(!currentRoom) return;
-            const res = await fetch(`/api/online/room/${currentRoom}`);
-            const d = await res.json();
-            if(d.success) {
-                window.roomData = d;
-                if(d.room.status === 'playing') {
-                    game = d.room.game_data;
-                    game.isOnline = true;
-                    if(game.current_phase === 'roles') {
-                        showOnlineRole();
-                    } else if(game.current_phase === 'questions') {
-                        showOnlineQuestions();
-                    } else if(game.current_phase === 'voting') {
-                        showOnlineVoting();
-                    } else if(game.current_phase === 'reveal') {
-                        showOnlineReveal();
-                    } else if(game.current_phase === 'result') {
-                        showOnlineResult();
+            if(!currentRoom || actionInFlight) return;
+            try {
+                const res = await fetch(`/api/online/room/${currentRoom}`);
+                if (!res.ok) throw new Error("Room not found");
+                const d = await res.json();
+
+                if(d.success) {
+                    pollErrorCount = 0;
+                    window.roomData = d;
+
+                    if(d.room.status === 'playing') {
+                        const newGame = d.room.game_data;
+                        newGame.isOnline = true;
+
+                        // فقط نقوم بالتحديث إذا تغيرت المرحلة أو البيانات الأساسية
+                        const phaseChanged = (lastPhase !== newGame.current_phase);
+                        const qChanged = (game && game.q_idx !== newGame.q_idx);
+                        const votesChanged = (game && JSON.stringify(game.votes) !== JSON.stringify(newGame.votes));
+
+                        game = newGame;
+
+                        if (phaseChanged || qChanged || votesChanged) {
+                            lastPhase = newGame.current_phase;
+                            renderOnlineGame();
+                        }
+                    } else {
+                        lastPhase = 'waiting';
+                        renderRoom();
                     }
                 } else {
-                    renderRoom();
+                    throw new Error(d.msg || "Room error");
                 }
+            } catch(e) {
+                console.error("Polling error:", e);
+                pollErrorCount++;
+                if (pollErrorCount > 5) {
+                    alert("انقطع الاتصال بالغرفة");
+                    leaveRoom();
+                }
+            }
+        }
+
+        function renderOnlineGame() {
+            if (!game) return;
+            switch(game.current_phase) {
+                case 'roles': showOnlineRole(); break;
+                case 'questions': showOnlineQuestions(); break;
+                case 'voting': showOnlineVoting(); break;
+                case 'reveal': showOnlineReveal(); break;
+                case 'result': showOnlineResult(); break;
             }
         }
 
@@ -1001,20 +1078,36 @@ HTML_TEMPLATE = """
         }
 
         async function onlineAction(event, action, extra = {}) {
-            const btn = (event && event.target && event.target.tagName === 'BUTTON') ? event.target : null;
+            if (actionInFlight) return;
+
+            const btn = (event && event.currentTarget && event.currentTarget.tagName === 'BUTTON') ? event.currentTarget :
+                        ((event && event.target && event.target.tagName === 'BUTTON') ? event.target : null);
+
             let originalText = "";
             if (btn) {
                 originalText = btn.innerHTML;
                 btn.disabled = true;
-                btn.innerHTML = "جاري...";
+                btn.innerHTML = "جاري الحفظ...";
             }
+
+            actionInFlight = true;
             try {
-                await fetch('/api/online/action', {
+                const res = await fetch('/api/online/action', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id, action, ...extra})
                 });
+                const d = await res.json();
+                if (!d.success) alert(d.msg || "حدث خطأ");
+
+                // نعطي مهلة بسيطة للسيرفر ليتحدث قبل استئناف البولينج
+                setTimeout(() => {
+                    actionInFlight = false;
+                    updateRoomState();
+                }, 500);
             } catch (e) {
+                console.error("Action error:", e);
+                actionInFlight = false;
                 if (btn) {
                     btn.disabled = false;
                     btn.innerHTML = originalText;
@@ -1098,8 +1191,12 @@ HTML_TEMPLATE = """
 
         function leaveRoom() {
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'none';
-            clearInterval(pollInterval);
+            if(pollInterval) clearInterval(pollInterval);
+            pollInterval = null;
             currentRoom = null;
+            lastPhase = null;
+            actionInFlight = false;
+            pollErrorCount = 0;
             showMenu();
         }
 
@@ -1120,9 +1217,31 @@ HTML_TEMPLATE = """
         }
 
         async function updateProfile() {
-            const res = await fetch('/api/auth/update', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({old_username: currentUser.username_key, username: edit_u.value, password: edit_p.value, name: edit_n.value})});
-            const d = await res.json();
-            if(d.success) { alert("تم التحديث! سجل دخولك مجدداً"); logout(); } else alert(d.msg);
+            const u = document.getElementById('edit_u').value;
+            const n = document.getElementById('edit_n').value;
+            const p = document.getElementById('edit_p').value;
+            try {
+                const res = await fetch('/api/auth/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        old_username: currentUser.username_key,
+                        username: u,
+                        password: p,
+                        name: n
+                    })
+                });
+                const d = await res.json();
+                if(d.success) {
+                    alert("تم التحديث! سجل دخولك مجدداً");
+                    logout();
+                } else {
+                    alert(d.msg);
+                }
+            } catch (e) {
+                console.error("Profile update failed", e);
+                alert("حدث خطأ أثناء التحديث");
+            }
         }
 
         function changePCount(delta) {
