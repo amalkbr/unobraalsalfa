@@ -1596,6 +1596,15 @@ HTML_TEMPLATE = """
                     <h2>لوحة التحكم الإدارية</h2>
                     <button onclick="adminManagePlayers()">👥 إدارة اللاعبين</button>
                     <button onclick="adminManageCategories()">📂 إدارة الفئات والكلمات</button>
+                    <button onclick="adminManageTimeouts()">⏱️ إعدادات المهل الزمنية</button>
+                    <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
+                </div>`;
+        }
+
+        function adminManageTimeouts() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>⏱️ إعدادات المهل الزمنية</h2>
                     <div style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin:20px 0; text-align:right;">
                         <label>وقت مهلة السؤال (ثانية):</label>
                         <div style="display:flex; gap:10px; margin-top:5px; margin-bottom:15px;">
@@ -1613,7 +1622,7 @@ HTML_TEMPLATE = """
                             <button onclick="saveTimeoutSetting('spy_guess_timeout', 'spy_timeout_setting')" style="width:100px; margin:0; background:var(--success)">حفظ</button>
                         </div>
                     </div>
-                    <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
+                    <button style="background:#636e72" onclick="showAdminDashboard(false)">رجوع</button>
                 </div>`;
         }
 
@@ -1653,20 +1662,8 @@ HTML_TEMPLATE = """
             const res = await fetch('/api/categories');
             const cats = await res.json();
             let h = `<h2>الفئات (الأنواع)</h2>
-                <div id="cat-form" style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin-bottom:20px;">
-                    <h3 id="form-title">إضافة فئة جديدة</h3>
-                    <input id="cat_id" type="hidden">
-                    <input id="cat_name" placeholder="اسم الفئة">
-                    <div style="text-align:right; margin:10px 0;">
-                        <label>صورة الفئة:</label>
-                        <input type="file" id="cat_file" accept="image/*" style="padding:10px; background:#0f0c29;">
-                    </div>
-                    <input id="cat_order" type="number" placeholder="التسلسل (0, 1, 2...)" value="0">
-                    <div style="display:flex; gap:10px;">
-                        <button id="cat-save-btn" onclick="saveCategory()">حفظ الفئة</button>
-                        <button id="cat-cancel-btn" style="background:#636e72; display:none;" onclick="resetCatForm()">إلغاء التعديل</button>
-                    </div>
-                </div>
+                <button style="background:var(--success); margin-bottom:15px;" onclick="showAddCategoryForm()">➕ إضافة فئة جديدة</button>
+                <div id="cat-form-container"></div>
                 <div style="max-height:400px; overflow-y:auto; text-align:right;">`;
             cats.forEach(c => {
                 h += `<div class="score-item" style="flex-direction:column; align-items:flex-start;">
@@ -1690,26 +1687,39 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
         }
 
+        function showAddCategoryForm() {
+            const container = document.getElementById('cat-form-container');
+            container.innerHTML = `
+                <div id="cat-form" style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin-bottom:20px; border: 1px solid var(--success); animation: fadeIn 0.3s;">
+                    <h3 id="form-title">إضافة فئة جديدة</h3>
+                    <input id="cat_id" type="hidden">
+                    <input id="cat_name" placeholder="اسم الفئة">
+                    <div style="text-align:right; margin:10px 0;">
+                        <label>صورة الفئة:</label>
+                        <input type="file" id="cat_file" accept="image/*" style="padding:10px; background:#0f0c29;">
+                    </div>
+                    <input id="cat_order" type="number" placeholder="التسلسل (0, 1, 2...)" value="0">
+                    <div style="display:flex; gap:10px;">
+                        <button id="cat-save-btn" onclick="saveCategory()">حفظ الفئة</button>
+                        <button style="background:#636e72;" onclick="resetCatForm()">إغلاق</button>
+                    </div>
+                </div>`;
+            document.getElementById('cat-form').scrollIntoView({behavior: 'smooth'});
+        }
+
         function editCategory(c) {
+            showAddCategoryForm();
             document.getElementById('form-title').innerText = "تعديل الفئة: " + c.name;
             document.getElementById('cat_id').value = c.id;
             document.getElementById('cat_name').value = c.name;
             document.getElementById('cat_order').value = c.display_order;
             window.oldCatName = c.name;
-            window.editingImage = c.image_url; // حفظ الصورة الحالية
-            document.getElementById('cat-cancel-btn').style.display = "block";
+            window.editingImage = c.image_url;
             document.getElementById('cat-save-btn').innerText = "تحديث الفئة";
-            document.getElementById('cat-form').scrollIntoView();
         }
 
         function resetCatForm() {
-            document.getElementById('form-title').innerText = "إضافة فئة جديدة";
-            document.getElementById('cat_id').value = "";
-            document.getElementById('cat_name').value = "";
-            document.getElementById('cat_order').value = "0";
-            document.getElementById('cat_file').value = "";
-            document.getElementById('cat-cancel-btn').style.display = "none";
-            document.getElementById('cat-save-btn').innerText = "حفظ الفئة";
+            document.getElementById('cat-form-container').innerHTML = "";
             window.oldCatName = null;
             window.editingImage = null;
         }
