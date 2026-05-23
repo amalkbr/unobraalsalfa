@@ -645,10 +645,13 @@ HTML_TEMPLATE = """
         .q-badge { background: var(--error); padding: 4px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 15px; display: inline-block; }
         .shuffling { animation: rotate 1s infinite linear; font-size: 50px; margin: 20px; display:inline-block; }
         .score-item { display: flex; justify-content: space-between; background: #0f0c29; padding: 10px 20px; border-radius: 10px; margin: 5px 0; border: 1px solid #3c339e; }
-        .cat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 20px 0; max-height: 300px; overflow-y: auto; padding: 10px; }
-        .cat-card { background: #130f40; border-radius: 15px; padding: 10px; cursor: pointer; border: 2px solid transparent; transition: 0.3s; display: flex; flex-direction: column; align-items: center; }
-        .cat-card img { width: 100%; height: 60px; object-fit: cover; border-radius: 10px; margin-bottom: 5px; }
+        .cat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 20px 0; max-height: 340px; overflow-y: auto; padding: 10px; }
+        .cat-card { background: #130f40; border-radius: 15px; padding: 10px; cursor: pointer; border: 2px solid transparent; transition: 0.3s; display: flex; flex-direction: column; align-items: center; min-height: 170px; }
+        .cat-card.placeholder { opacity: 0.7; filter: blur(0.5px); }
+        .cat-card img { width: 100%; height: 120px; object-fit: cover; border-radius: 12px; margin-bottom: 8px; opacity: 0; transition: opacity 0.25s ease-in-out; }
         .cat-card.selected { border-color: var(--accent); background: #1b1464; box-shadow: 0 0 15px var(--accent); }
+        .cat-image-wrapper { position: relative; width: 100%; }
+        .image-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #1a1538; border-radius: 12px; color: #9aa0b4; font-size: 18px; }
         .win-opt {
             padding: 10px 20px;
             background: rgba(255,255,255,0.05);
@@ -1255,35 +1258,32 @@ HTML_TEMPLATE = """
                 // تحديث العداد الأولي
                 updateSelectedCount();
             } else if(step === 3) {
-                const res = await fetch('/api/categories');
-                const cats = await res.json();
+                const cachedCats = getCachedCategories();
+                if (cachedCats && cachedCats.length) {
+                    renderCategorySelection(cachedCats, true);
+                } else {
+                    showCategoryLoadingSkeleton();
+                }
 
-                let catsHtml = "";
-                cats.forEach(c => {
-                    catsHtml += `
-                        <div class="cat-card" onclick="selectCat(this, '${c.name}')">
-                            ${c.image_url ? `<img src="${c.image_url}">` : '<div class="no-img">؟</div>'}
-                            <span>${c.name}</span>
-                        </div>`;
-                });
-
-                document.getElementById('main-ui').innerHTML = `
-                    <div class="card">
-                        <h2>اختر نوع السالفة</h2>
-                        <div class="cat-grid">${catsHtml}</div>
-                        <input type="hidden" id="selected_cat">
-
-                        <p style="margin-top:20px; font-weight:bold;">حد الفوز (نقاط):</p>
-                        <div style="display: flex; gap: 10px; justify-content: center; margin-bottom: 20px;">
-                            <div class="win-opt" onclick="selectWinLimit(this, 5)">5</div>
-                            <div class="win-opt selected" onclick="selectWinLimit(this, 10)">10</div>
-                            <div class="win-opt" onclick="selectWinLimit(this, 15)">15</div>
-                            <div class="win-opt" onclick="selectWinLimit(this, 20)">20</div>
-                        </div>
-                        <input type="hidden" id="win_limit_val" value="10">
-
-                        <button class="btn-yellow" onclick="startGameFinal(this)">ابدأ اللعب الآن</button>
-                    </div>`;
+                try {
+                    const res = await fetch('/api/categories');
+                    if (res.ok) {
+                        const cats = await res.json();
+                        if (cats && cats.length) {
+                            saveCachedCategories(cats);
+                            renderCategorySelection(cats);
+                        } else if (!cachedCats || !cachedCats.length) {
+                            showCategoryError();
+                        }
+                    } else if (!cachedCats || !cachedCats.length) {
+                        showCategoryError();
+                    }
+                } catch (err) {
+                    console.error('Category fetch failed', err);
+                    if (!cachedCats || !cachedCats.length) {
+                        showCategoryError();
+                    }
+                }
             }
         }
 
@@ -1297,6 +1297,103 @@ HTML_TEMPLATE = """
             document.querySelectorAll('.cat-card').forEach(c => c.classList.remove('selected'));
             el.classList.add('selected');
             document.getElementById('selected_cat').value = name;
+        }
+
+        function getCachedCategories() {
+            try {
+                return JSON.parse(localStorage.getItem('cachedCategories') || '[]');
+            } catch (err) {
+                return [];
+            }
+        }
+
+        function saveCachedCategories(cats) {
+            try {
+                localStorage.setItem('cachedCategories', JSON.stringify(cats));
+            } catch (err) {
+                console.warn('Unable to save categories cache', err);
+            }
+        }
+
+        function showCategoryLoadingSkeleton() {
+            const placeholders = Array(8).fill(0).map(() => `
+                <div class="cat-card placeholder">
+                    <div class="no-img">⌛</div>
+                    <span>تحميل...</span>
+                </div>`).join('');
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>اختر نوع السالفة</h2>
+                    <div class="cat-grid">${placeholders}</div>
+                    <p style="margin-top:20px; color:#ccc;">يتم تحميل الصور تدريجياً. يمكنك اختيار الفئة فوراً.</p>
+                </div>`;
+        }
+
+        function showCategoryError() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>خطأ في التحميل</h2>
+                    <p>تعذّر تحميل بيانات الفئات. حاول إعادة تحميل الصفحة أو التحقق من اتصال الإنترنت.</p>
+                    <button class="btn-yellow" onclick="navigateTo('setup', {step: 3})">أعد المحاولة</button>
+                </div>`;
+        }
+
+        function renderCategorySelection(cats, fromCache = false) {
+            const catsHtml = cats.map(c => `
+                <div class="cat-card" onclick="selectCat(this, ${JSON.stringify(c.name)})" data-cat=${JSON.stringify(c.name)}>
+                    ${c.image_url ? `
+                        <div class="cat-image-wrapper">
+                            <div class="image-placeholder">⌛</div>
+                            <img data-src="${c.image_url}" alt="${c.name}" loading="lazy">
+                        </div>` : '<div class="no-img">؟</div>'}
+                    <span>${c.name}</span>
+                </div>`).join('');
+
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>اختر نوع السالفة</h2>
+                    <div class="cat-grid">${catsHtml}</div>
+                    <input type="hidden" id="selected_cat">
+
+                    <p style="margin-top:20px; font-weight:bold;">حد الفوز (نقاط):</p>
+                    <div style="display: flex; gap: 10px; justify-content: center; margin-bottom: 20px;">
+                        <div class="win-opt" onclick="selectWinLimit(this, 5)">5</div>
+                        <div class="win-opt selected" onclick="selectWinLimit(this, 10)">10</div>
+                        <div class="win-opt" onclick="selectWinLimit(this, 15)">15</div>
+                        <div class="win-opt" onclick="selectWinLimit(this, 20)">20</div>
+                    </div>
+                    <input type="hidden" id="win_limit_val" value="10">
+
+                    <button class="btn-yellow" onclick="startGameFinal(this)">ابدأ اللعب الآن</button>
+                </div>`;
+
+            loadCategoryImages();
+            if (fromCache) {
+                const notice = document.createElement('div');
+                notice.style = 'margin-top:14px; color:#a9a9a9; font-size:14px;';
+                notice.textContent = 'تم عرض الفئات من الكاش المحلي، ويتم تحميل الصور تدريجياً.';
+                document.querySelector('.card').appendChild(notice);
+            }
+        }
+
+        function loadCategoryImages() {
+            document.querySelectorAll('img[data-src]').forEach(img => {
+                const wrapper = img.closest('.cat-image-wrapper');
+                img.onload = () => {
+                    img.style.opacity = '1';
+                    if (wrapper) {
+                        const placeholder = wrapper.querySelector('.image-placeholder');
+                        if (placeholder) placeholder.remove();
+                    }
+                };
+                img.onerror = () => {
+                    if (wrapper) {
+                        const placeholder = wrapper.querySelector('.image-placeholder');
+                        if (placeholder) placeholder.textContent = '؟';
+                    }
+                };
+                img.src = img.dataset.src;
+            });
         }
 
         function startGameFinal(btn) {
