@@ -668,12 +668,14 @@ HTML_TEMPLATE = """
         <button style="background:var(--error); font-size:14px;" onclick="logout()">تسجيل الخروج</button>
         <button style="background:#636e72; font-size:14px;" onclick="toggleSidebar()">إغلاق</button>
     </div>
-    <div class="flex-center"><div class="container" id="main-ui"></div></div>
+    <div class="flex-center"><div class="container" id="main-ui"><div class="card">جاري التحميل...</div></div></div>
     <script>
         window.onerror = function(msg, url, lineNo, columnNo, error) {
             console.error('Error: ' + msg + '\nScript: ' + url + '\nLine: ' + lineNo + '\nColumn: ' + columnNo + '\nStackTrace: ' + (error ? error.stack : 'N/A'));
             return false;
         };
+
+        console.log("Script starting...");
 
         let currentUser = null;
         try {
@@ -733,8 +735,8 @@ HTML_TEMPLATE = """
         };
 
         function init() {
+            console.log("Initializing app...");
             try {
-                fetchSettings();
                 // Check for /join/CODE path
                 const pathParts = window.location.pathname.split('/');
                 let joinCode = null;
@@ -753,13 +755,20 @@ HTML_TEMPLATE = """
                 }
 
                 if (currentUser) {
+                    console.log("User found, showing menu...");
                     showMenu(false);
                     history.replaceState({ screen: 'menu' }, "");
                 } else {
+                    console.log("No user found, showing auth...");
                     showAuth();
                 }
 
                 updateSidebar();
+
+                // Start background tasks
+                console.log("Starting background tasks...");
+                fetchSettings();
+
                 if (currentUser && localStorage.getItem('pendingJoin')) {
                     const code = localStorage.getItem('pendingJoin');
                     localStorage.removeItem('pendingJoin');
@@ -767,12 +776,20 @@ HTML_TEMPLATE = """
                 }
             } catch (e) {
                 console.error("Initialization error:", e);
-                showAuth();
+                // Fallback attempt to show auth if everything fails
+                try { showAuth(); } catch(e2) { console.error("Total failure", e2); }
             }
         }
 
         function showAuth() {
-            document.getElementById('main-ui').innerHTML = `
+            console.log("Rendering Auth Screen...");
+            const container = document.getElementById('main-ui');
+            if (!container) {
+                console.error("CRITICAL: main-ui container not found!");
+                return;
+            }
+            try {
+                container.innerHTML = `
                 <div class="card">
                     <h1>🕵️ برا السالفة</h1>
                     <input id="u_name" placeholder="اليوزر نيم">
@@ -782,6 +799,9 @@ HTML_TEMPLATE = """
                     <input id="r_nick" placeholder="الاسم المستعار (يظهر للجميع)">
                     <button style="background:#4834d4" onclick="register()">إنشاء حساب</button>
                 </div>`;
+            } catch (e) {
+                console.error("Error setting Auth Screen innerHTML:", e);
+            }
         }
 
         async function login() {
@@ -827,17 +847,27 @@ HTML_TEMPLATE = """
         }
 
         function showMenu(push = true) {
+            console.log("Rendering Menu Screen...");
             if(timerInterval) clearInterval(timerInterval);
             if(push) history.pushState({screen: 'menu'}, "");
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'none';
             game = null;
             totalScores = {}; // ريست للنقاط عند العودة للقائمة
-            document.getElementById('main-ui').innerHTML = `
+            const container = document.getElementById('main-ui');
+            if (!container) {
+                console.error("CRITICAL: main-ui container not found in showMenu!");
+                return;
+            }
+            try {
+                container.innerHTML = `
                 <div class="card">
                     <h1>ابدأ اللعب</h1>
                     <button class="btn-yellow" onclick="navigateTo('online_menu')">🌐 أونلاين</button>
                     <button class="btn-yellow" style="background:linear-gradient(45deg, #e056fd, #be2edd) !important; color:white !important;" onclick="navigateTo('setup', {step: 1})">🏠 أوفلاين (مجلس)</button>
                 </div>`;
+            } catch (e) {
+                console.error("Error setting Menu Screen innerHTML:", e);
+            }
         }
 
         // --- Online Logic ---
