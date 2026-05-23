@@ -48,6 +48,7 @@ def init_db():
                     player_name TEXT,
                     score INTEGER DEFAULT 0,
                     is_ready BOOLEAN DEFAULT FALSE,
+                    join_order SERIAL,
                     PRIMARY KEY (room_code, user_id)
                 );
                 CREATE TABLE IF NOT EXISTS categories (
@@ -62,6 +63,7 @@ def init_db():
                 );
                 -- تحديث جدول المستخدمين ليشمل إحصائيات
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS total_wins INTEGER DEFAULT 0;
+                ALTER TABLE room_players ADD COLUMN IF NOT EXISTS join_order SERIAL;
             """)
             conn.commit()
     finally: conn.close()
@@ -195,7 +197,7 @@ async def join_room(data: dict):
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
             if not cur.fetchone(): return {"success": False, "msg": "الغرفة غير موجودة"}
-            cur.execute("INSERT INTO room_players (room_code, user_id, player_name) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+            cur.execute("INSERT INTO room_players (room_code, user_id, player_name) VALUES (%s, %s, %s) ON CONFLICT (room_code, user_id) DO UPDATE SET player_name = EXCLUDED.player_name",
                         (room_code, data['user_id'], data['player_name']))
             conn.commit()
         return {"success": True}
@@ -212,12 +214,20 @@ async def start_online_game(data: dict):
             room = cur.fetchone()
             if not room or room['host_id'] != data['user_id']: return {"success": False}
 
-            cur.execute("SELECT player_name FROM room_players WHERE room_code = %s", (room_code,))
+            cur.execute("SELECT player_name FROM room_players WHERE room_code = %s ORDER BY join_order ASC", (room_code,))
             players = [p['player_name'] for p in cur.fetchall()]
             if len(players) < 3: return {"success": False, "msg": "أقل عدد لاعبين هو 3"}
 
             category = room['category'] or "أكلات"
-            words = CATEGORIES.get(category, CATEGORIES["أكلات"])
+
+            # محاولة جلب الكلمات من قاعدة البيانات أولاً
+            words = []
+            cur.execute("SELECT word FROM words WHERE category = %s", (category,))
+            words = [r['word'] for r in cur.fetchall()]
+
+            if not words:
+                words = CATEGORIES.get(category, CATEGORIES["أكلات"])
+
             correct = random.choice(words)
             roles = ["in"] * len(players)
             spy_idx = random.randint(0, len(players)-1)
@@ -235,12 +245,154 @@ async def start_online_game(data: dict):
             game_data = {
                 "word": correct, "roles": roles, "guesses": guesses,
                 "q_seq": q_seq, "spy_idx": spy_idx, "players": players,
-                "current_phase": "roles", "curr_player_idx": 0
+                "current_phase": "roles", "q_idx": 0
             }
 
             cur.execute("UPDATE rooms SET status = 'playing', game_data = %s WHERE room_code = %s",
                         (json.dumps(game_data), room_code))
+            # ريست لحالة الجاهزية للاعبين لبدء الجولة
+            cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
             conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
+@app.get("/api/online/room/{room_code}")
+async def get_room(room_code: str):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        room_code = room_code.upper()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
+            room = cur.fetchone()
+            if not room: return {"success": False}
+            cur.execute("SELECT user_id, player_name, is_ready, score FROM room_players WHERE room_code = %s ORDER BY join_order ASC", (room_code,))
+            players = cur.fetchall()
+            return {"success": True, "room": room, "players": players}
+    finally: conn.close()
+
+@app.post("/api/online/action")
+async def online_action(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        room_code = data['room_code'].upper()
+        user_id = data['user_id']
+        action = data['action']
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
+            room = cur.fetchone()
+            if not room: return {"success": False}
+
+            game_data = room['game_data']
+
+            if action == "ready_role":
+                # تسجيل أن اللاعب قرأ دوره
+                cur.execute("UPDATE room_players SET is_ready = TRUE WHERE room_code = %s AND user_id = %s", (room_code, user_id))
+                # إذا الكل جاهز، ننتقل للمرحلة التالية
+                cur.execute("SELECT COUNT(*) FROM room_players WHERE room_code = %s AND is_ready = FALSE", (room_code,))
+                if cur.fetchone()['count'] == 0:
+                    game_data['current_phase'] = 'questions'
+                    game_data['q_idx'] = 0
+                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                conn.commit()
+
+            elif action == "next_question":
+                if room['host_id'] == user_id:
+                    game_data['q_idx'] = game_data.get('q_idx', 0) + 1
+                    if game_data['q_idx'] >= len(game_data['q_seq']):
+                        game_data['current_phase'] = 'voting'
+                        # ريست لـ is_ready لاستخدامها في التصويت
+                        cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
+                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                    conn.commit()
+
+            elif action == "vote":
+                target = data['target']
+                if 'votes' not in game_data: game_data['votes'] = {}
+                # الحصول على اسم اللاعب المصوّت
+                cur.execute("SELECT player_name FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
+                voter_name = cur.fetchone()['player_name']
+                game_data['votes'][voter_name] = target
+
+                cur.execute("UPDATE room_players SET is_ready = TRUE WHERE room_code = %s AND user_id = %s", (room_code, user_id))
+
+                # إذا الكل صوت
+                cur.execute("SELECT COUNT(*) FROM room_players WHERE room_code = %s AND is_ready = FALSE", (room_code,))
+                if cur.fetchone()['count'] == 0:
+                    game_data['current_phase'] = 'reveal'
+
+                cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                conn.commit()
+
+            elif action == "spy_guess":
+                guess = data['guess']
+                game_data['spy_guess'] = guess
+                game_data['current_phase'] = 'result'
+
+                # توزيع النقاط (نفس منطق الـ offline)
+                spy_name = game_data['players'][game_data['spy_idx']]
+                spy_guessed_right = (guess == game_data['word'])
+
+                # حساب الأصوات لمعرفة هل انكشف الجاسوس
+                vote_counts = {}
+                for p in game_data['players']: vote_counts[p] = 0
+                for v in game_data['votes'].values(): vote_counts[v] = vote_counts.get(v, 0) + 1
+
+                max_votes = 0
+                voted_out = ""
+                for p, count in vote_counts.items():
+                    if count > max_votes:
+                        max_votes = count
+                        voted_out = p
+
+                spy_caught = (voted_out == spy_name)
+
+                # تحديث النقاط في قاعدة البيانات
+                for voter_name, target in game_data['votes'].items():
+                    if voter_name != spy_name and target == spy_name:
+                        cur.execute("UPDATE room_players SET score = score + 1 WHERE room_code = %s AND player_name = %s", (room_code, voter_name))
+
+                if spy_guessed_right:
+                    cur.execute("UPDATE room_players SET score = score + 1 WHERE room_code = %s AND player_name = %s", (room_code, spy_name))
+
+                cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                conn.commit()
+
+            elif action == "new_round":
+                if room['host_id'] == user_id:
+                    cur.execute("SELECT player_name FROM room_players WHERE room_code = %s ORDER BY join_order ASC", (room_code,))
+                    players = [p['player_name'] for p in cur.fetchall()]
+                    category = room['category'] or "أكلات"
+
+                    cur.execute("SELECT word FROM words WHERE category = %s", (category,))
+                    words = [r['word'] for r in cur.fetchall()]
+                    if not words: words = CATEGORIES.get(category, CATEGORIES["أكلات"])
+
+                    correct = random.choice(words)
+                    roles = ["in"] * len(players)
+                    spy_idx = random.randint(0, len(players)-1)
+                    roles[spy_idx] = "spy"
+                    other = [w for w in words if w != correct]
+                    guesses = random.sample(other, min(len(other), 6)) + [correct]
+                    random.shuffle(guesses)
+
+                    q_seq = []
+                    n = len(players)
+                    for i in range(0, n, 2):
+                        if i+1 < n: q_seq.append({"f": players[i], "t": players[i+1]})
+                        else: q_seq.append({"f": players[i], "t": players[0]})
+
+                    game_data = {
+                        "word": correct, "roles": roles, "guesses": guesses,
+                        "q_seq": q_seq, "spy_idx": spy_idx, "players": players,
+                        "current_phase": "roles", "q_idx": 0
+                    }
+                    cur.execute("UPDATE rooms SET status = 'playing', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                    cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
+                    conn.commit()
+
         return {"success": True}
     finally: conn.close()
 
@@ -394,6 +546,7 @@ HTML_TEMPLATE = """
         <div style="background:#1b1464; padding:15px; border-radius:15px; margin:20px 0;">
             <p id="user-display" style="margin:0; font-weight:bold;">زائر</p>
         </div>
+        <button style="background:var(--success); font-size:14px;" onclick="showReports()">📊 التقارير والمتصدرين</button>
         <button style="background:var(--primary); font-size:14px;" onclick="showEditProfile()">تعديل بيانات الحساب</button>
         <button style="background:var(--error); font-size:14px;" onclick="logout()">تسجيل الخروج</button>
         <button style="background:#636e72; font-size:14px;" onclick="toggleSidebar()">إغلاق</button>
@@ -505,6 +658,14 @@ HTML_TEMPLATE = """
                     game.isOnline = true;
                     if(game.current_phase === 'roles') {
                         showOnlineRole();
+                    } else if(game.current_phase === 'questions') {
+                        showOnlineQuestions();
+                    } else if(game.current_phase === 'voting') {
+                        showOnlineVoting();
+                    } else if(game.current_phase === 'reveal') {
+                        showOnlineReveal();
+                    } else if(game.current_phase === 'result') {
+                        showOnlineResult();
                     }
                 } else {
                     renderRoom();
@@ -545,6 +706,16 @@ HTML_TEMPLATE = """
         function showOnlineRole() {
             const myIdx = window.roomData.players.findIndex(p => p.user_id === currentUser.user_id);
             if(myIdx === -1) return;
+            const me = window.roomData.players[myIdx];
+
+            if(me.is_ready) {
+                document.getElementById('main-ui').innerHTML = `
+                    <div class="card">
+                        <h3>بانتظار بقية اللاعبين...</h3>
+                        <div class="shuffling">⏳</div>
+                    </div>`;
+                return;
+            }
 
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
@@ -552,7 +723,89 @@ HTML_TEMPLATE = """
                     <div id="box" style="background:#0f0c29; padding:20px; border-radius:20px; margin:20px 0;">
                         <h3>${game.roles[myIdx] === 'spy' ? '🕵️ أنت برة السالفة!' : '🤫 السالفة هي: ' + game.word}</h3>
                     </div>
-                    <p>بانتظار بقية اللاعبين...</p>
+                    <button onclick="onlineAction('ready_role')">فهمت، جاهز</button>
+                </div>`;
+        }
+
+        async function onlineAction(action, extra = {}) {
+            await fetch('/api/online/action', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id, action, ...extra})
+            });
+        }
+
+        function showOnlineQuestions() {
+            const q = game.q_seq[game.q_idx];
+            const isHost = window.roomData.room.host_id == currentUser.user_id;
+
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <span class="q-badge">مرحلة الأسئلة</span>
+                    <div style="font-size:24px; margin:30px 0;">
+                        <b style="color:#a29bfe">${q.f}</b> يسأل <b style="color:#ff7675">${q.t}</b>
+                    </div>
+                    ${isHost ? `<button onclick="onlineAction('next_question')">السؤال التالي</button>` : `<p>بانتظار المضيف...</p>`}
+                </div>`;
+        }
+
+        function showOnlineVoting() {
+            const myIdx = window.roomData.players.findIndex(p => p.user_id === currentUser.user_id);
+            const me = window.roomData.players[myIdx];
+
+            if(me.is_ready) {
+                document.getElementById('main-ui').innerHTML = `<div class="card"><h3>تم إرسال صوتك...</h3><div class="shuffling">⏳</div></div>`;
+                return;
+            }
+
+            let h = `<h3>صوت سراً: منو اللي برة السالفة؟</h3><div id="vbox"></div>`;
+            document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+
+            game.players.forEach(p => {
+                let btn = document.createElement('button'); btn.className = 'vote-item'; btn.innerText = p;
+                btn.onclick = () => onlineAction('vote', {target: p});
+                document.getElementById('vbox').appendChild(btn);
+            });
+        }
+
+        function showOnlineReveal() {
+            const spy = game.players[game.spy_idx];
+            const isSpy = game.roles[window.roomData.players.findIndex(p => p.user_id === currentUser.user_id)] === 'spy';
+
+            if(isSpy) {
+                let h = `<h3>كشفوك! خمن وش السالفة؟</h3>`;
+                game.guesses.forEach(g => h += `<div class="vote-item" onclick="onlineAction('spy_guess', {guess: '${g}'})">${g}</div>`);
+                document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+            } else {
+                document.getElementById('main-ui').innerHTML = `
+                    <div class="card">
+                        <h1>اللي برة السالفة هو:</h1>
+                        <h2 style="color:var(--error); font-size:40px;">${spy}</h2>
+                        <p>بانتظار تخمين الجاسوس...</p>
+                        <div class="shuffling">🌀</div>
+                    </div>`;
+            }
+        }
+
+        function showOnlineResult() {
+            const spy = game.players[game.spy_idx];
+            const spyGuessedRight = (game.spy_guess === game.word);
+            const isHost = window.roomData.room.host_id == currentUser.user_id;
+
+            let scoresList = "";
+            window.roomData.players.sort((a,b) => b.score - a.score).forEach(p => {
+                scoresList += `<div class="score-item"><span>${p.player_name}</span> <b>${p.score}</b></div>`;
+            });
+
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2 style="color:${spyGuessedRight? 'var(--success)':'var(--error)'}">السالفة كانت: ${game.word}</h2>
+                    <p>${spy} ${spyGuessedRight ? 'عرف السالفة!' : 'ما عرف السالفة.'}</p>
+                    <hr style="border:1px solid #3c339e; margin:15px 0;">
+                    <h3>النقاط الحالية:</h3>
+                    <div style="margin-bottom:20px;">${scoresList}</div>
+                    ${isHost ? `<button onclick="startOnlineGame()">جولة جديدة</button>` : `<p>بانتظار المضيف لبدء جولة جديدة...</p>`}
+                    <button style="background:#636e72" onclick="leaveRoom()">خروج من الغرفة</button>
                 </div>`;
         }
 
@@ -666,7 +919,12 @@ HTML_TEMPLATE = """
             const players = window.pNamesSave;
             if(Object.keys(totalScores).length === 0) players.forEach(p => totalScores[p] = 0);
             const res = await fetch('/api/game/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({players, category})});
-            game = await res.json(); game.players = players; game.curr = 0; game.qIdx = 0; showRole();
+            game = await res.json();
+            game.players = players;
+            game.category = category; // حفظ الفئة للجولة القادمة
+            game.curr = 0;
+            game.qIdx = 0;
+            showRole();
         }
 
         function showRole() {
@@ -825,7 +1083,7 @@ HTML_TEMPLATE = """
                         <hr style="border:1px solid #3c339e; margin:15px 0;">
                         <h3>لوحة الصدارة (الهدف: ${winLimit}):</h3>
                         <div style="margin-bottom:20px;">${scoresList}</div>
-                        <button onclick="start()">بدء جولة جديدة</button>
+                        <button onclick="start(game.category)">بدء جولة جديدة</button>
                         <button style="background:#636e72" onclick="showMenu()">إنهاء الجلسة</button>
                     </div>`;
             }
@@ -947,6 +1205,40 @@ HTML_TEMPLATE = """
         async function deleteWord(id, cat) {
             await fetch('/api/admin/word/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})});
             manageWords(cat);
+        }
+
+        async function showReports() {
+            toggleSidebar();
+            const res = await fetch('/api/admin/players');
+            const players = await res.json();
+
+            let h = `<h2>📊 تقارير اللاعبين</h2>
+                <p style="font-size:14px; color:#aaa;">ترتيب اللاعبين المسجلين حسب عدد مرات الفوز</p>
+                <div style="max-height:400px; overflow-y:auto; margin:15px 0;">`;
+
+            players.forEach((p, i) => {
+                let medal = "";
+                if(i === 0 && p.total_wins > 0) medal = "👑 ";
+                h += `<div class="score-item" style="border-left: 4px solid ${i<3 ? 'var(--accent)' : '#333'}">
+                    <div style="text-align:right">
+                        <b>${medal}${p.player_name}</b>
+                        <br><small style="color:#888">@${p.username_key}</small>
+                    </div>
+                    <div style="text-align:left">
+                        <b style="color:var(--success)">${p.total_wins}</b> <small>فوز</small>
+                    </div>
+                </div>`;
+            });
+
+            if(players.length > 0) {
+                const least = players[players.length - 1];
+                h += `<div style="margin-top:20px; padding:10px; background:rgba(235, 77, 75, 0.1); border-radius:15px; font-size:14px;">
+                    🐢 الأقل فوزاً حالياً: <b>${least.player_name}</b>
+                </div>`;
+            }
+
+            h += `</div><button onclick="showMenu()">رجوع</button>`;
+            document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
         }
         function logout() { localStorage.clear(); location.reload(); }
 
