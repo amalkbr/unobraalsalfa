@@ -77,13 +77,24 @@ def init_db():
                     id SERIAL PRIMARY KEY,
                     name TEXT UNIQUE,
                     image_url TEXT,
-                    display_order INTEGER DEFAULT 0
+                    display_order INTEGER DEFAULT 0,
+                    added_by TEXT
                 );
                 CREATE TABLE IF NOT EXISTS words (
                     id SERIAL PRIMARY KEY,
                     category TEXT REFERENCES categories(name) ON DELETE CASCADE,
                     word TEXT
                 );
+                CREATE TABLE IF NOT EXISTS category_suggestions (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    image_url TEXT,
+                    words TEXT NOT NULL,
+                    user_name TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                ALTER TABLE categories ADD COLUMN IF NOT EXISTS added_by TEXT;
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
                     value TEXT
@@ -453,7 +464,73 @@ async def add_word(data: dict):
     if not conn: return {"success": False}
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (data['category'], data['word']))
+            words_raw = data['word']
+            # دعم الإضافة الجماعية عبر تقسيم النص بأسطر
+            words_list = [w.strip() for w in words_raw.split('\n') if w.strip()]
+            for word in words_list:
+                cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (data['category'], word))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
+@app.get("/api/admin/suggestions")
+async def get_suggestions():
+    conn = get_db_conn()
+    if not conn: return []
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM category_suggestions WHERE status = 'pending' ORDER BY created_at DESC")
+            return cur.fetchall()
+    finally: conn.close()
+
+@app.post("/api/admin/suggestion/approve")
+async def approve_suggestion(data: dict):
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            # جلب بيانات الاقتراح
+            cur.execute("SELECT * FROM category_suggestions WHERE id = %s", (data['id'],))
+            sug = cur.fetchone()
+            if not sug: return {"success": False, "error": "Suggestion not found"}
+
+            # إضافة الفئة
+            cur.execute("INSERT INTO categories (name, image_url, added_by) VALUES (%s, %s, %s) ON CONFLICT (name) DO UPDATE SET image_url = EXCLUDED.image_url, added_by = EXCLUDED.added_by RETURNING name",
+                        (sug[1], sug[2], sug[4]))
+            cat_name = cur.fetchone()[0]
+
+            # إضافة الكلمات
+            words_list = [w.strip() for w in sug[3].split('\n') if w.strip()]
+            for word in words_list:
+                cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (cat_name, word))
+
+            # تحديث حالة الاقتراح
+            cur.execute("UPDATE category_suggestions SET status = 'approved' WHERE id = %s", (data['id'],))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
+@app.post("/api/admin/suggestion/reject")
+async def reject_suggestion(data: dict):
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE category_suggestions SET status = 'rejected' WHERE id = %s", (data['id'],))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
+@app.post("/api/user/suggest_category")
+async def suggest_category(data: dict):
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            # التأكد من عدم وجود الفئة مسبقاً
+            cur.execute("SELECT name FROM categories WHERE LOWER(name) = LOWER(%s)", (data['name'].strip(),))
+            if cur.fetchone():
+                return {"success": False, "error": "هذه الفئة موجودة بالفعل في اللعبة!"}
+
+            cur.execute("INSERT INTO category_suggestions (name, image_url, words, user_name) VALUES (%s, %s, %s, %s)",
+                        (data['name'], data.get('image_url'), data['words'], data.get('user_name')))
             conn.commit()
         return {"success": True}
     finally: conn.close()
@@ -1901,6 +1978,18 @@ HTML_TEMPLATE = """
         }
         function updateSidebar() { if(currentUser) {
             document.getElementById('user-display').innerText = currentUser.player_name;
+
+            // إضافة خيار اقتراح فئة لكل المستخدمين
+            if(!document.getElementById('suggest-cat-btn')) {
+                let btn = document.createElement('button');
+                btn.id = 'suggest-cat-btn';
+                btn.innerText = "💡 اقتراح فئة جديدة";
+                btn.style.background = "var(--success)";
+                btn.style.marginTop = "10px";
+                btn.onclick = () => showSuggestCategoryForm();
+                document.getElementById('sidebar').appendChild(btn);
+            }
+
             if(currentUser.username_key === 'admin') {
                 if(!document.getElementById('admin-btn')) {
                     let btn = document.createElement('button');
@@ -1908,11 +1997,32 @@ HTML_TEMPLATE = """
                     btn.innerText = "🛠️ لوحة الإدارة";
                     btn.style.background = "var(--accent)";
                     btn.style.color = "black";
+                    btn.style.position = "relative";
                     btn.onclick = () => navigateTo('admin');
                     document.getElementById('sidebar').appendChild(btn);
+
+                    // فحص وجود اقتراحات جديدة
+                    checkNewSuggestions();
                 }
             }
         }}
+
+        async function checkNewSuggestions() {
+            try {
+                const res = await fetch('/api/admin/suggestions');
+                const sug = await res.json();
+                const btn = document.getElementById('admin-btn');
+                if(btn && sug.length > 0) {
+                    let dot = document.getElementById('admin-notif-dot');
+                    if(!dot) {
+                        dot = document.createElement('span');
+                        dot.id = 'admin-notif-dot';
+                        dot.style = "position:absolute; top:-5px; right:-5px; width:12px; height:12px; background:red; border-radius:50%; border:2px solid white;";
+                        btn.appendChild(dot);
+                    }
+                }
+            } catch(e){}
+        }
 
         async function showAdminDashboard(push = true) {
             if(push) {
@@ -1924,9 +2034,19 @@ HTML_TEMPLATE = """
                     <h2>لوحة التحكم الإدارية</h2>
                     <button onclick="adminManagePlayers()">👥 إدارة اللاعبين</button>
                     <button onclick="adminManageCategories()">📂 إدارة الفئات والكلمات</button>
+                    <button onclick="adminManageSuggestions()" style="position:relative;">📋 اقتراحات الفئات <span id="sug-count-badge" style="display:none; background:red; padding:2px 6px; border-radius:10px; font-size:12px;">0</span></button>
                     <button onclick="adminManageTimeouts()">⏱️ إعدادات المهل الزمنية</button>
                     <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
                 </div>`;
+
+            // تحديث عدد الاقتراحات في اللوحة
+            fetch('/api/admin/suggestions').then(r => r.json()).then(s => {
+                if(s.length > 0) {
+                    const badge = document.getElementById('sug-count-badge');
+                    badge.innerText = s.length;
+                    badge.style.display = "inline";
+                }
+            });
         }
 
         function adminManageTimeouts() {
@@ -2151,9 +2271,10 @@ HTML_TEMPLATE = """
             const words = allWords.filter(w => (w.category || "").trim() === cleanCatName);
 
             let h = `<h2>كلمات قسم: ${catName}</h2>
-                <div id="word-form-container" style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin-bottom:20px;">
+                <div id="word-form-container" style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin-bottom:20px; text-align:right;">
+                    <label>أضف كلمات (كلمة في كل سطر لإضافة جماعية):</label>
                     <input id="word_id" type="hidden">
-                    <input id="new_word_val" placeholder="الكلمة">
+                    <textarea id="new_word_val" placeholder="اكتب الكلمة أو الصق قائمة كلمات هنا..." style="width:100%; height:100px; margin-top:10px; border-radius:10px; padding:10px; background:#0f0c29; color:white; border:1px solid var(--accent);"></textarea>
                     <div style="display:flex; gap:10px; margin-top:10px;">
                         <button id="word-save-btn" onclick="addWordToCat(${JSON.stringify(catName)})">إضافة للقسم</button>
                         <button id="word-cancel-btn" style="background:#636e72; display:none;" onclick="resetWordForm(${JSON.stringify(catName)})">إلغاء</button>
@@ -2232,6 +2353,119 @@ HTML_TEMPLATE = """
         async function deleteWord(id, cat) {
             await fetch('/api/admin/word/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})});
             manageWords(cat);
+        }
+
+        function showSuggestCategoryForm() {
+            toggleSidebar();
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card" style="text-align:right;">
+                    <h2>💡 اقتراح فئة جديدة</h2>
+                    <p style="font-size:14px; color:#aaa;">اقترح فئة جديدة ليتم إضافتها للعبة. بعد مراجعة الإدارة ستظهر للجميع مع اسمك!</p>
+
+                    <label>اسم الفئة:</label>
+                    <input id="sug_cat_name" placeholder="مثلاً: أفلام مارفل">
+
+                    <label>صورة تعبيرية للفئة (اختياري):</label>
+                    <input type="file" id="sug_cat_file" accept="image/*" style="padding:10px; background:#0f0c29; width:100%; border-radius:10px; margin:10px 0;">
+
+                    <label>الكلمات (اكتب كل كلمة في سطر):</label>
+                    <textarea id="sug_cat_words" placeholder="الرجل الحديدي\nسبايدرمان\nثور..." style="width:100%; height:150px; border-radius:10px; padding:10px; background:#0f0c29; color:white; border:1px solid var(--accent); margin-top:5px;"></textarea>
+
+                    <button onclick="submitCategorySuggestion()" style="background:var(--success); margin-top:20px;">إرسال الاقتراح</button>
+                    <button style="background:#636e72" onclick="navigateTo('menu')">إلغاء</button>
+                </div>`;
+        }
+
+        async function submitCategorySuggestion() {
+            const name = document.getElementById('sug_cat_name').value.trim();
+            const words = document.getElementById('sug_cat_words').value.trim();
+            const fileInput = document.getElementById('sug_cat_file');
+
+            if(!name || !words) return alert("الرجاء إدخال اسم الفئة وقائمة الكلمات");
+
+            let imageUrl = null;
+            if (fileInput.files.length > 0) {
+                imageUrl = await compressImageFile(fileInput.files[0], 0.05, 400, 400);
+            }
+
+            showLoading();
+            const res = await fetch('/api/user/suggest_category', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    name, words, image_url: imageUrl,
+                    user_name: currentUser.player_name
+                })
+            });
+            const d = await res.json();
+            if(d.success) {
+                alert("شكراً لك! تم إرسال اقتراحك للإدارة للمراجعة.");
+                navigateTo('menu');
+            } else {
+                alert(d.error || "فشل إرسال الاقتراح");
+                hideLoading();
+            }
+        }
+
+        async function adminManageSuggestions() {
+            showLoading();
+            const res = await fetch('/api/admin/suggestions');
+            const suggestions = await res.json();
+
+            let h = `<h2>📋 اقتراحات الفئات الجديدة</h2>
+                <div style="max-height:500px; overflow-y:auto; text-align:right;">`;
+
+            if(suggestions.length === 0) {
+                h += `<p style="text-align:center; padding:20px;">لا توجد اقتراحات جديدة حالياً.</p>`;
+            }
+
+            suggestions.forEach(s => {
+                h += `<div class="score-item" style="flex-direction:column; align-items:flex-start; gap:10px; padding:15px;">
+                    <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+                        <div style="display:flex; align-items:center;">
+                            ${s.image_url ? `<img src="${s.image_url}" style="width:50px; height:50px; border-radius:10px; margin-left:10px;">` : ''}
+                            <div>
+                                <b style="font-size:18px;">${s.name}</b><br>
+                                <small>بواسطة: ${s.user_name || 'مجهول'}</small>
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:5px;">
+                            <button style="width:auto; padding:5px 10px; background:var(--success)" onclick="approveSuggestion(${s.id})">موافقة</button>
+                            <button style="width:auto; padding:5px 10px; background:var(--error)" onclick="rejectSuggestion(${s.id})">رفض</button>
+                        </div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:10px; width:100%; font-size:13px; color:#ccc; max-height:80px; overflow-y:auto;">
+                        <b>الكلمات:</b><br>${s.words.replace(/\n/g, ' ، ')}
+                    </div>
+                </div>`;
+            });
+
+            h += `</div><button onclick="showAdminDashboard()">رجوع</button>`;
+            document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+        }
+
+        async function approveSuggestion(id) {
+            if(!confirm("عند الموافقة، سيتم إضافة الفئة وكلماتها فوراً للعبة. استمرار؟")) return;
+            showLoading();
+            const res = await fetch('/api/admin/suggestion/approve', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id})
+            });
+            if((await res.json()).success) {
+                alert("تمت الموافقة وإضافة الفئة بنجاح!");
+                adminManageSuggestions();
+            }
+        }
+
+        async function rejectSuggestion(id) {
+            if(!confirm("هل أنت متأكد من رفض هذا الاقتراح؟")) return;
+            await fetch('/api/admin/suggestion/reject', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id})
+            });
+            adminManageSuggestions();
         }
 
         async function showReports(push = true) {
