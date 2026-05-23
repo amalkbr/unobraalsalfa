@@ -835,37 +835,47 @@ HTML_TEMPLATE = """
         };
 
         function init() {
-            fetchSettings();
-            // Check for /join/CODE path
-            const pathParts = window.location.pathname.split('/');
-            let joinCode = null;
-            if (pathParts[1] === 'join' && pathParts[2]) {
-                joinCode = pathParts[2];
-                window.history.replaceState({}, document.title, "/");
-            }
+            try {
+                fetchSettings();
+                // Check for /join/CODE path
+                const pathParts = window.location.pathname.split('/');
+                let joinCode = null;
+                if (pathParts[1] === 'join' && pathParts[2]) {
+                    joinCode = pathParts[2];
+                    window.history.replaceState({}, document.title, "/");
+                }
 
-            // Also check for ?join=CODE param
-            const urlParams = new URLSearchParams(window.location.search);
-            if (!joinCode) joinCode = urlParams.get('join');
+                // Also check for ?join=CODE param
+                const urlParams = new URLSearchParams(window.location.search);
+                if (!joinCode) joinCode = urlParams.get('join');
 
-            if (joinCode) {
-                if (!urlParams.get('join')) window.history.replaceState({}, document.title, window.location.pathname);
-                localStorage.setItem('pendingJoin', joinCode);
-            }
+                if (joinCode) {
+                    if (!urlParams.get('join')) window.history.replaceState({}, document.title, window.location.pathname);
+                    localStorage.setItem('pendingJoin', joinCode);
+                }
 
-            if (currentUser) {
-                showMenu(false);
-                history.replaceState({ screen: 'menu' }, "");
-            } else {
-                showAuth();
-            }
+                if (currentUser) {
+                    showMenu(false);
+                    history.replaceState({ screen: 'menu' }, "");
+                } else {
+                    showAuth();
+                }
 
-            updateSidebar();
-            prefetchCategories();
-            if (currentUser && localStorage.getItem('pendingJoin')) {
-                const code = localStorage.getItem('pendingJoin');
-                localStorage.removeItem('pendingJoin');
-                joinRoomByCode(code);
+                updateSidebar();
+                // Run prefetch in background
+                setTimeout(prefetchCategories, 500);
+
+                if (currentUser && localStorage.getItem('pendingJoin')) {
+                    const code = localStorage.getItem('pendingJoin');
+                    localStorage.removeItem('pendingJoin');
+                    joinRoomByCode(code);
+                }
+            } catch (err) {
+                console.error("Initialization error:", err);
+                // Fallback if something fails
+                if (document.getElementById('main-ui')) {
+                    showAuth();
+                }
             }
         }
 
@@ -1961,36 +1971,46 @@ HTML_TEMPLATE = """
                     </div>
                 </div>`;
         }
-        function updateSidebar() { if(currentUser) {
-            document.getElementById('user-display').innerText = currentUser.player_name;
+        function updateSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const userDisplay = document.getElementById('user-display');
+            if(!sidebar || !userDisplay) return;
 
-            // إضافة خيار اقتراح فئة لكل المستخدمين
-            if(!document.getElementById('suggest-cat-btn')) {
-                let btn = document.createElement('button');
-                btn.id = 'suggest-cat-btn';
-                btn.innerText = "💡 اقتراح فئة جديدة";
-                btn.style.background = "var(--success)";
-                btn.style.marginTop = "10px";
-                btn.onclick = () => showSuggestCategoryForm();
-                document.getElementById('sidebar').appendChild(btn);
-            }
+            if(currentUser) {
+                userDisplay.innerText = currentUser.player_name;
 
-            if(currentUser.username_key === 'admin') {
-                if(!document.getElementById('admin-btn')) {
+                // إضافة خيار اقتراح فئة لكل المستخدمين
+                if(!document.getElementById('suggest-cat-btn')) {
                     let btn = document.createElement('button');
-                    btn.id = 'admin-btn';
-                    btn.innerText = "🛠️ لوحة الإدارة";
-                    btn.style.background = "var(--accent)";
-                    btn.style.color = "black";
-                    btn.style.position = "relative";
-                    btn.onclick = () => navigateTo('admin');
-                    document.getElementById('sidebar').appendChild(btn);
-
-                    // فحص وجود اقتراحات جديدة
-                    checkNewSuggestions();
+                    btn.id = 'suggest-cat-btn';
+                    btn.innerText = "💡 اقتراح فئة جديدة";
+                    btn.style.background = "var(--success)";
+                    btn.style.marginTop = "10px";
+                    btn.style.fontSize = "14px";
+                    btn.onclick = () => showSuggestCategoryForm();
+                    sidebar.appendChild(btn);
                 }
+
+                if(currentUser.username_key === 'admin') {
+                    if(!document.getElementById('admin-btn')) {
+                        let btn = document.createElement('button');
+                        btn.id = 'admin-btn';
+                        btn.innerText = "🛠️ لوحة الإدارة";
+                        btn.style.background = "var(--accent)";
+                        btn.style.color = "black";
+                        btn.style.position = "relative";
+                        btn.style.fontSize = "14px";
+                        btn.onclick = () => navigateTo('admin');
+                        sidebar.appendChild(btn);
+
+                        // فحص وجود اقتراحات جديدة
+                        checkNewSuggestions();
+                    }
+                }
+            } else {
+                userDisplay.innerText = "زائر";
             }
-        }}
+        }
 
         async function checkNewSuggestions() {
             try {
