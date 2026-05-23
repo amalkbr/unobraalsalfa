@@ -1262,6 +1262,7 @@ HTML_TEMPLATE = """
                 const cachedCats = getCachedCategories();
                 if (cachedCats && cachedCats.length) {
                     renderCategorySelection(cachedCats, true);
+                    prefetchCategoryImages(cachedCats);
                 } else {
                     showCategoryLoadingSkeleton();
                 }
@@ -1323,9 +1324,23 @@ HTML_TEMPLATE = """
                     return res.json();
                 })
                 .then(cats => {
-                    if (cats && cats.length) saveCachedCategories(cats);
+                    if (cats && cats.length) {
+                        saveCachedCategories(cats);
+                        prefetchCategoryImages(cats);
+                    }
                 })
                 .catch(err => console.warn('Prefetch categories failed', err));
+        }
+
+        function prefetchCategoryImages(cats) {
+            if (!Array.isArray(cats)) return;
+            cats.forEach(cat => {
+                if (!cat.image_url) return;
+                const img = new Image();
+                img.src = cat.image_url;
+                img.onload = () => { /* loaded */ };
+                img.onerror = () => { /* ignore */ };
+            });
         }
 
         function showCategoryLoadingSkeleton() {
