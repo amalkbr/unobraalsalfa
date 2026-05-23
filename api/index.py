@@ -525,6 +525,16 @@ async def delete_category(data: dict):
         return {"success": True}
     finally: conn.close()
 
+@app.post("/api/admin/word/update")
+async def update_word(data: dict):
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE words SET word = %s WHERE id = %s", (data['word'], data['id']))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
 @app.post("/api/admin/word/delete")
 async def delete_word(data: dict):
     conn = get_db_conn()
@@ -606,7 +616,9 @@ HTML_TEMPLATE = """
         button:disabled { opacity: 0.6; cursor: not-allowed; transform: none !important; }
         .btn-yellow { background: linear-gradient(45deg, #f9ca24, #f1c40f) !important; color: #1b1464 !important; box-shadow: 0 5px 15px rgba(249, 202, 36, 0.4); }
         .btn-yellow:hover { background: linear-gradient(45deg, #f1c40f, #f9ca24) !important; }
-        .sidebar { position: fixed; right: -280px; top: 0; width: 280px; height: 100%; background: #130f40; transition: 0.4s; z-index: 1000; padding: 30px 20px; box-sizing: border-box; border-left: 2px solid var(--primary); }
+        .sidebar { position: fixed; right: -280px; top: 0; width: 280px; height: 100vh; background: #130f40; transition: 0.4s; z-index: 1000; padding: 30px 20px; box-sizing: border-box; border-left: 2px solid var(--primary); overflow-y: auto; display: flex; flex-direction: column; gap: 5px; }
+        .sidebar::-webkit-scrollbar { width: 5px; }
+        .sidebar::-webkit-scrollbar-thumb { background: var(--primary); border-radius: 10px; }
         .sidebar.open { right: 0; }
         .menu-btn { position: fixed; right: 20px; top: 20px; font-size: 28px; cursor: pointer; z-index: 1001; background: var(--card); width: 50px; height: 50px; border-radius: 15px; text-align: center; line-height: 50px; }
         .vote-item { background: #2f278c; padding: 18px; margin: 10px 0; border-radius: 20px; cursor: pointer; transition: 0.2s; font-weight: bold; }
@@ -1766,34 +1778,78 @@ HTML_TEMPLATE = """
         async function manageWords(catName) {
             const res = await fetch('/api/admin/words');
             const allWords = await res.json();
-            const words = allWords.filter(w => w.category === catName);
+            // استخدام trim للمقارنة لضمان عدم وجود مسافات مخفية
+            const cleanCatName = catName.trim();
+            const words = allWords.filter(w => (w.category || "").trim() === cleanCatName);
 
             let h = `<h2>كلمات قسم: ${catName}</h2>
-                <div style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin-bottom:20px;">
-                    <input id="new_word_val" placeholder="إضافة كلمة جديدة">
-                    <button onclick="addWordToCat('${catName.replace(/'/g, "\\'")}')">إضافة للقسم</button>
+                <div id="word-form-container" style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin-bottom:20px;">
+                    <input id="word_id" type="hidden">
+                    <input id="new_word_val" placeholder="الكلمة">
+                    <div style="display:flex; gap:10px; margin-top:10px;">
+                        <button id="word-save-btn" onclick="addWordToCat('${catName.replace(/'/g, "\\'")}')">إضافة للقسم</button>
+                        <button id="word-cancel-btn" style="background:#636e72; display:none;" onclick="resetWordForm('${catName.replace(/'/g, "\\'")}')">إلغاء</button>
+                    </div>
                 </div>
                 <div style="max-height:400px; overflow-y:auto; text-align:right;">`;
 
             if (words.length === 0) {
-                h += `<p style="text-align:center; color:#888;">لا توجد كلمات في هذا القسم حالياً</p>`;
+                h += `<p id="no-words-msg" style="text-align:center; color:#888; padding:20px;">لا توجد كلمات مضافة يدوياً في هذا القسم.<br><small>سيتم استخدام الكلمات الافتراضية أثناء اللعب.</small></p>`;
             }
 
             words.forEach(w => {
-                h += `<div class="score-item">
+                h += `<div class="score-item" id="word-item-${w.id}">
                     <span style="font-size:18px;">${w.word}</span>
-                    <button style="width:auto; padding:5px 10px; margin:0; background:var(--error)" onclick="deleteWord(${w.id}, '${catName.replace(/'/g, "\\'")}')">حذف</button>
+                    <div style="display:flex; gap:5px;">
+                        <button style="width:auto; padding:5px 10px; margin:0; background:var(--primary)" onclick="editWord(${w.id}, '${w.word.replace(/'/g, "\\'")}', '${catName.replace(/'/g, "\\'")}')">تعديل</button>
+                        <button style="width:auto; padding:5px 10px; margin:0; background:var(--error)" onclick="deleteWord(${w.id}, '${catName.replace(/'/g, "\\'")}')">حذف</button>
+                    </div>
                 </div>`;
             });
             h += `</div><button onclick="adminManageCategories()">رجوع للفئات</button>`;
             document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
         }
 
-        async function addWordToCat(cat) {
-            const word = document.getElementById('new_word_val').value;
+        function editWord(id, word, catName) {
+            document.getElementById('word_id').value = id;
+            document.getElementById('new_word_val').value = word;
+            document.getElementById('word-save-btn').innerText = "تحديث الكلمة";
+            document.getElementById('word-save-btn').onclick = () => updateWordInCat(catName);
+            document.getElementById('word-cancel-btn').style.display = "block";
+            document.getElementById('new_word_val').focus();
+        }
+
+        function resetWordForm(catName) {
+            document.getElementById('word_id').value = "";
+            document.getElementById('new_word_val').value = "";
+            document.getElementById('word-save-btn').innerText = "إضافة للقسم";
+            document.getElementById('word-save-btn').onclick = () => addWordToCat(catName);
+            document.getElementById('word-cancel-btn').style.display = "none";
+        }
+
+        async function updateWordInCat(catName) {
+            const id = document.getElementById('word_id').value;
+            const word = document.getElementById('new_word_val').value.trim();
             if(!word) return;
-            await fetch('/api/admin/add_word', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({category: cat, word})});
-            manageWords(cat);
+            const res = await fetch('/api/admin/word/update', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id, word})
+            });
+            const d = await res.json();
+            if(d.success) manageWords(catName);
+        }
+
+        async function addWordToCat(cat) {
+            const word = document.getElementById('new_word_val').value.trim();
+            if(!word) return;
+            const res = await fetch('/api/admin/add_word', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({category: cat, word})
+            });
+            const d = await res.json();
+            if(d.success) manageWords(cat);
         }
 
         async function deleteWord(id, cat) {
