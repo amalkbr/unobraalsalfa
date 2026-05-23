@@ -678,7 +678,7 @@ HTML_TEMPLATE = """
         <div style="background:#1b1464; padding:15px; border-radius:15px; margin:20px 0;">
             <p id="user-display" style="margin:0; font-weight:bold;">زائر</p>
         </div>
-        <button id="install-btn-sidebar" style="background:var(--accent); color:black; font-size:14px;" onclick="installApp()">📲 تثبيت التطبيق</button>
+        <button id="install-btn-sidebar" style="background:var(--accent); color:black; font-size:14px; display:none;" onclick="installApp()">📲 تثبيت التطبيق</button>
         <button style="background:var(--success); font-size:14px;" onclick="showReports()">📊 التقارير والمتصدرين</button>
         <button style="background:var(--primary); font-size:14px;" onclick="showEditProfile()">تعديل بيانات الحساب</button>
         <button style="background:var(--error); font-size:14px;" onclick="logout()">تسجيل الخروج</button>
@@ -1960,7 +1960,19 @@ HTML_TEMPLATE = """
             e.preventDefault();
             deferredPrompt = e;
             showInstallBanner();
+            updateInstallButtonVisibility();
         });
+
+        function updateInstallButtonVisibility() {
+            const btn = document.getElementById('install-btn-sidebar');
+            if (btn) {
+                if (deferredPrompt) {
+                    btn.style.setProperty('display', 'block', 'important');
+                } else {
+                    btn.style.setProperty('display', 'none', 'important');
+                }
+            }
+        }
 
         function showInstallBanner() {
             if (document.getElementById('install-banner')) return;
@@ -1978,18 +1990,16 @@ HTML_TEMPLATE = """
         }
 
         async function installApp() {
-            if (deferredPrompt) {
-                deferredPrompt.prompt();
-                const { outcome } = await deferredPrompt.userChoice;
-                deferredPrompt = null;
-                const banner = document.getElementById('install-banner');
-                if (banner) banner.remove();
-            } else {
-                // تعليمات يدوية لمستخدمي iOS والكروم الذي لا يدعم التلقائي
-                alert("لتثبيت التطبيق على جهازك:\n\n" +
-                      "أندرويد: اضغط على القائمة (⋮) ثم 'إضافة إلى الشاشة الرئيسية'.\n" +
-                      "آيفون (iOS): اضغط على زر المشاركة (📤) ثم 'إضافة إلى الشاشة الرئيسية'.");
+            if (!deferredPrompt) return;
+            deferredPrompt.prompt();
+            const { outcome } = await deferredPrompt.userChoice;
+            if (outcome === 'accepted') {
+                console.log('User accepted install');
             }
+            deferredPrompt = null;
+            updateInstallButtonVisibility();
+            const banner = document.getElementById('install-banner');
+            if (banner) banner.remove();
         }
 
         init();
