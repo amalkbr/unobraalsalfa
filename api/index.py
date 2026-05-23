@@ -777,15 +777,9 @@ HTML_TEMPLATE = """
         @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
-<body onload="init()">
+<body>
     <div class="menu-btn" onclick="toggleSidebar()">☰</div>
     <div class="exit-btn" id="global-exit-btn" onclick="confirmExitGame()">✖</div>
-    <noscript>
-        <div class="card" style="margin:20px;">
-            <h2>يرجى تمكين JavaScript</h2>
-            <p>هذا التطبيق يعتمد على جافاسكربت لعرض المحتوى.</p>
-        </div>
-    </noscript>
     <div id="sidebar" class="sidebar">
         <h2 style="color:var(--accent)">القائمة</h2>
         <div style="background:#1b1464; padding:15px; border-radius:15px; margin:20px 0;">
@@ -798,56 +792,11 @@ HTML_TEMPLATE = """
         <button style="background:var(--error); font-size:14px;" onclick="logout()">تسجيل الخروج</button>
         <button style="background:#636e72; font-size:14px;" onclick="toggleSidebar()">إغلاق</button>
     </div>
-    <div class="flex-center"><div class="container" id="main-ui">
-            <div class="card" style="padding:30px; text-align:right;">
-                <h1>جارٍ التحميل...</h1>
-                <p>إذا كان المحتوى لا يظهر، يُرجى التأكد من تمكين جافاسكربت أو القيام بإعادة تحميل الصفحة.</p>
-            </div>
-        </div></div>
+    <div class="flex-center"><div class="container" id="main-ui"></div></div>
     <script>
-        let currentUser = null;
-        try {
-            currentUser = JSON.parse(localStorage.getItem('user')) || null;
-        } catch (e) {
-            console.warn('Invalid user data in localStorage, clearing it.', e);
-            localStorage.removeItem('user');
-            currentUser = null;
-        }
+        let currentUser = JSON.parse(localStorage.getItem('user')) || null;
         let game = null;
         let p_votes = {};
-
-        const mainUiDebug = document.getElementById('main-ui');
-        if (mainUiDebug) {
-            mainUiDebug.innerHTML = `
-                <div class="card" style="border:2px solid #f9ca24; padding:20px; text-align:right;">
-                    <h2 style="color:#f9ca24; margin:0;">JS يعمل</h2>
-                    <p style="color:#fff; margin:10px 0 0;">إذا ظهرت هذه الرسالة، فقد فشل الكود بعد نقطة التحميل المبكر.</p>
-                </div>`;
-        }
-
-        function displayFatalError(message) {
-            document.body.innerHTML = `
-                <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:#0f0c29; color:#fff; padding:20px; box-sizing:border-box;">
-                    <div style="max-width:700px; text-align:right; border:2px solid #e84118; border-radius:20px; padding:30px; background:rgba(0,0,0,0.7);">
-                        <h1 style="margin-top:0; color:#ff6b6b;">حدث خطأ في التطبيق</h1>
-                        <pre style="white-space:pre-wrap; word-break:break-word; color:#f8f9fa; background:rgba(255,255,255,0.04); padding:15px; border-radius:12px;">${message}</pre>
-                        <p style="margin:0; color:#dcdde1;">يرجى تحديث الصفحة أو مسح كاش المتصفح.</p>
-                    </div>
-                </div>`;
-        }
-
-        window.onerror = function(message, source, lineno, colno, error) {
-            const errMsg = `${message} at ${source}:${lineno}:${colno}` + (error && error.stack ? `\n\n${error.stack}` : '');
-            console.error('Global error caught:', errMsg);
-            displayFatalError(errMsg);
-            return true;
-        };
-
-        window.addEventListener('unhandledrejection', function(event) {
-            const reason = event.reason ? (event.reason.stack || event.reason) : 'Unknown promise rejection';
-            console.error('Unhandled rejection:', reason);
-            displayFatalError(`Unhandled promise rejection:\n${reason}`);
-        });
         let totalScores = {}; // نقاط الجلسة
         let winLimit = 1000;
         let questionTimeout = 30;
@@ -940,19 +889,14 @@ HTML_TEMPLATE = """
         }
 
         async function login() {
-            const username = document.getElementById('u_name').value.trim();
-            const password = document.getElementById('u_pass').value;
-            const res = await fetch('/api/auth/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username, password})});
+            const res = await fetch('/api/auth/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u_name.value, password: u_pass.value})});
             const d = await res.json();
             if(d.success) { localStorage.setItem('user', JSON.stringify(d.user)); currentUser = d.user; init(); } else alert(d.msg);
         }
 
         async function register() {
-            const username = document.getElementById('u_name').value.trim();
-            const password = document.getElementById('u_pass').value;
-            const name = document.getElementById('r_nick').value.trim();
-            if(!username || !password || !name) return alert("املأ كل الحقول!");
-            const res = await fetch('/api/auth/register', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username, password, name})});
+            if(!u_name.value || !u_pass.value || !r_nick.value) return alert("املأ كل الحقول!");
+            const res = await fetch('/api/auth/register', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u_name.value, password: u_pass.value, name: r_nick.value})});
             const d = await res.json();
             d.success ? alert("تم التسجيل! ادخل الآن") : alert(d.msg);
         }
@@ -2623,10 +2567,6 @@ HTML_TEMPLATE = """
         // PWA Registration and Install Prompt
         let deferredPrompt;
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.getRegistrations().then(registrations => {
-                registrations.forEach(reg => reg.unregister().catch(() => null));
-            }).catch(() => null);
-
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('/sw.js')
                     .then(reg => console.log('SW Registered', reg))
@@ -2680,7 +2620,7 @@ HTML_TEMPLATE = """
             if (banner) banner.remove();
         }
 
-        window.addEventListener('load', init);
+        init();
     </script>
 </body>
 </html>

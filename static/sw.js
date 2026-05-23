@@ -1,6 +1,7 @@
 const CACHE_NAME = 'alsalfa-v1';
 const DYNAMIC_CACHE = 'alsalfa-dynamic-v1';
 const ASSETS = [
+  '/',
   '/static/manifest.json',
   'https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap',
   'https://cdn-icons-png.flaticon.com/512/8030/8030198.png'
@@ -28,13 +29,6 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
-  if (request.mode === 'navigate' || url.pathname === '/') {
-    event.respondWith(
-      fetch(request).catch(() => caches.match(request))
-    );
-    return;
-  }
-
   const shouldCacheImages = request.destination === 'image';
   const shouldCacheApi = url.origin === self.location.origin && (
     url.pathname === '/api/categories' ||
