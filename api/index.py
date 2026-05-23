@@ -667,10 +667,20 @@ HTML_TEMPLATE = """
             border-color: white;
         }
         .cat-card span { font-size: 12px; font-weight: bold; }
+        .loading-spinner {
+            width: 48px;
+            height: 48px;
+            border: 5px solid rgba(255,255,255,0.15);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
         .exit-btn { position: fixed; left: 20px; top: 20px; font-size: 20px; cursor: pointer; z-index: 1001; background: var(--error); width: 50px; height: 50px; border-radius: 15px; text-align: center; line-height: 50px; color: white; display: none; box-shadow: 0 4px 10px rgba(0,0,0,0.3); transition: 0.3s; }
         .exit-btn:hover { transform: scale(1.1); }
         .no-img { width: 100%; height: 60px; background: #2f278c; display: flex; align-items: center; justify-content: center; border-radius: 10px; font-size: 24px; }
         @keyframes rotate { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -1880,6 +1890,15 @@ HTML_TEMPLATE = """
             updateSidebar();
             updateInstallButtonVisibility();
         }
+        function showLoading(message = "جارٍ التحميل...") {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>${message}</h2>
+                    <div style="margin: 20px 0; text-align:center;">
+                        <div class="loading-spinner"></div>
+                    </div>
+                </div>`;
+        }
         function updateSidebar() { if(currentUser) {
             document.getElementById('user-display').innerText = currentUser.player_name;
             if(currentUser.username_key === 'admin') {
@@ -1952,10 +1971,10 @@ HTML_TEMPLATE = """
         }
 
         async function adminManagePlayers() {
+            showLoading();
             const res = await fetch('/api/admin/players');
             const players = await res.json();
-            let h = `<h2>قائمة اللاعبين</h2><div style="max-height:400px; overflow-y:auto;">`;
-            players.forEach(p => {
+            let h = `<h2>قائمة اللاعبين</h2><div style="max-height:400px; overflow-y:auto;">`;            players.forEach(p => {
                 h += `<div class="score-item">
                     <div style="text-align:right">
                         <b>${p.player_name}</b> (@${p.username_key})<br>
@@ -1968,32 +1987,45 @@ HTML_TEMPLATE = """
         }
 
         async function adminManageCategories() {
-            const res = await fetch('/api/categories');
-            const cats = await res.json();
-            let h = `<h2>الفئات (الأنواع)</h2>
-                <button style="background:var(--success); margin-bottom:15px;" onclick="showAddCategoryForm()">➕ إضافة فئة جديدة</button>
-                <div id="cat-form-container"></div>
-                <div style="max-height:400px; overflow-y:auto; text-align:right;">`;
-            cats.forEach(c => {
-                h += `<div class="score-item" style="flex-direction:column; align-items:flex-start;">
-                    <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
-                        <div style="display:flex; align-items:center;">
-                            ${c.image_url ? `<img src="${c.image_url}" style="width:40px; height:40px; border-radius:10px; margin-left:10px; object-fit:cover;">` : ''}
-                            <div>
-                                <b style="font-size:18px;">${c.name}</b>
-                                <div style="font-size:12px; color:var(--accent)">الترتيب: ${c.display_order}</div>
+            try {
+                showLoading();
+                const res = await fetch('/api/categories');
+                const cats = await res.json();
+                let h = `<h2>الفئات (الأنواع)</h2>
+                    <button style="background:var(--success); margin-bottom:15px;" onclick="showAddCategoryForm()">➕ إضافة فئة جديدة</button>
+                    <div id="cat-form-container"></div>
+                    <div style="max-height:400px; overflow-y:auto; text-align:right;">`;
+                cats.forEach(c => {
+                    const catJson = JSON.stringify(c).replace(/"/g, '&quot;');
+                    const catNameJson = JSON.stringify(c.name);
+                    h += `<div class="score-item" style="flex-direction:column; align-items:flex-start;">
+                        <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+                            <div style="display:flex; align-items:center;">
+                                ${c.image_url ? `<img src="${c.image_url}" style="width:40px; height:40px; border-radius:10px; margin-left:10px; object-fit:cover;">` : ''}
+                                <div>
+                                    <b style="font-size:18px;">${c.name}</b>
+                                    <div style="font-size:12px; color:var(--accent)">الترتيب: ${c.display_order}</div>
+                                </div>
+                            </div>
+                            <div style="display:flex; gap:5px;">
+                                <button style="width:auto; padding:5px 10px; margin:0; background:var(--success)" onclick="manageWords(${catNameJson})">الكلمات</button>
+                                <button style="width:auto; padding:5px 10px; margin:0; background:var(--primary)" onclick="editCategory(${catJson})">تعديل</button>
+                                <button style="width:auto; padding:5px 10px; margin:0; background:var(--error)" onclick="deleteCategory(${c.id})">حذف</button>
                             </div>
                         </div>
-                        <div style="display:flex; gap:5px;">
-                            <button style="width:auto; padding:5px 10px; margin:0; background:var(--success)" onclick="manageWords('${c.name.replace(/'/g, "\\'")}')">الكلمات</button>
-                            <button style="width:auto; padding:5px 10px; margin:0; background:var(--primary)" onclick="editCategory(${JSON.stringify(c).replace(/"/g, '&quot;')})">تعديل</button>
-                            <button style="width:auto; padding:5px 10px; margin:0; background:var(--error)" onclick="deleteCategory(${c.id})">حذف</button>
-                        </div>
-                    </div>
-                </div>`;
-            });
-            h += `</div><button onclick="showAdminDashboard()">رجوع</button>`;
-            document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+                    </div>`;
+                });
+                h += `</div><button onclick="showAdminDashboard()">رجوع</button>`;
+                document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+            } catch (err) {
+                console.error('Failed to load admin categories:', err);
+                document.getElementById('main-ui').innerHTML = `
+                    <div class="card">
+                        <h2>حدث خطأ أثناء تحميل الفئات</h2>
+                        <p>${err.message || err}</p>
+                        <button onclick="showAdminDashboard()">رجوع</button>
+                    </div>`;
+            }
         }
 
         function showAddCategoryForm() {
@@ -2110,9 +2142,11 @@ HTML_TEMPLATE = """
         }
 
         async function manageWords(catName) {
-            const res = await fetch('/api/admin/words');
-            const allWords = await res.json();
-            // استخدام trim للمقارنة لضمان عدم وجود مسافات مخفية
+            try {
+                showLoading();
+                const res = await fetch('/api/admin/words');
+                const allWords = await res.json();
+            // استخدام trim للمقارنة لضمان عدم وجود مساحات مخفية
             const cleanCatName = catName.trim();
             const words = allWords.filter(w => (w.category || "").trim() === cleanCatName);
 
@@ -2121,8 +2155,8 @@ HTML_TEMPLATE = """
                     <input id="word_id" type="hidden">
                     <input id="new_word_val" placeholder="الكلمة">
                     <div style="display:flex; gap:10px; margin-top:10px;">
-                        <button id="word-save-btn" onclick="addWordToCat('${catName.replace(/'/g, "\\'")}')">إضافة للقسم</button>
-                        <button id="word-cancel-btn" style="background:#636e72; display:none;" onclick="resetWordForm('${catName.replace(/'/g, "\\'")}')">إلغاء</button>
+                        <button id="word-save-btn" onclick="addWordToCat(${JSON.stringify(catName)})">إضافة للقسم</button>
+                        <button id="word-cancel-btn" style="background:#636e72; display:none;" onclick="resetWordForm(${JSON.stringify(catName)})">إلغاء</button>
                     </div>
                 </div>
                 <div style="max-height:400px; overflow-y:auto; text-align:right;">`;
@@ -2135,13 +2169,22 @@ HTML_TEMPLATE = """
                 h += `<div class="score-item" id="word-item-${w.id}">
                     <span style="font-size:18px;">${w.word}</span>
                     <div style="display:flex; gap:5px;">
-                        <button style="width:auto; padding:5px 10px; margin:0; background:var(--primary)" onclick="editWord(${w.id}, '${w.word.replace(/'/g, "\\'")}', '${catName.replace(/'/g, "\\'")}')">تعديل</button>
-                        <button style="width:auto; padding:5px 10px; margin:0; background:var(--error)" onclick="deleteWord(${w.id}, '${catName.replace(/'/g, "\\'")}')">حذف</button>
+                        <button style="width:auto; padding:5px 10px; margin:0; background:var(--primary)" onclick="editWord(${w.id}, ${JSON.stringify(w.word)}, ${JSON.stringify(catName)})">تعديل</button>
+                        <button style="width:auto; padding:5px 10px; margin:0; background:var(--error)" onclick="deleteWord(${w.id}, ${JSON.stringify(catName)})">حذف</button>
                     </div>
                 </div>`;
             });
             h += `</div><button onclick="adminManageCategories()">رجوع للفئات</button>`;
             document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+            } catch (err) {
+                console.error('Failed to load words for category:', err);
+                document.getElementById('main-ui').innerHTML = `
+                    <div class="card">
+                        <h2>حدث خطأ أثناء تحميل الكلمات</h2>
+                        <p>${err.message || err}</p>
+                        <button onclick="adminManageCategories()">رجوع للفئات</button>
+                    </div>`;
+            }
         }
 
         function editWord(id, word, catName) {
