@@ -960,7 +960,7 @@ HTML_TEMPLATE = """
 
             if(!currentUser.saved_players) currentUser.saved_players = [];
 
-            // البحث عن اللاعب إذا كان موجوداً مسبقاً في القائمة المخزنة
+            // البحث عن اللاعب إذا كان موجوداً مسبقاً
             const existingIdx = currentUser.saved_players.findIndex(p => {
                 const pName = (typeof p === 'string' ? p : p.name).trim();
                 return pName.toLowerCase() === name.toLowerCase();
@@ -971,16 +971,11 @@ HTML_TEMPLATE = """
                 for(let item of items) {
                     const spanName = item.querySelector('span').innerText.trim();
                     if(spanName.toLowerCase() === name.toLowerCase()) {
-                        // تمرير القائمة للاعب الموجود
                         item.scrollIntoView({behavior: 'smooth', block: 'center'});
-
-                        // تمييز اللاعب بصرياً
                         item.style.transition = "all 0.3s";
                         item.style.background = "rgba(162, 155, 254, 0.5)";
                         item.style.transform = "scale(1.05)";
-                        item.style.borderRadius = "10px";
 
-                        // إذا لم يكن مختاراً، قم باختياره تلقائياً
                         const icon = item.querySelector('.status-icon');
                         if(icon.innerText === '⬜') {
                             togglePSelection(item, spanName);
@@ -991,26 +986,23 @@ HTML_TEMPLATE = """
                             item.style.transform = "";
                         }, 2000);
 
-                        nameInp.value = ""; // مسح الحقل
+                        nameInp.value = "";
                         return;
                     }
                 }
             }
 
-            // إذا كان لاعباً جديداً تماماً
+            // إضافة لاعب جديد
             currentUser.saved_players.push({name: name, wins: 0});
-            const res = await fetch('/api/user/save_players', {
+            localStorage.setItem('user', JSON.stringify(currentUser));
+            showSetup(2); // تحديث الواجهة فوراً
+
+            // حفظ في الخلفية
+            fetch('/api/user/save_players', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({user_id: currentUser.user_id, players: currentUser.saved_players})
             });
-            const d = await res.json();
-            if(d.success) {
-                localStorage.setItem('user', JSON.stringify(currentUser));
-                showSetup(2);
-            } else {
-                alert("فشل حفظ اللاعب في السيرفر");
-            }
         }
 
         function confirmPlayersAndNext() {
@@ -1082,7 +1074,6 @@ HTML_TEMPLATE = """
                 // تحديث العداد الأولي
                 updateSelectedCount();
             } else if(step === 3) {
-                window.pNamesSave = Array.from(document.querySelectorAll('.pn')).map(i => i.value);
                 const res = await fetch('/api/categories');
                 const cats = await res.json();
 
