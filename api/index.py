@@ -651,7 +651,7 @@ HTML_TEMPLATE = """
         .cat-card img { width: 100%; height: 120px; object-fit: cover; border-radius: 12px; margin-bottom: 8px; opacity: 0; transition: opacity 0.25s ease-in-out; }
         .cat-card.selected { border-color: var(--accent); background: #1b1464; box-shadow: 0 0 15px var(--accent); }
         .cat-image-wrapper { position: relative; width: 100%; }
-        .image-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #1a1538; border-radius: 12px; color: #9aa0b4; font-size: 18px; }
+        .image-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #1a1538; border-radius: 12px; color: #9aa0b4; font-size: 18px; pointer-events: none; }
         .win-opt {
             padding: 10px 20px;
             background: rgba(255,255,255,0.05);
@@ -1371,9 +1371,9 @@ HTML_TEMPLATE = """
                 </div>`;
         }
 
-        function renderCategorySelection(cats, fromCache = false) {
+        function renderCategorySelection(cats, fromCache = false, isFallback = false) {
             const catsHtml = cats.map(c => `
-                <div class="cat-card" onclick="selectCat(this, ${JSON.stringify(c.name)})" data-cat=${JSON.stringify(c.name)}>
+                <div class="cat-card" data-cat-name="${c.name}">
                     ${c.image_url ? `
                         <div class="cat-image-wrapper">
                             <div class="image-placeholder">⌛</div>
@@ -1400,11 +1400,20 @@ HTML_TEMPLATE = """
                     <button class="btn-yellow" onclick="startGameFinal(this)">ابدأ اللعب الآن</button>
                 </div>`;
 
+            document.querySelectorAll('.cat-card').forEach(card => {
+                card.addEventListener('click', () => selectCat(card, card.dataset.catName));
+            });
+
             loadCategoryImages();
             if (fromCache) {
                 const notice = document.createElement('div');
                 notice.style = 'margin-top:14px; color:#a9a9a9; font-size:14px;';
                 notice.textContent = 'تم عرض الفئات من الكاش المحلي، ويتم تحميل الصور تدريجياً.';
+                document.querySelector('.card').appendChild(notice);
+            } else if (isFallback) {
+                const notice = document.createElement('div');
+                notice.style = 'margin-top:14px; color:#a9a0c2; font-size:14px;';
+                notice.textContent = 'يتم عرض الفئات الأساسية أولاً، والصور تُحمّل في الخلفية.';
                 document.querySelector('.card').appendChild(notice);
             }
         }
