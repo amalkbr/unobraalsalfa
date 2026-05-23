@@ -688,6 +688,7 @@ HTML_TEMPLATE = """
     </div>
     <div class="flex-center"><div class="container" id="main-ui"></div></div>
     <script>
+        const DEFAULT_CAT_NAMES = ["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"];
         let currentUser = JSON.parse(localStorage.getItem('user')) || null;
         let game = null;
         let p_votes = {};
@@ -1253,13 +1254,11 @@ HTML_TEMPLATE = """
                     </div>`;
                 updateSelectedCount();
             } else if(step === 3) {
-                // عرض هيكل الصفحة فوراً مع تحميل البيانات من الكاش أو الشبكة
+                // عرض هيكل الصفحة مع الفئات الافتراضية فوراً
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
                         <h2>اختر نوع السالفة</h2>
-                        <div id="cats-container" class="cat-grid">
-                            <div style="grid-column: 1/-1; padding: 40px;"><div class="loader-inline"></div> جاري تحميل الفئات...</div>
-                        </div>
+                        <div id="cats-container" class="cat-grid"></div>
                         <input type="hidden" id="selected_cat">
 
                         <p style="margin-top:20px; font-weight:bold;">حد الفوز (نقاط):</p>
@@ -1274,61 +1273,53 @@ HTML_TEMPLATE = """
                         <button class="btn-yellow" id="start-btn" onclick="startGameFinal(this)">ابدأ اللعب الآن</button>
                     </div>`;
 
-                // محاولة استرداد الفئات من الكاش أولاً لعرضها فوراً
-                if ('caches' in window) {
-                    caches.match('/api/categories').then(response => {
-                        if (response) {
-                            response.json().then(cats => {
-                                if (document.getElementById('cats-container').querySelector('.loader-inline')) {
-                                    renderCategories(cats);
-                                }
-                            });
-                        }
-                    });
-                }
+                // عرض الفئات فوراً باستخدام الأسماء الافتراضية
+                renderCategories(DEFAULT_CAT_NAMES.map(name => ({name, image_url: null})));
 
-                try {
-                    const res = await fetch('/api/categories');
-                    const cats = await res.json();
-                    renderCategories(cats);
-
-                    // محرك التحميل التسلسلي للصور لتخزينها في الكاش
-                    const imageUrls = cats.map(c => c.image_url).filter(url => url);
-                    if (imageUrls.length > 0) {
-                        (async function prefetchImages(urls) {
-                            for (const url of urls) {
-                                try {
-                                    const cache = await caches.open('alsalfa-v2');
-                                    const cachedResponse = await cache.match(url);
-                                    if (!cachedResponse) {
-                                        await fetch(url, { mode: 'no-cors' });
-                                        console.log('Cached:', url);
-                                        await new Promise(r => setTimeout(r, 200));
-                                    }
-                                } catch (e) {}
+                // محاولة تحديث الصور في الخلفية
+                (async () => {
+                    try {
+                        // محاولة من الكاش أولاً للسرعة القصوى
+                        if ('caches' in window) {
+                            const cachedResponse = await caches.match('/api/categories');
+                            if (cachedResponse) {
+                                const cachedCats = await cachedResponse.json();
+                                renderCategories(cachedCats);
                             }
-                        })(imageUrls);
-                    }
-                } catch(e) {
-                    if (document.getElementById('cats-container').querySelector('.loader-inline')) {
-                        document.getElementById('cats-container').innerHTML = `<p style="grid-column:1/-1">تعذر تحميل الفئات. حاول مجدداً.</p>`;
-                    }
-                }
+                        }
+
+                        // جلب البيانات المحدثة من السيرفر
+                        const res = await fetch('/api/categories');
+                        if (res.ok) {
+                            const freshCats = await res.json();
+                            renderCategories(freshCats);
+                        }
+                    } catch(e) { console.log("Background load failed, using defaults"); }
+                })();
             }
         }
 
         function renderCategories(cats) {
+            const container = document.getElementById('cats-container');
+            if (!container) return;
+
+            const selectedCat = document.getElementById('selected_cat').value;
             let catsHtml = "";
+
             cats.forEach(c => {
+                const isSelected = (c.name === selectedCat);
                 catsHtml += `
-                    <div class="cat-card" onclick="selectCat(this, '${c.name.replace(/'/g, "\\'")}')">
+                    <div class="cat-card ${isSelected ? 'selected' : ''}" onclick="selectCat(this, '${c.name.replace(/'/g, "\\'")}')">
                         <div class="img-wrapper" style="width:100%; height:60px; position:relative; background:#2f278c; border-radius:10px; margin-bottom:5px; overflow:hidden;">
-                            ${c.image_url ? `<img src="${c.image_url}" loading="lazy" style="width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity 0.5s;" onload="this.style.opacity='1'">` : '<div class="no-img" style="height:100%; display:flex; align-items:center; justify-content:center;">؟</div>'}
+                            ${c.image_url ?
+                                `<img src="${c.image_url}" loading="lazy" style="width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity 0.5s;" onload="this.style.opacity='1'">` :
+                                `<div class="no-img" style="height:100%; display:flex; align-items:center; justify-content:center; background:#2f278c;">؟</div>`
+                            }
                         </div>
                         <span>${c.name}</span>
                     </div>`;
             });
-            document.getElementById('cats-container').innerHTML = catsHtml;
+            container.innerHTML = catsHtml;
         }
 
         function selectWinLimit(el, val) {
