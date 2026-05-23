@@ -792,7 +792,12 @@ HTML_TEMPLATE = """
         <button style="background:var(--error); font-size:14px;" onclick="logout()">تسجيل الخروج</button>
         <button style="background:#636e72; font-size:14px;" onclick="toggleSidebar()">إغلاق</button>
     </div>
-    <div class="flex-center"><div class="container" id="main-ui"></div></div>
+    <div class="flex-center"><div class="container" id="main-ui">
+            <div class="card" style="padding:30px; text-align:right;">
+                <h1>جارٍ التحميل...</h1>
+                <p>إذا كان المحتوى لا يظهر، يُرجى التأكد من تمكين جافاسكربت أو القيام بإعادة تحميل الصفحة.</p>
+            </div>
+        </div></div>
     <script>
         let currentUser = null;
         try {
@@ -2660,7 +2665,7 @@ HTML_TEMPLATE = """
             if (banner) banner.remove();
         }
 
-        init();
+        window.addEventListener('load', init);
     </script>
 </body>
 </html>
