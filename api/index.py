@@ -1387,6 +1387,10 @@ HTML_TEMPLATE = """
                         <div class="cat-image-wrapper">
                             <div class="image-placeholder">⌛</div>
                             <img src="${c.image_url}" alt="${c.name}" loading="lazy">
+                        </div>` : '<div class="no-img">؟</div>'}
+                    <span>${c.name}</span>
+                </div>`).join('');
+
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h2>اختر نوع السالفة</h2>
