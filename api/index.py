@@ -14,6 +14,13 @@ from handlers.room_multi import router as room_multi_router
 from handlers.calc import router as calc_router
 from handlers.stats import router as stats_router
 from handlers.bara_alsalfa import router as bara_router
+try:
+    from handlers.community_publish import router as community_publish_router, run_publish_migration
+    _use_publish_router = True
+except Exception:
+    community_publish_router = None
+    run_publish_migration = None
+    _use_publish_router = False
 
 # تهيئة التطبيق
 app = FastAPI()
@@ -29,12 +36,16 @@ dp.include_router(room_multi_router)
 dp.include_router(calc_router)
 dp.include_router(stats_router)
 dp.include_router(bara_router)
+if _use_publish_router:
+    dp.include_router(community_publish_router)
 
 @app.on_event("startup")
 async def on_startup():
     # تهيئة قاعدة البيانات عند تشغيل السيرفر
     try:
         init_db()
+        if run_publish_migration:
+            run_publish_migration()
         # تعيين الويب هوك في تليجرام
         webhook_url = os.getenv("VERCEL_URL")
         if webhook_url:
