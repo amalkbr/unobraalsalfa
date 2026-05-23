@@ -1,0 +1,15 @@
+{
+  "name": "أونو وبرا السالفة",
+  "short_name": "السالفة",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f7f6",
+  "theme_color": "#1a73e8",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/8030/8030198.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

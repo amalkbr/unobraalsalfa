@@ -3,3 +3,5 @@ psycopg2-binary
 aiohttp
 fastapi
 uvicorn
+boto3
+python-multipart
