@@ -62,6 +62,13 @@ def init_db():
                     category TEXT REFERENCES categories(name) ON DELETE CASCADE,
                     word TEXT
                 );
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                );
+                INSERT INTO settings (key, value) VALUES ('question_timeout', '30') ON CONFLICT DO NOTHING;
+                INSERT INTO settings (key, value) VALUES ('vote_timeout', '10') ON CONFLICT DO NOTHING;
+                INSERT INTO settings (key, value) VALUES ('spy_guess_timeout', '15') ON CONFLICT DO NOTHING;
                 -- تحديث جدول المستخدمين ليشمل إحصائيات
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS total_wins INTEGER DEFAULT 0;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS saved_players JSONB DEFAULT '[]';
@@ -98,6 +105,36 @@ CATEGORIES = {
 
 @app.get("/", response_class=HTMLResponse)
 async def home(): return HTML_TEMPLATE
+
+@app.get("/join/{room_code}", response_class=HTMLResponse)
+async def join_room_link(room_code: str):
+    return HTML_TEMPLATE
+
+@app.get("/api/settings")
+async def get_settings():
+    conn = get_db_conn()
+    if not conn: return {"question_timeout": 30, "vote_timeout": 10, "spy_guess_timeout": 15}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT key, value FROM settings")
+            rows = cur.fetchall()
+            settings = {row[0]: int(row[1]) for row in rows}
+            if 'question_timeout' not in settings: settings['question_timeout'] = 30
+            if 'vote_timeout' not in settings: settings['vote_timeout'] = 10
+            if 'spy_guess_timeout' not in settings: settings['spy_guess_timeout'] = 15
+            return settings
+    finally: conn.close()
+
+@app.post("/api/admin/settings/update")
+async def update_settings(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE settings SET value = %s WHERE key = %s", (str(data['value']), data['key']))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
 
 @app.post("/api/auth/register")
 async def register(data: dict):
@@ -594,17 +631,21 @@ HTML_TEMPLATE = """
             border-color: white;
         }
         .cat-card span { font-size: 12px; font-weight: bold; }
+        .exit-btn { position: fixed; left: 20px; top: 20px; font-size: 20px; cursor: pointer; z-index: 1001; background: var(--error); width: 50px; height: 50px; border-radius: 15px; text-align: center; line-height: 50px; color: white; display: none; box-shadow: 0 4px 10px rgba(0,0,0,0.3); transition: 0.3s; }
+        .exit-btn:hover { transform: scale(1.1); }
         .no-img { width: 100%; height: 60px; background: #2f278c; display: flex; align-items: center; justify-content: center; border-radius: 10px; font-size: 24px; }
         @keyframes rotate { from { transform: rotate(0); } to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
     <div class="menu-btn" onclick="toggleSidebar()">☰</div>
+    <div class="exit-btn" id="global-exit-btn" onclick="confirmExitGame()">✖</div>
     <div id="sidebar" class="sidebar">
         <h2 style="color:var(--accent)">القائمة</h2>
         <div style="background:#1b1464; padding:15px; border-radius:15px; margin:20px 0;">
             <p id="user-display" style="margin:0; font-weight:bold;">زائر</p>
         </div>
+        <button id="install-btn-sidebar" style="background:var(--accent); color:black; font-size:14px; display:none;" onclick="installApp()">📲 تثبيت التطبيق</button>
         <button style="background:var(--success); font-size:14px;" onclick="showReports()">📊 التقارير والمتصدرين</button>
         <button style="background:var(--primary); font-size:14px;" onclick="showEditProfile()">تعديل بيانات الحساب</button>
         <button style="background:var(--error); font-size:14px;" onclick="logout()">تسجيل الخروج</button>
@@ -617,15 +658,70 @@ HTML_TEMPLATE = """
         let p_votes = {};
         let totalScores = {}; // نقاط الجلسة
         let winLimit = 1000;
+        let questionTimeout = 30;
+        let voteTimeout = 10;
+        let spyGuessTimeout = 15;
+        let timerInterval = null;
+
+        async function fetchSettings() {
+            try {
+                const res = await fetch('/api/settings');
+                const d = await res.json();
+                questionTimeout = d.question_timeout || 30;
+                voteTimeout = d.vote_timeout || 10;
+                spyGuessTimeout = d.spy_guess_timeout || 15;
+            } catch(e) { console.error("Settings fetch failed", e); }
+        }
+
+        function navigateTo(screen, data = {}, push = true) {
+            if (push) {
+                history.pushState({ screen, ...data }, "");
+            }
+            switch(screen) {
+                case 'auth': showAuth(); break;
+                case 'menu': showMenu(false); break;
+                case 'online_menu': showOnlineMenu(false); break;
+                case 'setup': showSetup(data.step, false); break;
+                case 'reports': showReports(false); break;
+                case 'edit_profile': showEditProfile(false); break;
+                case 'admin': showAdminDashboard(false); break;
+            }
+        }
+
+        window.onpopstate = function(event) {
+            if (event.state && event.state.screen) {
+                navigateTo(event.state.screen, event.state, false);
+            } else {
+                currentUser ? showMenu(false) : showAuth();
+            }
+        };
 
         function init() {
+            fetchSettings();
+            // Check for /join/CODE path
+            const pathParts = window.location.pathname.split('/');
+            let joinCode = null;
+            if (pathParts[1] === 'join' && pathParts[2]) {
+                joinCode = pathParts[2];
+                window.history.replaceState({}, document.title, "/");
+            }
+
+            // Also check for ?join=CODE param
             const urlParams = new URLSearchParams(window.location.search);
-            const joinCode = urlParams.get('join');
+            if (!joinCode) joinCode = urlParams.get('join');
+
             if (joinCode) {
-                window.history.replaceState({}, document.title, window.location.pathname);
+                if (!urlParams.get('join')) window.history.replaceState({}, document.title, window.location.pathname);
                 localStorage.setItem('pendingJoin', joinCode);
             }
-            currentUser ? showMenu() : showAuth();
+
+            if (currentUser) {
+                showMenu(false);
+                history.replaceState({ screen: 'menu' }, "");
+            } else {
+                showAuth();
+            }
+
             updateSidebar();
             if (currentUser && localStorage.getItem('pendingJoin')) {
                 const code = localStorage.getItem('pendingJoin');
@@ -660,13 +756,17 @@ HTML_TEMPLATE = """
             d.success ? alert("تم التسجيل! ادخل الآن") : alert(d.msg);
         }
 
-        function showMenu() {
+        function showMenu(push = true) {
+            if(timerInterval) clearInterval(timerInterval);
+            if(push) history.pushState({screen: 'menu'}, "");
+            if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'none';
+            game = null;
             totalScores = {}; // ريست للنقاط عند العودة للقائمة
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>ابدأ اللعب</h1>
-                    <button onclick="showOnlineMenu()">🌐 أونلاين</button>
-                    <button style="background:#e056fd" onclick="showSetup(1)">🏠 أوفلاين (مجلس)</button>
+                    <button onclick="navigateTo('online_menu')">🌐 أونلاين</button>
+                    <button style="background:#e056fd" onclick="navigateTo('setup', {step: 1})">🏠 أوفلاين (مجلس)</button>
                 </div>`;
         }
 
@@ -674,7 +774,8 @@ HTML_TEMPLATE = """
         let currentRoom = null;
         let pollInterval = null;
 
-        function showOnlineMenu() {
+        function showOnlineMenu(push = true) {
+            if(push) history.pushState({screen: 'online_menu'}, "");
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>اللعب أونلاين</h1>
@@ -683,7 +784,7 @@ HTML_TEMPLATE = """
                         <input id="join_code" placeholder="رمز الغرفة (مثال: ABCD)" style="text-transform:uppercase">
                         <button onclick="joinRoom()">دخول غرفة</button>
                     </div>
-                    <button style="background:#636e72" onclick="showMenu()">رجوع</button>
+                    <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
                 </div>`;
         }
 
@@ -785,6 +886,7 @@ HTML_TEMPLATE = """
         }
 
         async function startOnlineGame() {
+            if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'block';
             const res = await fetch('/api/online/start', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -901,13 +1003,17 @@ HTML_TEMPLATE = """
         }
 
         function leaveRoom() {
+            if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'none';
             clearInterval(pollInterval);
             currentRoom = null;
             showMenu();
         }
 
-        function showEditProfile() {
-            toggleSidebar();
+        function showEditProfile(push = true) {
+            if(push) {
+                history.pushState({screen: 'edit_profile'}, "");
+                toggleSidebar();
+            }
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h2>تعديل بياناتي</h2>
@@ -915,7 +1021,7 @@ HTML_TEMPLATE = """
                     <input id="edit_n" value="${currentUser.player_name}">
                     <input id="edit_p" type="password" value="${currentUser.password_key}">
                     <button onclick="updateProfile()">حفظ التعديلات</button>
-                    <button style="background:#636e72" onclick="showMenu()">إلغاء</button>
+                    <button style="background:#636e72" onclick="navigateTo('menu')">إلغاء</button>
                 </div>`;
         }
 
@@ -936,12 +1042,15 @@ HTML_TEMPLATE = """
                 const reqEl = document.getElementById('required_n_display');
                 if(reqEl) reqEl.innerText = val;
 
+                const reqSum = document.getElementById('required_n_summary');
+                if(reqSum) reqSum.innerText = val;
+
                 updateSelectedCount();
             }
         }
         function saveAndNext() {
             localStorage.setItem('pCount', document.getElementById('p_count').value);
-            showSetup(2);
+            navigateTo('setup', {step: 2});
         }
 
         function togglePSelection(el, name) {
@@ -973,7 +1082,7 @@ HTML_TEMPLATE = """
             }
         }
 
-        async function addNewPlayerToList() {
+        function addNewPlayerToList() {
             const nameInp = document.getElementById('new_p_name');
             const name = nameInp.value.trim();
             if(!name) return;
@@ -1015,7 +1124,7 @@ HTML_TEMPLATE = """
             // إضافة لاعب جديد
             currentUser.saved_players.push({name: name, wins: 0});
             localStorage.setItem('user', JSON.stringify(currentUser));
-            showSetup(2); // تحديث الواجهة فوراً
+            showSetup(2, false); // تحديث الواجهة فوراً دون إضافة للسجل
 
             // حفظ في الخلفية
             fetch('/api/user/save_players', {
@@ -1039,10 +1148,11 @@ HTML_TEMPLATE = """
                 }
             }
             window.pNamesSave = selected;
-            showSetup(3);
+            navigateTo('setup', {step: 3});
         }
 
-        async function showSetup(step) {
+        async function showSetup(step, push = true) {
+            if(push) history.pushState({screen: 'setup', step}, "");
             if(step === 1) {
                 let savedCount = localStorage.getItem('pCount') || 3;
                 document.getElementById('main-ui').innerHTML = `
@@ -1054,7 +1164,7 @@ HTML_TEMPLATE = """
                             <button onclick="changePCount(1)" style="width: 60px; margin:0; background:var(--success); font-size: 24px;">+</button>
                         </div>
                         <button onclick="saveAndNext()">التالي</button>
-                        <button style="background:#636e72" onclick="showMenu()">رجوع</button>
+                        <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
                     </div>`;
             } else if(step === 2) {
                 const targetN = Math.max(3, parseInt(localStorage.getItem('pCount') || 3));
@@ -1076,19 +1186,24 @@ HTML_TEMPLATE = """
 
                 // حقل لإضافة لاعب جديد للقائمة
                 h += `
-                    <div style="display:flex; gap:10px;">
+                    <div style="display:flex; gap:10px; margin-bottom:15px;">
                         <input id="new_p_name" placeholder="اسم لاعب جديد" style="margin:0">
                         <button onclick="addNewPlayerToList()" style="width:80px; margin:0; background:var(--success)">+</button>
                     </div>
 
-                    <div style="display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 15px; background: rgba(255,255,255,0.05); padding: 5px; border-radius: 10px;">
-                        <button onclick="changePCount(-1)" style="width: 40px; height: 35px; margin:0; background:var(--error); display: flex; align-items: center; justify-content: center; font-size: 20px;">-</button>
-                        <span style="font-weight:bold; font-size:14px;">تعديل العدد المطلوب</span>
-                        <button onclick="changePCount(1)" style="width: 40px; height: 35px; margin:0; background:var(--success); display: flex; align-items: center; justify-content: center; font-size: 20px;">+</button>
+                    <div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin: 15px 0; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 20px; border: 1px solid #3c339e;">
+                        <button onclick="changePCount(-1)" style="width: 45px; height: 45px; margin:0; background:var(--error); font-size: 24px; display:flex; align-items:center; justify-content:center;">-</button>
+                        <div style="text-align: center; min-width: 100px;">
+                            <span style="display:block; font-size:12px; color:#aaa;">العدد المطلوب</span>
+                            <span id="required_n_display" style="font-size: 28px; font-weight: 900; color:var(--accent);">${targetN}</span>
+                        </div>
+                        <button onclick="changePCount(1)" style="width: 45px; height: 45px; margin:0; background:var(--success); font-size: 24px; display:flex; align-items:center; justify-content:center;">+</button>
                     </div>
 
-                    <p id="selection_info" style="margin-top:10px; font-size:14px; color:var(--accent)">
-                        المطلوب: <span id="required_n_display">${targetN}</span> لاعبين | المختار: <span id="selected_count">0</span>
+                    <p id="selection_info" style="margin:10px 0; font-size:16px; color:white;">
+                        المختار: <span id="selected_count" style="color:var(--success); font-weight:bold;">0</span>
+                        من أصل
+                        <span id="required_n_summary" style="font-weight:bold;">${targetN}</span> لاعبين
                     </p>
                     <button onclick="confirmPlayersAndNext()">التالي</button>`;
 
@@ -1153,6 +1268,7 @@ HTML_TEMPLATE = """
         }
 
         async function start(category) {
+            if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'block';
             const players = window.pNamesSave;
             if(Object.keys(totalScores).length === 0) players.forEach(p => totalScores[p] = 0);
             const res = await fetch('/api/game/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({players, category})});
@@ -1179,43 +1295,105 @@ HTML_TEMPLATE = """
                 </div>`;
         }
 
+        function startTimer(callback, customTime = null) {
+            if(timerInterval) clearInterval(timerInterval);
+            let timeLeft = customTime || questionTimeout;
+            const timerEl = document.getElementById('timer-display');
+            if(timerEl) timerEl.innerText = timeLeft;
+
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                if(timerEl) timerEl.innerText = timeLeft;
+                if(timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    callback();
+                }
+            }, 1000);
+        }
+
         function showPhase1() {
             if(game.qIdx >= game.q_seq.length) { showPhase2(game.players[0]); return; }
             const q = game.q_seq[game.qIdx];
             document.getElementById('main-ui').innerHTML = `
-                <div class="card"><span class="q-badge">مرحلة إجبارية</span>
+                <div class="card">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span class="q-badge">مرحلة إجبارية</span>
+                        <div style="background:var(--error); padding:5px 15px; border-radius:10px; font-weight:bold;">
+                            ⏱️ <span id="timer-display">${questionTimeout}</span>
+                        </div>
+                    </div>
                     <div style="font-size:24px; margin:30px 0;"><b style="color:#a29bfe">${q.f}</b> يسأل <b style="color:#ff7675">${q.t}</b></div>
-                    <button onclick="game.qIdx++; showPhase1()">السؤال التالي</button>
-                    <button style="background: #ffec00; color: #1b1464; font-weight: 900; box-shadow: 0 0 20px rgba(255, 236, 0, 0.4);" onclick="startVoting()">إنهاء الجولة والتصويت</button>
+                    <button onclick="clearInterval(timerInterval); game.qIdx++; showPhase1()">السؤال التالي</button>
+                    <button style="background: #ffec00; color: #1b1464; font-weight: 900; box-shadow: 0 0 20px rgba(255, 236, 0, 0.4);" onclick="clearInterval(timerInterval); startVoting()">إنهاء الجولة والتصويت</button>
                 </div>`;
+            startTimer(() => {
+                game.qIdx++;
+                showPhase1();
+            });
         }
 
         function showPhase2(asker, last = "") {
             document.getElementById('main-ui').innerHTML = `
-                <div class="card"><span class="q-badge" style="background:var(--primary)">مرحلة الاختيار الحر</span>
+                <div class="card">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span class="q-badge" style="background:var(--primary)">مرحلة الاختيار الحر</span>
+                        <div style="background:var(--error); padding:5px 15px; border-radius:10px; font-weight:bold;">
+                            ⏱️ <span id="timer-display">${questionTimeout}</span>
+                        </div>
+                    </div>
                     <h3>دور <b style="color:var(--accent)">${asker}</b> يختار مين يسأل؟</h3>
                     <div id="plist"></div>
-                    <button style="margin-top:20px; background: #ffec00; color: #1b1464; font-weight: 900; box-shadow: 0 0 20px rgba(255, 236, 0, 0.4);" onclick="startVoting()">بدء التصويت</button>
+                    <button style="margin-top:20px; background: #ffec00; color: #1b1464; font-weight: 900; box-shadow: 0 0 20px rgba(255, 236, 0, 0.4);" onclick="clearInterval(timerInterval); startVoting()">بدء التصويت</button>
                 </div>`;
-            game.players.forEach(p => { if(p!==asker && p!==last) document.getElementById('plist').innerHTML += `<button class="vote-item" onclick="showPhase2('${p}', '${asker}')">اسأل ${p}</button>`; });
+            game.players.forEach(p => {
+                if(p!==asker && p!==last) {
+                    let btn = document.createElement('button');
+                    btn.className = 'vote-item';
+                    btn.innerText = `اسأل ${p}`;
+                    btn.onclick = () => {
+                        clearInterval(timerInterval);
+                        showPhase2(p, asker);
+                    };
+                    document.getElementById('plist').appendChild(btn);
+                }
+            });
+            startTimer(() => {
+                // في المرحلة الحرة، إذا انتهى الوقت ننتقل للتصويت
+                startVoting();
+            });
         }
 
         function startVoting() { p_votes = {}; performVote(0); }
 
         function performVote(idx) {
             if(idx >= game.players.length) { showReveal(); return; }
-            let list = [...game.players].sort(() => Math.random() - 0.5);
+            let list = game.players;
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
-                    <p>مرر لـ <b>${game.players[idx]}</b></p>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <span>مرر لـ <b>${game.players[idx]}</b></span>
+                        <div style="background:var(--error); padding:5px 15px; border-radius:10px; font-weight:bold;">
+                            ⏱️ <span id="timer-display">${voteTimeout}</span>
+                        </div>
+                    </div>
                     <p>صوت سراً: منو اللي برة السالفة؟</p>
                     <div id="vbox"></div>
                 </div>`;
             list.forEach(p => {
                 let btn = document.createElement('button'); btn.className = 'vote-item'; btn.innerText = p;
-                btn.onclick = () => { p_votes[game.players[idx]] = p; performVote(idx+1); };
+                btn.onclick = () => {
+                    clearInterval(timerInterval);
+                    p_votes[game.players[idx]] = p;
+                    performVote(idx+1);
+                };
                 document.getElementById('vbox').appendChild(btn);
             });
+
+            startTimer(() => {
+                // إذا انتهى الوقت، يتم اختيار "امتناع" أو أول لاعب تلقائياً
+                p_votes[game.players[idx]] = "لم يصوت";
+                performVote(idx+1);
+            }, voteTimeout);
         }
 
         function showReveal() {
@@ -1250,9 +1428,35 @@ HTML_TEMPLATE = """
         }
 
         function spyGuess() {
-            let h = `<h3>خمن وش السالفة؟ (فرصتك الأخيرة كجاسوس)</h3>`;
-            game.guesses.forEach(g => h += `<div class="vote-item" onclick="finish('${g}')">${g}</div>`);
+            let h = `<h3>خمن وش السالفة؟ (فرصتك الأخيرة كجاسوس)</h3><div id="guess_grid">`;
+            game.guesses.forEach(g => h += `<div class="vote-item guess-item" onclick="handleSpyGuess(this, '${g.replace(/'/g, "\\'")}')">${g}</div>`);
+            h += `</div>`;
             document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+        }
+
+        function handleSpyGuess(el, guessedWord) {
+            const correctWord = game.word;
+            const items = document.querySelectorAll('.guess-item');
+
+            items.forEach(item => {
+                item.style.pointerEvents = "none";
+                if (item.innerText === correctWord) {
+                    item.style.background = "var(--success)";
+                    item.style.boxShadow = "0 0 20px var(--success)";
+                }
+            });
+
+            if (guessedWord === correctWord) {
+                playSound('win'); // صوت النجاح
+            } else {
+                el.style.background = "var(--error)";
+                el.style.boxShadow = "0 0 20px var(--error)";
+                playSound('fail'); // صوت الفشل
+            }
+
+            setTimeout(() => {
+                finish(guessedWord);
+            }, 3000);
         }
 
         function finish(guessedWord) {
@@ -1344,21 +1548,57 @@ HTML_TEMPLATE = """
                     btn.innerText = "🛠️ لوحة الإدارة";
                     btn.style.background = "var(--accent)";
                     btn.style.color = "black";
-                    btn.onclick = showAdminDashboard;
+                    btn.onclick = () => navigateTo('admin');
                     document.getElementById('sidebar').appendChild(btn);
                 }
             }
         }}
 
-        async function showAdminDashboard() {
-            toggleSidebar();
+        async function showAdminDashboard(push = true) {
+            if(push) {
+                history.pushState({screen: 'admin'}, "");
+                toggleSidebar();
+            }
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h2>لوحة التحكم الإدارية</h2>
                     <button onclick="adminManagePlayers()">👥 إدارة اللاعبين</button>
                     <button onclick="adminManageCategories()">📂 إدارة الفئات والكلمات</button>
-                    <button style="background:#636e72" onclick="showMenu()">رجوع</button>
+                    <div style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin:20px 0; text-align:right;">
+                        <label>وقت مهلة السؤال (ثانية):</label>
+                        <div style="display:flex; gap:10px; margin-top:5px; margin-bottom:15px;">
+                            <input type="number" id="timeout_setting" value="${questionTimeout}" style="margin:0">
+                            <button onclick="saveTimeoutSetting('question_timeout', 'timeout_setting')" style="width:100px; margin:0; background:var(--success)">حفظ</button>
+                        </div>
+                        <label>وقت مهلة التصويت (ثانية):</label>
+                        <div style="display:flex; gap:10px; margin-top:5px; margin-bottom:15px;">
+                            <input type="number" id="vote_timeout_setting" value="${voteTimeout}" style="margin:0">
+                            <button onclick="saveTimeoutSetting('vote_timeout', 'vote_timeout_setting')" style="width:100px; margin:0; background:var(--success)">حفظ</button>
+                        </div>
+                        <label>وقت تخمين الجاسوس (ثانية):</label>
+                        <div style="display:flex; gap:10px; margin-top:5px;">
+                            <input type="number" id="spy_timeout_setting" value="${spyGuessTimeout}" style="margin:0">
+                            <button onclick="saveTimeoutSetting('spy_guess_timeout', 'spy_timeout_setting')" style="width:100px; margin:0; background:var(--success)">حفظ</button>
+                        </div>
+                    </div>
+                    <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
                 </div>`;
+        }
+
+        async function saveTimeoutSetting(key, inputId) {
+            const val = document.getElementById(inputId).value;
+            const res = await fetch('/api/admin/settings/update', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({key: key, value: val})
+            });
+            const d = await res.json();
+            if(d.success) {
+                if(key === 'question_timeout') questionTimeout = parseInt(val);
+                if(key === 'vote_timeout') voteTimeout = parseInt(val);
+                if(key === 'spy_guess_timeout') spyGuessTimeout = parseInt(val);
+                alert("تم تحديث وقت المهلة بنجاح");
+            }
         }
 
         async function adminManagePlayers() {
@@ -1519,8 +1759,11 @@ HTML_TEMPLATE = """
             manageWords(cat);
         }
 
-        async function showReports() {
-            toggleSidebar();
+        async function showReports(push = true) {
+            if(push) {
+                history.pushState({screen: 'reports'}, "");
+                toggleSidebar();
+            }
             // تحديث بيانات المستخدم للحصول على أحدث النقاط للاعبين المحليين
             const resAuth = await fetch('/api/auth/login', {
                 method: 'POST',
@@ -1562,15 +1805,28 @@ HTML_TEMPLATE = """
                 </div>`;
             }
 
-            h += `</div><button onclick="showMenu()">رجوع</button>`;
+            h += `</div><button onclick="navigateTo('menu')">رجوع</button>`;
             document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
         }
-        function logout() { localStorage.clear(); location.reload(); }
+        function confirmExitGame() {
+            if(confirm("هل أنت متأكد أنك تريد إلغاء اللعبة والعودة للقائمة الرئيسية؟")) {
+                if(timerInterval) clearInterval(timerInterval);
+                if(currentRoom) {
+                    leaveRoom();
+                } else {
+                    totalScores = {};
+                    showMenu();
+                }
+            }
+        }
+
+        function logout() { localStorage.clear(); location.href = "/"; }
 
         const sounds = {
             click: new Audio('https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3'),
             reveal: new Audio('https://assets.mixkit.co/active_storage/sfx/2018/2018-preview.mp3'),
-            win: new Audio('https://assets.mixkit.co/active_storage/sfx/2013/2013-preview.mp3')
+            win: new Audio('https://assets.mixkit.co/active_storage/sfx/2013/2013-preview.mp3'),
+            fail: new Audio('https://assets.mixkit.co/active_storage/sfx/256/256-preview.mp3')
         };
         function playSound(name) { sounds[name].currentTime = 0; sounds[name].play().catch(()=>null); }
 
@@ -1588,7 +1844,13 @@ HTML_TEMPLATE = """
             e.preventDefault();
             deferredPrompt = e;
             showInstallBanner();
+            updateInstallButtonVisibility();
         });
+
+        function updateInstallButtonVisibility() {
+            const btn = document.getElementById('install-btn-sidebar');
+            if (btn) btn.style.display = (deferredPrompt) ? 'block' : 'none';
+        }
 
         function showInstallBanner() {
             if (document.getElementById('install-banner')) return;
@@ -1613,7 +1875,9 @@ HTML_TEMPLATE = """
                 console.log('User accepted install');
             }
             deferredPrompt = null;
-            document.getElementById('install-banner').remove();
+            updateInstallButtonVisibility();
+            const banner = document.getElementById('install-banner');
+            if (banner) banner.remove();
         }
 
         init();
