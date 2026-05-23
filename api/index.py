@@ -187,11 +187,11 @@ async def start_game(data: dict):
         try:
             with conn.cursor() as cur:
                 cur.execute("SELECT word FROM words WHERE category = %s", (category,))
-                words = [r[0] for r in cur.fetchall()]
+                words = [r[0].strip() for r in cur.fetchall()]
         finally: conn.close()
 
     if not words:
-        words = CATEGORIES.get(category, CATEGORIES["أكلات"])
+        words = [w.strip() for w in CATEGORIES.get(category, CATEGORIES["أكلات"])]
 
     correct = random.choice(words)
     roles = ["in"] * len(players)
@@ -264,10 +264,10 @@ async def start_online_game(data: dict):
             # محاولة جلب الكلمات من قاعدة البيانات أولاً
             words = []
             cur.execute("SELECT word FROM words WHERE category = %s", (category,))
-            words = [r['word'] for r in cur.fetchall()]
+            words = [r['word'].strip() for r in cur.fetchall()]
 
             if not words:
-                words = CATEGORIES.get(category, CATEGORIES["أكلات"])
+                words = [w.strip() for w in CATEGORIES.get(category, CATEGORIES["أكلات"])]
 
             correct = random.choice(words)
             roles = ["in"] * len(players)
@@ -408,8 +408,8 @@ async def online_action(data: dict):
                     category = room['category'] or "أكلات"
 
                     cur.execute("SELECT word FROM words WHERE category = %s", (category,))
-                    words = [r['word'] for r in cur.fetchall()]
-                    if not words: words = CATEGORIES.get(category, CATEGORIES["أكلات"])
+                    words = [r['word'].strip() for r in cur.fetchall()]
+                    if not words: words = [w.strip() for w in CATEGORIES.get(category, CATEGORIES["أكلات"])]
 
                     correct = random.choice(words)
                     roles = ["in"] * len(players)
@@ -603,6 +603,9 @@ HTML_TEMPLATE = """
         input, select { width: 100%; padding: 15px; margin: 10px 0; border-radius: 15px; border: 2px solid #2f278c; background: #0f0c29; color: white; font-size: 16px; box-sizing: border-box; outline: none; }
         button { width: 100%; padding: 16px; margin: 12px 0; border-radius: 18px; border: none; background: linear-gradient(45deg, #6c5ce7, #a29bfe); color: white; font-weight: bold; cursor: pointer; font-size: 18px; transition: 0.3s; }
         button:hover { transform: translateY(-3px); }
+        button:disabled { opacity: 0.6; cursor: not-allowed; transform: none !important; }
+        .btn-yellow { background: linear-gradient(45deg, #f9ca24, #f1c40f) !important; color: #1b1464 !important; box-shadow: 0 5px 15px rgba(249, 202, 36, 0.4); }
+        .btn-yellow:hover { background: linear-gradient(45deg, #f1c40f, #f9ca24) !important; }
         .sidebar { position: fixed; right: -280px; top: 0; width: 280px; height: 100%; background: #130f40; transition: 0.4s; z-index: 1000; padding: 30px 20px; box-sizing: border-box; border-left: 2px solid var(--primary); }
         .sidebar.open { right: 0; }
         .menu-btn { position: fixed; right: 20px; top: 20px; font-size: 28px; cursor: pointer; z-index: 1001; background: var(--card); width: 50px; height: 50px; border-radius: 15px; text-align: center; line-height: 50px; }
@@ -1048,9 +1051,11 @@ HTML_TEMPLATE = """
                 updateSelectedCount();
             }
         }
-        function saveAndNext() {
+        function saveAndNext(btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="shuffling" style="font-size:20px; margin:0;">🌀</span> جاري التحميل...';
             localStorage.setItem('pCount', document.getElementById('p_count').value);
-            navigateTo('setup', {step: 2});
+            setTimeout(() => navigateTo('setup', {step: 2}), 500);
         }
 
         function togglePSelection(el, name) {
@@ -1134,7 +1139,7 @@ HTML_TEMPLATE = """
             });
         }
 
-        function confirmPlayersAndNext() {
+        function confirmPlayersAndNext(btn) {
             const targetN = parseInt(localStorage.getItem('pCount'));
             const selected = Array.from(document.querySelectorAll('#p_selection_list .score-item'))
                 .filter(el => el.querySelector('.status-icon').innerText === '✅')
@@ -1147,8 +1152,12 @@ HTML_TEMPLATE = """
                     return;
                 }
             }
+            if(btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="shuffling" style="font-size:20px; margin:0;">🌀</span> جاري التحميل...';
+            }
             window.pNamesSave = selected;
-            navigateTo('setup', {step: 3});
+            setTimeout(() => navigateTo('setup', {step: 3}), 500);
         }
 
         async function showSetup(step, push = true) {
@@ -1163,7 +1172,7 @@ HTML_TEMPLATE = """
                             <input type="number" id="p_count" value="${savedCount}" min="3" style="text-align: center; width: 100px; margin:0; font-size: 24px; font-weight: bold;">
                             <button onclick="changePCount(1)" style="width: 60px; margin:0; background:var(--success); font-size: 24px;">+</button>
                         </div>
-                        <button onclick="saveAndNext()">التالي</button>
+                        <button class="btn-yellow" onclick="saveAndNext(this)">التالي</button>
                         <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
                     </div>`;
             } else if(step === 2) {
@@ -1205,7 +1214,7 @@ HTML_TEMPLATE = """
                         من أصل
                         <span id="required_n_summary" style="font-weight:bold;">${targetN}</span> لاعبين
                     </p>
-                    <button onclick="confirmPlayersAndNext()">التالي</button>`;
+                    <button class="btn-yellow" onclick="confirmPlayersAndNext(this)">التالي</button>`;
 
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
@@ -1243,7 +1252,7 @@ HTML_TEMPLATE = """
                         </div>
                         <input type="hidden" id="win_limit_val" value="10">
 
-                        <button onclick="startGameFinal()">ابدأ اللعب الآن</button>
+                        <button class="btn-yellow" onclick="startGameFinal(this)">ابدأ اللعب الآن</button>
                     </div>`;
             }
         }
@@ -1260,9 +1269,13 @@ HTML_TEMPLATE = """
             document.getElementById('selected_cat').value = name;
         }
 
-        function startGameFinal() {
+        function startGameFinal(btn) {
             const cat = document.getElementById('selected_cat').value;
             if(!cat) return alert("اختر فئة أولاً!");
+            if(btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="shuffling" style="font-size:20px; margin:0;">🌀</span> جاري البدء...';
+            }
             winLimit = parseInt(document.getElementById('win_limit_val').value);
             start(cat);
         }
@@ -1390,8 +1403,11 @@ HTML_TEMPLATE = """
             });
 
             startTimer(() => {
-                // إذا انتهى الوقت، يتم اختيار "امتناع" أو أول لاعب تلقائياً
-                p_votes[game.players[idx]] = "لم يصوت";
+                // اختيار لاعب عشوائي (غير الشخص نفسه) عند انتهاء الوقت
+                const me = game.players[idx];
+                const others = game.players.filter(p => p !== me);
+                const randomChoice = others[Math.floor(Math.random() * others.length)];
+                p_votes[me] = randomChoice;
                 performVote(idx+1);
             }, voteTimeout);
         }
@@ -1428,10 +1444,22 @@ HTML_TEMPLATE = """
         }
 
         function spyGuess() {
-            let h = `<h3>خمن وش السالفة؟ (فرصتك الأخيرة كجاسوس)</h3><div id="guess_grid">`;
-            game.guesses.forEach(g => h += `<div class="vote-item guess-item" onclick="handleSpyGuess(this, '${g.replace(/'/g, "\\'")}')">${g}</div>`);
+            let h = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <h3>خمن وش السالفة؟</h3>
+                    <div style="background:var(--error); padding:5px 15px; border-radius:10px; font-weight:bold;">
+                        ⏱️ <span id="timer-display">${spyGuessTimeout}</span>
+                    </div>
+                </div>
+                <div id="guess_grid">`;
+            game.guesses.forEach(g => h += `<div class="vote-item guess-item" onclick="clearInterval(timerInterval); handleSpyGuess(this, '${g.replace(/'/g, "\\'")}')">${g}</div>`);
             h += `</div>`;
             document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+
+            startTimer(() => {
+                const randomGuess = game.guesses[Math.floor(Math.random() * game.guesses.length)];
+                handleSpyGuess(null, randomGuess);
+            }, spyGuessTimeout);
         }
 
         function handleSpyGuess(el, guessedWord) {
@@ -1538,7 +1566,11 @@ HTML_TEMPLATE = """
             }
         }
 
-        function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+            updateSidebar();
+            updateInstallButtonVisibility();
+        }
         function updateSidebar() { if(currentUser) {
             document.getElementById('user-display').innerText = currentUser.player_name;
             if(currentUser.username_key === 'admin') {
@@ -1849,7 +1881,13 @@ HTML_TEMPLATE = """
 
         function updateInstallButtonVisibility() {
             const btn = document.getElementById('install-btn-sidebar');
-            if (btn) btn.style.display = (deferredPrompt) ? 'block' : 'none';
+            if (btn) {
+                if (deferredPrompt) {
+                    btn.style.setProperty('display', 'block', 'important');
+                } else {
+                    btn.style.setProperty('display', 'none', 'important');
+                }
+            }
         }
 
         function showInstallBanner() {
