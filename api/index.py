@@ -12,9 +12,54 @@ app = FastAPI()
 def get_db_conn():
     db_url = os.environ.get('DATABASE_URL')
     if db_url:
-        try: return psycopg2.connect(db_url, sslmode='require')
-        except: return None
+        try:
+            conn = psycopg2.connect(db_url, sslmode='require')
+            return conn
+        except Exception as e:
+            print(f"DB Error: {e}")
+            return None
     return None
+
+def init_db():
+    conn = get_db_conn()
+    if not conn: return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id SERIAL PRIMARY KEY,
+                    username_key TEXT UNIQUE,
+                    password_key TEXT,
+                    player_name TEXT,
+                    is_registered BOOLEAN DEFAULT FALSE
+                );
+                CREATE TABLE IF NOT EXISTS rooms (
+                    room_code TEXT PRIMARY KEY,
+                    host_id INTEGER,
+                    status TEXT DEFAULT 'waiting',
+                    category TEXT,
+                    win_limit INTEGER DEFAULT 1000,
+                    game_data JSONB,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS room_players (
+                    room_code TEXT REFERENCES rooms(room_code) ON DELETE CASCADE,
+                    user_id INTEGER,
+                    player_name TEXT,
+                    score INTEGER DEFAULT 0,
+                    is_ready BOOLEAN DEFAULT FALSE,
+                    PRIMARY KEY (room_code, user_id)
+                );
+                CREATE TABLE IF NOT EXISTS words (
+                    id SERIAL PRIMARY KEY,
+                    category TEXT,
+                    word TEXT
+                );
+            """)
+            conn.commit()
+    finally: conn.close()
+
+init_db()
 
 # --- Game Data ---
 CATEGORIES = {
@@ -105,6 +150,102 @@ async def start_game(data: dict):
 
     return {"word": correct, "roles": roles, "guesses": guesses, "q_seq": q_seq, "spy_idx": spy_idx}
 
+# --- Online Mode API ---
+
+@app.post("/api/online/create")
+async def create_room(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False, "msg": "DB Error"}
+    try:
+        room_code = ''.join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=5))
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO rooms (room_code, host_id, status) VALUES (%s, %s, 'waiting')",
+                        (room_code, data['user_id']))
+            cur.execute("INSERT INTO room_players (room_code, user_id, player_name) VALUES (%s, %s, %s)",
+                        (room_code, data['user_id'], data['player_name']))
+            conn.commit()
+        return {"success": True, "room_code": room_code}
+    finally: conn.close()
+
+@app.post("/api/online/join")
+async def join_room(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False, "msg": "DB Error"}
+    try:
+        room_code = data['room_code'].upper()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
+            if not cur.fetchone(): return {"success": False, "msg": "الغرفة غير موجودة"}
+            cur.execute("INSERT INTO room_players (room_code, user_id, player_name) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                        (room_code, data['user_id'], data['player_name']))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
+@app.post("/api/online/start")
+async def start_online_game(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        room_code = data['room_code'].upper()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
+            room = cur.fetchone()
+            if not room or room['host_id'] != data['user_id']: return {"success": False}
+
+            cur.execute("SELECT player_name FROM room_players WHERE room_code = %s", (room_code,))
+            players = [p['player_name'] for p in cur.fetchall()]
+            if len(players) < 3: return {"success": False, "msg": "أقل عدد لاعبين هو 3"}
+
+            category = room['category'] or "أكلات"
+            words = CATEGORIES.get(category, CATEGORIES["أكلات"])
+            correct = random.choice(words)
+            roles = ["in"] * len(players)
+            spy_idx = random.randint(0, len(players)-1)
+            roles[spy_idx] = "spy"
+            other = [w for w in words if w != correct]
+            guesses = random.sample(other, min(len(other), 6)) + [correct]
+            random.shuffle(guesses)
+
+            q_seq = []
+            n = len(players)
+            for i in range(0, n, 2):
+                if i+1 < n: q_seq.append({"f": players[i], "t": players[i+1]})
+                else: q_seq.append({"f": players[i], "t": players[0]})
+
+            game_data = {
+                "word": correct, "roles": roles, "guesses": guesses,
+                "q_seq": q_seq, "spy_idx": spy_idx, "players": players,
+                "current_phase": "roles", "curr_player_idx": 0
+            }
+
+            cur.execute("UPDATE rooms SET status = 'playing', game_data = %s WHERE room_code = %s",
+                        (json.dumps(game_data), room_code))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
+@app.post("/api/admin/add_word")
+async def add_word(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (data['category'], data['word']))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
+@app.get("/api/admin/words")
+async def get_words():
+    conn = get_db_conn()
+    if not conn: return []
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM words ORDER BY category, word")
+            return cur.fetchall()
+    finally: conn.close()
+
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -120,6 +261,9 @@ HTML_TEMPLATE = """
         .container { width: 95%; max-width: 500px; text-align: center; padding: 20px; box-sizing: border-box; }
         .card { background: var(--card); padding: 30px; border-radius: 30px; box-shadow: 0 15px 35px rgba(0,0,0,0.6); border: 2px solid #3c339e; animation: fadeIn 0.3s ease; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .reveal-text { animation: pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        @keyframes pop { 0% { transform: scale(0.5); } 100% { transform: scale(1); } }
         h1 { font-weight: 900; color: #a29bfe; margin-bottom: 25px; font-size: 32px; }
         input, select { width: 100%; padding: 15px; margin: 10px 0; border-radius: 15px; border: 2px solid #2f278c; background: #0f0c29; color: white; font-size: 16px; box-sizing: border-box; outline: none; }
         button { width: 100%; padding: 16px; margin: 12px 0; border-radius: 18px; border: none; background: linear-gradient(45deg, #6c5ce7, #a29bfe); color: white; font-weight: bold; cursor: pointer; font-size: 18px; transition: 0.3s; }
@@ -188,9 +332,127 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>ابدأ اللعب</h1>
-                    <button onclick="alert('الأونلاين قريباً!')">🌐 أونلاين</button>
+                    <button onclick="showOnlineMenu()">🌐 أونلاين</button>
                     <button style="background:#e056fd" onclick="showSetup(1)">🏠 أوفلاين (مجلس)</button>
                 </div>`;
+        }
+
+        // --- Online Logic ---
+        let currentRoom = null;
+        let pollInterval = null;
+
+        function showOnlineMenu() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h1>اللعب أونلاين</h1>
+                    <button style="background:var(--success)" onclick="createRoom()">إنشاء غرفة جديدة</button>
+                    <div style="margin:20px 0;">
+                        <input id="join_code" placeholder="رمز الغرفة (مثال: ABCD)" style="text-transform:uppercase">
+                        <button onclick="joinRoom()">دخول غرفة</button>
+                    </div>
+                    <button style="background:#636e72" onclick="showMenu()">رجوع</button>
+                </div>`;
+        }
+
+        async function createRoom() {
+            const res = await fetch('/api/online/create', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({user_id: currentUser.user_id, player_name: currentUser.player_name})
+            });
+            const d = await res.json();
+            if(d.success) enterRoom(d.room_code);
+        }
+
+        async function joinRoom() {
+            const code = document.getElementById('join_code').value.trim().toUpperCase();
+            if(!code) return;
+            const res = await fetch('/api/online/join', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({room_code: code, user_id: currentUser.user_id, player_name: currentUser.player_name})
+            });
+            const d = await res.json();
+            if(d.success) enterRoom(code); else alert(d.msg);
+        }
+
+        function enterRoom(code) {
+            currentRoom = code;
+            startPolling();
+            renderRoom();
+        }
+
+        function startPolling() {
+            if(pollInterval) clearInterval(pollInterval);
+            pollInterval = setInterval(updateRoomState, 2000);
+        }
+
+        async function updateRoomState() {
+            if(!currentRoom) return;
+            const res = await fetch(`/api/online/room/${currentRoom}`);
+            const d = await res.json();
+            if(d.success) {
+                window.roomData = d;
+                if(d.room.status === 'playing') {
+                    game = d.room.game_data;
+                    game.isOnline = true;
+                    if(game.current_phase === 'roles') {
+                        showOnlineRole();
+                    }
+                } else {
+                    renderRoom();
+                }
+            }
+        }
+
+        function renderRoom() {
+            if(!window.roomData) {
+                document.getElementById('main-ui').innerHTML = `<div class="card">جاري التحميل...</div>`;
+                return;
+            }
+            const {room, players} = window.roomData;
+            let pList = players.map(p => `<div class="score-item"><span>${p.player_name}</span> ${p.is_ready ? '✅' : '⏳'}</div>`).join('');
+
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>غرفة: <span style="color:var(--accent)">${room.room_code}</span></h2>
+                    <div style="margin:20px 0; text-align:right;">${pList}</div>
+                    ${room.host_id == currentUser.user_id ? `
+                        <select id="online_cat" style="margin-bottom:10px">${["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"].map(c=>`<option value="${c}">${c}</option>`)}</select>
+                        <button onclick="startOnlineGame()">بدء اللعبة</button>` :
+                        '<p>بانتظار المضيف لبدء اللعبة...</p>'}
+                    <button style="background:#636e72" onclick="leaveRoom()">خروج</button>
+                </div>`;
+        }
+
+        async function startOnlineGame() {
+            const res = await fetch('/api/online/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
+            });
+            const d = await res.json();
+            if(!d.success) alert(d.msg || "تعذر بدء اللعبة");
+        }
+
+        function showOnlineRole() {
+            const myIdx = window.roomData.players.findIndex(p => p.user_id === currentUser.user_id);
+            if(myIdx === -1) return;
+
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h3>أنت: <b style="color:var(--accent)">${currentUser.player_name}</b></h3>
+                    <div id="box" style="background:#0f0c29; padding:20px; border-radius:20px; margin:20px 0;">
+                        <h3>${game.roles[myIdx] === 'spy' ? '🕵️ أنت برة السالفة!' : '🤫 السالفة هي: ' + game.word}</h3>
+                    </div>
+                    <p>بانتظار بقية اللاعبين...</p>
+                </div>`;
+        }
+
+        function leaveRoom() {
+            clearInterval(pollInterval);
+            currentRoom = null;
+            showMenu();
         }
 
         function showEditProfile() {
@@ -212,13 +474,31 @@ HTML_TEMPLATE = """
             if(d.success) { alert("تم التحديث! سجل دخولك مجدداً"); logout(); } else alert(d.msg);
         }
 
+        function changePCount(delta) {
+            let inp = document.getElementById('p_count');
+            let val = parseInt(inp.value) + delta;
+            if(val >= 3 && val <= 20) {
+                inp.value = val;
+                localStorage.setItem('pCount', val);
+            }
+        }
+        function saveAndNext() {
+            localStorage.setItem('pCount', document.getElementById('p_count').value);
+            showSetup(2);
+        }
+
         function showSetup(step) {
             if(step === 1) {
+                let savedCount = localStorage.getItem('pCount') || 3;
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
                         <h2>عدد اللاعبين</h2>
-                        <input type="number" id="p_count" value="3" min="3">
-                        <button onclick="showSetup(2)">التالي</button>
+                        <div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin: 20px 0;">
+                            <button onclick="changePCount(-1)" style="width: 60px; margin:0; background:var(--error); font-size: 24px;">-</button>
+                            <input type="number" id="p_count" value="${savedCount}" min="3" style="text-align: center; width: 100px; margin:0; font-size: 24px; font-weight: bold;">
+                            <button onclick="changePCount(1)" style="width: 60px; margin:0; background:var(--success); font-size: 24px;">+</button>
+                        </div>
+                        <button onclick="saveAndNext()">التالي</button>
                         <button style="background:#636e72" onclick="showMenu()">رجوع</button>
                     </div>`;
             } else if(step === 2) {
@@ -241,7 +521,12 @@ HTML_TEMPLATE = """
                         <h2>إعدادات الجولة</h2>
                         <select id="g_cat">${catsHtml}</select>
                         <p>حد الفوز (نقاط):</p>
-                        <select id="win_limit_sel"><option value="300">300 نقطة</option><option value="500">500 نقطة</option><option value="1000" selected>1000 نقطة</option></select>
+                        <select id="win_limit_sel">
+                            <option value="5">5 نقاط</option>
+                            <option value="10" selected>10 نقاط</option>
+                            <option value="15">15 نقطة</option>
+                            <option value="20">20 نقطة</option>
+                        </select>
                         <button onclick="winLimit = parseInt(win_limit_sel.value); start()">ابدأ اللعب الآن</button>
                     </div>`;
             }
@@ -256,13 +541,15 @@ HTML_TEMPLATE = """
 
         function showRole() {
             if(game.curr >= game.players.length) { showPhase1(); return; }
+            // صوت الكشف
+            if(game.curr > 0) playSound('reveal');
             document.getElementById('main-ui').innerHTML = `
-                <div class="card">
+                <div class="card" style="animation: slideIn 0.4s ease-out">
                     <p>مرر الجهاز لـ</p><h2 style="color:var(--accent)">${game.players[game.curr]}</h2>
                     <div id="box" class="hidden" style="background:#0f0c29; padding:20px; border-radius:20px; margin:20px 0;">
-                        <h3>${game.roles[game.curr] === 'spy' ? '🕵️ أنت برة السالفة!' : '🤫 السالفة هي: ' + game.word}</h3>
+                        <h3 class="reveal-text">${game.roles[game.curr] === 'spy' ? '🕵️ أنت برة السالفة!' : '🤫 السالفة هي: ' + game.word}</h3>
                     </div>
-                    <button onclick="document.getElementById('box').classList.remove('hidden'); this.style.display='none'; document.getElementById('bnxt').style.display='block'">اكشف الدور</button>
+                    <button onclick="document.getElementById('box').classList.remove('hidden'); this.style.display='none'; document.getElementById('bnxt').style.display='block'; playSound('click')">اكشف الدور</button>
                     <button id="bnxt" style="display:none" onclick="game.curr++; showRole()">فهمت، التالي</button>
                 </div>`;
         }
@@ -274,7 +561,7 @@ HTML_TEMPLATE = """
                 <div class="card"><span class="q-badge">مرحلة إجبارية</span>
                     <div style="font-size:24px; margin:30px 0;"><b style="color:#a29bfe">${q.f}</b> يسأل <b style="color:#ff7675">${q.t}</b></div>
                     <button onclick="game.qIdx++; showPhase1()">السؤال التالي</button>
-                    <button style="background:#636e72" onclick="startVoting()">إنهاء الجولة والتصويت</button>
+                    <button style="background: #ffec00; color: #1b1464; font-weight: 900; box-shadow: 0 0 20px rgba(255, 236, 0, 0.4);" onclick="startVoting()">إنهاء الجولة والتصويت</button>
                 </div>`;
         }
 
@@ -283,7 +570,7 @@ HTML_TEMPLATE = """
                 <div class="card"><span class="q-badge" style="background:var(--primary)">مرحلة الاختيار الحر</span>
                     <h3>دور <b style="color:var(--accent)">${asker}</b> يختار مين يسأل؟</h3>
                     <div id="plist"></div>
-                    <button style="margin-top:20px; background:#636e72" onclick="startVoting()">بدء التصويت</button>
+                    <button style="margin-top:20px; background: #ffec00; color: #1b1464; font-weight: 900; box-shadow: 0 0 20px rgba(255, 236, 0, 0.4);" onclick="startVoting()">بدء التصويت</button>
                 </div>`;
             game.players.forEach(p => { if(p!==asker && p!==last) document.getElementById('plist').innerHTML += `<button class="vote-item" onclick="showPhase2('${p}', '${asker}')">اسأل ${p}</button>`; });
         }
@@ -348,35 +635,57 @@ HTML_TEMPLATE = """
             const spyGuessedRight = (guessedWord === game.word);
             let roundMsg = "";
 
-            // توزيع النقاط
-            if (game.spyCaught) {
-                if (spyGuessedRight) {
-                    totalScores[spy] += 100;
-                    roundMsg = "الجاسوس انقفط بس عرف السالفة وفاز بالنقاط!";
-                } else {
-                    game.players.forEach(p => { if(p_votes[p] === spy) totalScores[p] += 100; });
-                    roundMsg = "اللاعبين كشفوا الجاسوس وما عرف السالفة! نقاط للاعبين";
+            // توزيع النقاط حسب طلب المستخدم
+            // 1. كل لاعب عرف الجاسوس (صوّت عليه صح) ياخذ نقطة
+            game.players.forEach(p => {
+                if(p_votes[p] === spy) {
+                    totalScores[p] = (totalScores[p] || 0) + 1;
                 }
+            });
+
+            // 2. الجاسوس إذا عرف الشغلة (الكلمة) ياخذ نقطة
+            if (spyGuessedRight) {
+                totalScores[spy] = (totalScores[spy] || 0) + 1;
+                roundMsg = "الجاسوس عرف السالفة وأخذ نقطة!";
             } else {
-                totalScores[spy] += 200;
-                roundMsg = "الجاسوس هرب بذكاء وفاز بنقاط الجولة!";
+                roundMsg = "الجاسوس ما عرف السالفة.";
+            }
+
+            if (game.spyCaught) {
+                roundMsg += " وتم كشفه من اللاعبين (نقاط لمن صوّت صح)!";
+            } else {
+                roundMsg += " وبالرغم من كذا هرب من التصويت!";
             }
 
             // فحص الفائز النهائي
-            let finalWinner = null;
-            for(let p in totalScores) { if(totalScores[p] >= winLimit) finalWinner = p; }
+            let sortedScores = Object.entries(totalScores).sort((a,b) => b[1]-a[1]);
+            let hasWinner = sortedScores.some(s => s[1] >= winLimit);
 
-            if(finalWinner) {
+            if(hasWinner) {
+                playSound('win');
+                let podiumHtml = "";
+                const medals = ["🥇 المركز الأول", "🥈 المركز الثاني", "🥉 المركز الثالث"];
+                const colors = ["gold", "silver", "#cd7f32"];
+
+                for(let i=0; i<3; i++) {
+                    if(sortedScores[i]) {
+                        podiumHtml += `<div style="color:${colors[i]}; font-size:${24-i*2}px; margin:10px 0; font-weight:bold;">
+                            ${medals[i]}: ${sortedScores[i][0]} (${sortedScores[i][1]} نقطة)
+                        </div>`;
+                    }
+                }
+
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
-                        <h1 style="color:var(--accent)">👑 الفائز النهائي 👑</h1>
-                        <h2 style="font-size:50px;">${finalWinner}</h2>
-                        <p>مبروك! وصلت للحد المطلوب: ${totalScores[finalWinner]} نقطة</p>
+                        <h1 style="color:var(--accent)">🏆 النتائج النهائية 🏆</h1>
+                        <div style="margin: 30px 0; background: rgba(0,0,0,0.3); padding: 20px; border-radius: 20px;">
+                            ${podiumHtml}
+                        </div>
                         <button onclick="showMenu()">العودة للقائمة الرئيسية</button>
                     </div>`;
             } else {
                 let scoresList = "";
-                Object.entries(totalScores).sort((a,b) => b[1]-a[1]).forEach(([p, s]) => {
+                sortedScores.forEach(([p, s]) => {
                     scoresList += `<div class="score-item"><span>${p}</span> <b>${s}</b></div>`;
                 });
                 document.getElementById('main-ui').innerHTML = `
@@ -384,7 +693,7 @@ HTML_TEMPLATE = """
                         <h2 style="color:${spyGuessedRight? 'var(--success)':'var(--error)'}">${spyGuessedRight?'صح!':'خطأ!'} السالفة كانت: ${game.word}</h2>
                         <p>${roundMsg}</p>
                         <hr style="border:1px solid #3c339e; margin:15px 0;">
-                        <h3>لوحة الصدارة:</h3>
+                        <h3>لوحة الصدارة (الهدف: ${winLimit}):</h3>
                         <div style="margin-bottom:20px;">${scoresList}</div>
                         <button onclick="start()">بدء جولة جديدة</button>
                         <button style="background:#636e72" onclick="showMenu()">إنهاء الجلسة</button>
@@ -393,8 +702,43 @@ HTML_TEMPLATE = """
         }
 
         function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
-        function updateSidebar() { if(currentUser) document.getElementById('user-display').innerText = currentUser.player_name; }
+        function updateSidebar() { if(currentUser) {
+            document.getElementById('user-display').innerText = currentUser.player_name;
+            if(currentUser.username_key === 'admin') {
+                let btn = document.createElement('button');
+                btn.innerText = "لوحة التحكم (كلمات)";
+                btn.style.background = "var(--accent)";
+                btn.style.color = "black";
+                btn.onclick = showAdminWords;
+                document.getElementById('sidebar').appendChild(btn);
+            }
+        }}
+
+        async function showAdminWords() {
+            toggleSidebar();
+            const res = await fetch('/api/admin/words');
+            const words = await res.json();
+            let h = `<h2>إدارة الكلمات</h2>
+                    <input id="new_cat" placeholder="الفئة">
+                    <input id="new_word" placeholder="الكلمة">
+                    <button onclick="addWord()">إضافة</button><hr>`;
+            words.forEach(w => h += `<div style="display:flex; justify-content:space-between; padding:5px; border-bottom:1px solid #333"><span>${w.category}</span> <b>${w.word}</b></div>`);
+            document.getElementById('main-ui').innerHTML = `<div class="card" style="max-height:80vh; overflow-y:auto;">${h}</div>`;
+        }
+
+        async function addWord() {
+            await fetch('/api/admin/add_word', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({category:new_cat.value, word:new_word.value})});
+            showAdminWords();
+        }
         function logout() { localStorage.clear(); location.reload(); }
+
+        const sounds = {
+            click: new Audio('https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3'),
+            reveal: new Audio('https://assets.mixkit.co/active_storage/sfx/2018/2018-preview.mp3'),
+            win: new Audio('https://assets.mixkit.co/active_storage/sfx/2013/2013-preview.mp3')
+        };
+        function playSound(name) { sounds[name].currentTime = 0; sounds[name].play().catch(()=>null); }
+
         init();
     </script>
 </body>
