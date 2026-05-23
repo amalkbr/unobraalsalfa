@@ -46,8 +46,12 @@ async def on_startup():
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
-    update = types.Update.parse_obj(await request.json())
-    await dp.feed_update(bot, update)
+    try:
+        data = await request.json()
+        update = types.Update.model_validate(data, context={"bot": bot})
+        await dp.feed_update(bot, update)
+    except Exception as e:
+        logging.error(f"Error handling update: {e}")
     return {"ok": True}
 
 @app.get("/")
