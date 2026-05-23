@@ -444,6 +444,26 @@ async def online_action(data: dict):
                     cur.execute("UPDATE rooms SET status = 'playing', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
                     cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
                     conn.commit()
+                    spy_idx = random.randint(0, len(players)-1)
+                    roles[spy_idx] = "spy"
+                    other = [w for w in words if w != correct]
+                    guesses = random.sample(other, min(len(other), 6)) + [correct]
+                    random.shuffle(guesses)
+
+                    q_seq = []
+                    n = len(players)
+                    for i in range(0, n, 2):
+                        if i+1 < n: q_seq.append({"f": players[i], "t": players[i+1]})
+                        else: q_seq.append({"f": players[i], "t": players[0]})
+
+                    game_data = {
+                        "word": correct, "roles": roles, "guesses": guesses,
+                        "q_seq": q_seq, "spy_idx": spy_idx, "players": players,
+                        "current_phase": "roles", "q_idx": 0
+                    }
+                    cur.execute("UPDATE rooms SET status = 'playing', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                    cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
+                    conn.commit()
 
         return {"success": True}
     finally: conn.close()
@@ -619,6 +639,7 @@ HTML_TEMPLATE = """
         input, select { width: 100%; padding: 15px; margin: 10px 0; border-radius: 15px; border: 2px solid #2f278c; background: #0f0c29; color: white; font-size: 16px; box-sizing: border-box; outline: none; }
         button { width: 100%; padding: 16px; margin: 12px 0; border-radius: 18px; border: none; background: linear-gradient(45deg, #6c5ce7, #a29bfe); color: white; font-weight: bold; cursor: pointer; font-size: 18px; transition: 0.3s; }
         button:hover { transform: translateY(-3px); }
+        .btn-yellow { background: linear-gradient(45deg, #f9ca24, #f0932b) !important; color: #1b1464 !important; font-weight: 900 !important; box-shadow: 0 4px 15px rgba(249, 202, 36, 0.3) !important; }
         .sidebar { position: fixed; right: -280px; top: 0; width: 280px; height: 100%; background: #130f40; transition: 0.4s; z-index: 1000; padding: 30px 20px; box-sizing: border-box; border-left: 2px solid var(--primary); }
         .sidebar.open { right: 0; }
         .menu-btn { position: fixed; right: 20px; top: 20px; font-size: 28px; cursor: pointer; z-index: 1001; background: var(--card); width: 50px; height: 50px; border-radius: 15px; text-align: center; line-height: 50px; }
@@ -661,33 +682,16 @@ HTML_TEMPLATE = """
         <div style="background:#1b1464; padding:15px; border-radius:15px; margin:20px 0;">
             <p id="user-display" style="margin:0; font-weight:bold;">زائر</p>
         </div>
-        <button id="install-btn-sidebar" style="background:var(--accent); color:black; font-size:14px; display:none;" onclick="installApp()">📲 تثبيت التطبيق</button>
+        <button id="install-btn-sidebar" style="background:linear-gradient(45deg, #2ecc71, #27ae60); color:white; font-size:14px;" onclick="installApp()">📲 تحميل التطبيق المساعد</button>
         <button style="background:var(--success); font-size:14px;" onclick="showReports()">📊 التقارير والمتصدرين</button>
         <button style="background:var(--primary); font-size:14px;" onclick="showEditProfile()">تعديل بيانات الحساب</button>
         <button style="background:var(--error); font-size:14px;" onclick="logout()">تسجيل الخروج</button>
         <button style="background:#636e72; font-size:14px;" onclick="toggleSidebar()">إغلاق</button>
     </div>
-    <div class="flex-center"><div class="container" id="main-ui"><div class="card">جاري التحميل...</div></div></div>
+    <div class="flex-center"><div class="container" id="main-ui"></div></div>
     <script>
-        window.onerror = function(msg, url, lineNo, columnNo, error) {
-            console.error('Error: ' + msg + '\nScript: ' + url + '\nLine: ' + lineNo + '\nColumn: ' + columnNo + '\nStackTrace: ' + (error ? error.stack : 'N/A'));
-            return false;
-        };
-
-        console.log("Script starting...");
-
-        let currentUser = null;
-        try {
-            currentUser = JSON.parse(localStorage.getItem('user'));
-        } catch (e) {
-            console.error("Error parsing user from localStorage", e);
-            localStorage.removeItem('user');
-        }
-
+        let currentUser = JSON.parse(localStorage.getItem('user')) || null;
         let game = null;
-        let lastPhase = null;
-        let actionInFlight = false;
-        let pollErrorCount = 0;
         let p_votes = {};
         let totalScores = {}; // نقاط الجلسة
         let winLimit = 1000;
@@ -734,61 +738,41 @@ HTML_TEMPLATE = """
         };
 
         function init() {
-            console.log("Initializing app...");
-            try {
-                // Check for /join/CODE path
-                const pathParts = window.location.pathname.split('/');
-                let joinCode = null;
-                if (pathParts[1] === 'join' && pathParts[2]) {
-                    joinCode = pathParts[2];
-                    window.history.replaceState({}, document.title, "/");
-                }
+            fetchSettings();
+            // Check for /join/CODE path
+            const pathParts = window.location.pathname.split('/');
+            let joinCode = null;
+            if (pathParts[1] === 'join' && pathParts[2]) {
+                joinCode = pathParts[2];
+                window.history.replaceState({}, document.title, "/");
+            }
 
-                // Also check for ?join=CODE param
-                const urlParams = new URLSearchParams(window.location.search);
-                if (!joinCode) joinCode = urlParams.get('join');
+            // Also check for ?join=CODE param
+            const urlParams = new URLSearchParams(window.location.search);
+            if (!joinCode) joinCode = urlParams.get('join');
 
-                if (joinCode) {
-                    if (!urlParams.get('join')) window.history.replaceState({}, document.title, window.location.pathname);
-                    localStorage.setItem('pendingJoin', joinCode);
-                }
+            if (joinCode) {
+                if (!urlParams.get('join')) window.history.replaceState({}, document.title, window.location.pathname);
+                localStorage.setItem('pendingJoin', joinCode);
+            }
 
-                if (currentUser) {
-                    console.log("User found, showing menu...");
-                    showMenu(false);
-                    history.replaceState({ screen: 'menu' }, "");
-                } else {
-                    console.log("No user found, showing auth...");
-                    showAuth();
-                }
+            if (currentUser) {
+                showMenu(false);
+                history.replaceState({ screen: 'menu' }, "");
+            } else {
+                showAuth();
+            }
 
-                updateSidebar();
-
-                // Start background tasks
-                console.log("Starting background tasks...");
-                fetchSettings();
-
-                if (currentUser && localStorage.getItem('pendingJoin')) {
-                    const code = localStorage.getItem('pendingJoin');
-                    localStorage.removeItem('pendingJoin');
-                    joinRoomByCode(code);
-                }
-            } catch (e) {
-                console.error("Initialization error:", e);
-                // Fallback attempt to show auth if everything fails
-                try { showAuth(); } catch(e2) { console.error("Total failure", e2); }
+            updateSidebar();
+            if (currentUser && localStorage.getItem('pendingJoin')) {
+                const code = localStorage.getItem('pendingJoin');
+                localStorage.removeItem('pendingJoin');
+                joinRoomByCode(code);
             }
         }
 
         function showAuth() {
-            console.log("Rendering Auth Screen...");
-            const container = document.getElementById('main-ui');
-            if (!container) {
-                console.error("CRITICAL: main-ui container not found!");
-                return;
-            }
-            try {
-                container.innerHTML = `
+            document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>🕵️ برا السالفة</h1>
                     <input id="u_name" placeholder="اليوزر نيم">
@@ -798,75 +782,33 @@ HTML_TEMPLATE = """
                     <input id="r_nick" placeholder="الاسم المستعار (يظهر للجميع)">
                     <button style="background:#4834d4" onclick="register()">إنشاء حساب</button>
                 </div>`;
-            } catch (e) {
-                console.error("Error setting Auth Screen innerHTML:", e);
-            }
         }
 
         async function login() {
-            const u = document.getElementById('u_name').value;
-            const p = document.getElementById('u_pass').value;
-            try {
-                const res = await fetch('/api/auth/login', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({username: u, password: p})
-                });
-                const d = await res.json();
-                if(d.success) {
-                    localStorage.setItem('user', JSON.stringify(d.user));
-                    currentUser = d.user;
-                    init();
-                } else {
-                    alert(d.msg);
-                }
-            } catch (e) {
-                console.error("Login failed", e);
-                alert("حدث خطأ في الاتصال بالسيرفر");
-            }
+            const res = await fetch('/api/auth/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u_name.value, password: u_pass.value})});
+            const d = await res.json();
+            if(d.success) { localStorage.setItem('user', JSON.stringify(d.user)); currentUser = d.user; init(); } else alert(d.msg);
         }
 
         async function register() {
-            const u = document.getElementById('u_name').value;
-            const p = document.getElementById('u_pass').value;
-            const n = document.getElementById('r_nick').value;
-            if(!u || !p || !n) return alert("املأ كل الحقول!");
-            try {
-                const res = await fetch('/api/auth/register', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({username: u, password: p, name: n})
-                });
-                const d = await res.json();
-                d.success ? alert("تم التسجيل! ادخل الآن") : alert(d.msg);
-            } catch (e) {
-                console.error("Registration failed", e);
-                alert("حدث خطأ في الاتصال بالسيرفر");
-            }
+            if(!u_name.value || !u_pass.value || !r_nick.value) return alert("املأ كل الحقول!");
+            const res = await fetch('/api/auth/register', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u_name.value, password: u_pass.value, name: r_nick.value})});
+            const d = await res.json();
+            d.success ? alert("تم التسجيل! ادخل الآن") : alert(d.msg);
         }
 
         function showMenu(push = true) {
-            console.log("Rendering Menu Screen...");
             if(timerInterval) clearInterval(timerInterval);
             if(push) history.pushState({screen: 'menu'}, "");
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'none';
             game = null;
             totalScores = {}; // ريست للنقاط عند العودة للقائمة
-            const container = document.getElementById('main-ui');
-            if (!container) {
-                console.error("CRITICAL: main-ui container not found in showMenu!");
-                return;
-            }
-            try {
-                container.innerHTML = `
+            document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>ابدأ اللعب</h1>
                     <button class="btn-yellow" onclick="navigateTo('online_menu')">🌐 أونلاين</button>
                     <button class="btn-yellow" style="background:linear-gradient(45deg, #e056fd, #be2edd) !important; color:white !important;" onclick="navigateTo('setup', {step: 1})">🏠 أوفلاين (مجلس)</button>
                 </div>`;
-            } catch (e) {
-                console.error("Error setting Menu Screen innerHTML:", e);
-            }
         }
 
         // --- Online Logic ---
@@ -878,16 +820,16 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>اللعب أونلاين</h1>
-                    <button style="background:var(--success)" onclick="createRoom(event)">إنشاء غرفة جديدة</button>
+                    <button style="background:var(--success)" onclick="createRoom()">إنشاء غرفة جديدة</button>
                     <div style="margin:20px 0;">
                         <input id="join_code" placeholder="رمز الغرفة (مثال: ABCD)" style="text-transform:uppercase">
-                        <button onclick="joinRoom(event)">دخول غرفة</button>
+                        <button onclick="joinRoom()">دخول غرفة</button>
                     </div>
                     <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
                 </div>`;
         }
 
-        async function createRoom(event) {
+        async function createRoom() {
             const btn = (event && event.target) ? event.target : null;
             let originalText = "";
             if(btn) {
@@ -912,7 +854,7 @@ HTML_TEMPLATE = """
             }
         }
 
-        async function joinRoom(event) {
+        async function joinRoom() {
             const btn = (event && event.target) ? event.target : null;
             let originalText = "";
             const code = document.getElementById('join_code').value.trim().toUpperCase();
@@ -952,56 +894,28 @@ HTML_TEMPLATE = """
         }
 
         async function updateRoomState() {
-            if(!currentRoom || actionInFlight) return;
-            try {
-                const res = await fetch(`/api/online/room/${currentRoom}`);
-                if (!res.ok) throw new Error("Room not found");
-                const d = await res.json();
-
-                if(d.success) {
-                    pollErrorCount = 0;
-                    window.roomData = d;
-
-                    if(d.room.status === 'playing') {
-                        const newGame = d.room.game_data;
-                        newGame.isOnline = true;
-
-                        // فقط نقوم بالتحديث إذا تغيرت المرحلة أو البيانات الأساسية
-                        const phaseChanged = (lastPhase !== newGame.current_phase);
-                        const qChanged = (game && game.q_idx !== newGame.q_idx);
-                        const votesChanged = (game && JSON.stringify(game.votes) !== JSON.stringify(newGame.votes));
-
-                        game = newGame;
-
-                        if (phaseChanged || qChanged || votesChanged) {
-                            lastPhase = newGame.current_phase;
-                            renderOnlineGame();
-                        }
-                    } else {
-                        lastPhase = 'waiting';
-                        renderRoom();
+            if(!currentRoom) return;
+            const res = await fetch(`/api/online/room/${currentRoom}`);
+            const d = await res.json();
+            if(d.success) {
+                window.roomData = d;
+                if(d.room.status === 'playing') {
+                    game = d.room.game_data;
+                    game.isOnline = true;
+                    if(game.current_phase === 'roles') {
+                        showOnlineRole();
+                    } else if(game.current_phase === 'questions') {
+                        showOnlineQuestions();
+                    } else if(game.current_phase === 'voting') {
+                        showOnlineVoting();
+                    } else if(game.current_phase === 'reveal') {
+                        showOnlineReveal();
+                    } else if(game.current_phase === 'result') {
+                        showOnlineResult();
                     }
                 } else {
-                    throw new Error(d.msg || "Room error");
+                    renderRoom();
                 }
-            } catch(e) {
-                console.error("Polling error:", e);
-                pollErrorCount++;
-                if (pollErrorCount > 5) {
-                    alert("انقطع الاتصال بالغرفة");
-                    leaveRoom();
-                }
-            }
-        }
-
-        function renderOnlineGame() {
-            if (!game) return;
-            switch(game.current_phase) {
-                case 'roles': showOnlineRole(); break;
-                case 'questions': showOnlineQuestions(); break;
-                case 'voting': showOnlineVoting(); break;
-                case 'reveal': showOnlineReveal(); break;
-                case 'result': showOnlineResult(); break;
             }
         }
 
@@ -1022,16 +936,10 @@ HTML_TEMPLATE = """
                     <button style="background:var(--primary); margin-bottom:10px; font-size:14px;" onclick="copyInviteLink()">🔗 نسخ رابط الدعوة</button>
                     <div style="margin:10px 0; text-align:right;">${pList}</div>
                     ${room.host_id == currentUser.user_id ? `
-<<<<<<< HEAD
                         <select id="online_cat" style="margin-bottom:10px">${catOptions || '<option>أكلات</option>'}</select>
-                        <button class="btn-yellow" onclick="startOnlineGame(event)">بدء اللعبة</button>` :
+                        <button class="btn-yellow" onclick="startOnlineGame()">بدء اللعبة</button>` :
                         `<p>الفئة: <b style="color:var(--accent)">${room.category || 'أكلات'}</b></p>
                          <p>بانتظار المضيف لبدء اللعبة...</p>`}
-=======
-                        <select id="online_cat" style="margin-bottom:10px">${["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"].map(c=>`<option value="${c}">${c}</option>`)}</select>
-                        <button onclick="startOnlineGame()">بدء اللعبة</button>` :
-                        '<p>بانتظار المضيف لبدء اللعبة...</p>'}
->>>>>>> parent of 314d68f (بي)
                     <button style="background:#636e72" onclick="leaveRoom()">خروج</button>
                 </div>`;
         }
@@ -1053,15 +961,11 @@ HTML_TEMPLATE = """
             if(d.success) enterRoom(code); else alert(d.msg);
         }
 
-<<<<<<< HEAD
-        async function startOnlineGame(event) {
-            const btn = (event && event.target) ? event.target : null;
-            let originalText = "";
-            if(btn) {
-                originalText = btn.innerHTML;
-                btn.disabled = true;
-                btn.innerHTML = "جاري التحميل...";
-            }
+        async function startOnlineGame() {
+            const btn = event.target;
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = "جاري التحميل...";
 
             const catEl = document.getElementById('online_cat');
             const selectedCategory = catEl ? catEl.value : "أكلات";
@@ -1087,17 +991,6 @@ HTML_TEMPLATE = """
                 btn.disabled = false;
                 btn.innerHTML = originalText;
             }
-=======
-        async function startOnlineGame() {
-            if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'block';
-            const res = await fetch('/api/online/start', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
-            });
-            const d = await res.json();
-            if(!d.success) alert(d.msg || "تعذر بدء اللعبة");
->>>>>>> parent of 314d68f (بي)
         }
 
         function showOnlineRole() {
@@ -1120,55 +1013,30 @@ HTML_TEMPLATE = """
                     <div id="box" style="background:#0f0c29; padding:20px; border-radius:20px; margin:20px 0;">
                         <h3>${game.roles[myIdx] === 'spy' ? '🕵️ أنت برة السالفة!' : '🤫 السالفة هي: ' + game.word}</h3>
                     </div>
-                    <button onclick="onlineAction(event, 'ready_role')">فهمت، جاهز</button>
+                    <button onclick="onlineAction('ready_role')">فهمت، جاهز</button>
                 </div>`;
         }
 
-<<<<<<< HEAD
-        async function onlineAction(event, action, extra = {}) {
-            if (actionInFlight) return;
-
-            const btn = (event && event.currentTarget && event.currentTarget.tagName === 'BUTTON') ? event.currentTarget :
-                        ((event && event.target && event.target.tagName === 'BUTTON') ? event.target : null);
-
+        async function onlineAction(action, extra = {}) {
+            const btn = (event && event.target && event.target.tagName === 'BUTTON') ? event.target : null;
             let originalText = "";
             if (btn) {
                 originalText = btn.innerHTML;
                 btn.disabled = true;
-                btn.innerHTML = "جاري الحفظ...";
+                btn.innerHTML = "جاري...";
             }
-
-            actionInFlight = true;
             try {
-                const res = await fetch('/api/online/action', {
+                await fetch('/api/online/action', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id, action, ...extra})
                 });
-                const d = await res.json();
-                if (!d.success) alert(d.msg || "حدث خطأ");
-
-                // نعطي مهلة بسيطة للسيرفر ليتحدث قبل استئناف البولينج
-                setTimeout(() => {
-                    actionInFlight = false;
-                    updateRoomState();
-                }, 500);
             } catch (e) {
-                console.error("Action error:", e);
-                actionInFlight = false;
                 if (btn) {
                     btn.disabled = false;
                     btn.innerHTML = originalText;
                 }
             }
-=======
-        async function onlineAction(action, extra = {}) {
-            await fetch('/api/online/action', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id, action, ...extra})
-            });
->>>>>>> parent of 314d68f (بي)
         }
 
         function showOnlineQuestions() {
@@ -1181,11 +1049,7 @@ HTML_TEMPLATE = """
                     <div style="font-size:24px; margin:30px 0;">
                         <b style="color:#a29bfe">${q.f}</b> يسأل <b style="color:#ff7675">${q.t}</b>
                     </div>
-<<<<<<< HEAD
-                    ${isHost ? `<button class="btn-yellow" onclick="onlineAction(event, 'next_question')">السؤال التالي</button>` : `<p>بانتظار المضيف...</p>`}
-=======
-                    ${isHost ? `<button onclick="onlineAction('next_question')">السؤال التالي</button>` : `<p>بانتظار المضيف...</p>`}
->>>>>>> parent of 314d68f (بي)
+                    ${isHost ? `<button class="btn-yellow" onclick="onlineAction('next_question')">السؤال التالي</button>` : `<p>بانتظار المضيف...</p>`}
                 </div>`;
         }
 
@@ -1203,7 +1067,7 @@ HTML_TEMPLATE = """
 
             game.players.forEach(p => {
                 let btn = document.createElement('button'); btn.className = 'vote-item'; btn.innerText = p;
-                btn.onclick = (e) => onlineAction(e, 'vote', {target: p});
+                btn.onclick = () => onlineAction('vote', {target: p});
                 document.getElementById('vbox').appendChild(btn);
             });
         }
@@ -1214,7 +1078,7 @@ HTML_TEMPLATE = """
 
             if(isSpy) {
                 let h = `<h3>كشفوك! خمن وش السالفة؟</h3>`;
-                game.guesses.forEach(g => h += `<div class="vote-item" onclick="onlineAction(event, 'spy_guess', {guess: '${g}'})">${g}</div>`);
+                game.guesses.forEach(g => h += `<div class="vote-item" onclick="onlineAction('spy_guess', {guess: '${g}'})">${g}</div>`);
                 document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
             } else {
                 document.getElementById('main-ui').innerHTML = `
@@ -1244,23 +1108,15 @@ HTML_TEMPLATE = """
                     <hr style="border:1px solid #3c339e; margin:15px 0;">
                     <h3>النقاط الحالية:</h3>
                     <div style="margin-bottom:20px;">${scoresList}</div>
-<<<<<<< HEAD
-                    ${isHost ? `<button class="btn-yellow" onclick="startOnlineGame(event)">جولة جديدة</button>` : `<p>بانتظار المضيف لبدء جولة جديدة...</p>`}
-=======
-                    ${isHost ? `<button onclick="startOnlineGame()">جولة جديدة</button>` : `<p>بانتظار المضيف لبدء جولة جديدة...</p>`}
->>>>>>> parent of 314d68f (بي)
+                    ${isHost ? `<button class="btn-yellow" onclick="startOnlineGame()">جولة جديدة</button>` : `<p>بانتظار المضيف لبدء جولة جديدة...</p>`}
                     <button style="background:#636e72" onclick="leaveRoom()">خروج من الغرفة</button>
                 </div>`;
         }
 
         function leaveRoom() {
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'none';
-            if(pollInterval) clearInterval(pollInterval);
-            pollInterval = null;
+            clearInterval(pollInterval);
             currentRoom = null;
-            lastPhase = null;
-            actionInFlight = false;
-            pollErrorCount = 0;
             showMenu();
         }
 
@@ -1281,31 +1137,9 @@ HTML_TEMPLATE = """
         }
 
         async function updateProfile() {
-            const u = document.getElementById('edit_u').value;
-            const n = document.getElementById('edit_n').value;
-            const p = document.getElementById('edit_p').value;
-            try {
-                const res = await fetch('/api/auth/update', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        old_username: currentUser.username_key,
-                        username: u,
-                        password: p,
-                        name: n
-                    })
-                });
-                const d = await res.json();
-                if(d.success) {
-                    alert("تم التحديث! سجل دخولك مجدداً");
-                    logout();
-                } else {
-                    alert(d.msg);
-                }
-            } catch (e) {
-                console.error("Profile update failed", e);
-                alert("حدث خطأ أثناء التحديث");
-            }
+            const res = await fetch('/api/auth/update', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({old_username: currentUser.username_key, username: edit_u.value, password: edit_p.value, name: edit_n.value})});
+            const d = await res.json();
+            if(d.success) { alert("تم التحديث! سجل دخولك مجدداً"); logout(); } else alert(d.msg);
         }
 
         function changePCount(delta) {
@@ -1440,7 +1274,7 @@ HTML_TEMPLATE = """
                             <input type="number" id="p_count" value="${savedCount}" min="3" style="text-align: center; width: 100px; margin:0; font-size: 24px; font-weight: bold;">
                             <button onclick="changePCount(1)" style="width: 60px; margin:0; background:var(--success); font-size: 24px;">+</button>
                         </div>
-                        <button onclick="saveAndNext()">التالي</button>
+                        <button class="btn-yellow" onclick="saveAndNext()">التالي</button>
                         <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
                     </div>`;
             } else if(step === 2) {
@@ -1482,7 +1316,7 @@ HTML_TEMPLATE = """
                         من أصل
                         <span id="required_n_summary" style="font-weight:bold;">${targetN}</span> لاعبين
                     </p>
-                    <button onclick="confirmPlayersAndNext()">التالي</button>`;
+                    <button class="btn-yellow" onclick="confirmPlayersAndNext()">التالي</button>`;
 
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
@@ -1520,11 +1354,7 @@ HTML_TEMPLATE = """
                         </div>
                         <input type="hidden" id="win_limit_val" value="10">
 
-<<<<<<< HEAD
-                        <button class="btn-yellow" onclick="startGameFinal(event)">ابدأ اللعب الآن</button>
-=======
-                        <button onclick="startGameFinal()">ابدأ اللعب الآن</button>
->>>>>>> parent of 314d68f (بي)
+                        <button class="btn-yellow" onclick="startGameFinal()">ابدأ اللعب الآن</button>
                     </div>`;
             }
         }
@@ -1541,43 +1371,42 @@ HTML_TEMPLATE = """
             document.getElementById('selected_cat').value = name;
         }
 
-        function startGameFinal(event) {
+        function startGameFinal() {
             const cat = document.getElementById('selected_cat').value;
             if(!cat) return alert("اختر فئة أولاً!");
             winLimit = parseInt(document.getElementById('win_limit_val').value);
-<<<<<<< HEAD
 
-            const btn = (event && event.target) ? event.target : null;
-            if (btn) {
-                btn.disabled = true;
-                btn.innerHTML = "جاري التحميل...";
-            }
+            const btn = event.target;
+            btn.disabled = true;
+            btn.innerHTML = "جاري التحميل...";
 
-            start(event, cat);
+            start(cat);
         }
 
-        async function start(event, category) {
+        async function start(category) {
             const btn = (event && event.target && event.target.tagName === 'BUTTON') ? event.target : null;
             if (btn) {
                 btn.disabled = true;
                 btn.innerHTML = "جاري التحميل...";
             }
-=======
-            start(cat);
-        }
-
-        async function start(category) {
->>>>>>> parent of 314d68f (بي)
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'block';
             const players = window.pNamesSave;
             if(Object.keys(totalScores).length === 0) players.forEach(p => totalScores[p] = 0);
-            const res = await fetch('/api/game/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({players, category})});
-            game = await res.json();
-            game.players = players;
-            game.category = category; // حفظ الفئة للجولة القادمة
-            game.curr = 0;
-            game.qIdx = 0;
-            showRole();
+            try {
+                const res = await fetch('/api/game/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({players, category})});
+                game = await res.json();
+                game.players = players;
+                game.category = category; // حفظ الفئة للجولة القادمة
+                game.curr = 0;
+                game.qIdx = 0;
+                showRole();
+            } catch (e) {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = "بدء جولة جديدة";
+                }
+                alert("حدث خطأ أثناء بدء اللعبة");
+            }
         }
 
         function showRole() {
@@ -1591,7 +1420,7 @@ HTML_TEMPLATE = """
                         <h3 class="reveal-text">${game.roles[game.curr] === 'spy' ? '🕵️ أنت برة السالفة!' : '🤫 السالفة هي: ' + game.word}</h3>
                     </div>
                     <button onclick="document.getElementById('box').classList.remove('hidden'); this.style.display='none'; document.getElementById('bnxt').style.display='block'; playSound('click')">اكشف الدور</button>
-                    <button id="bnxt" style="display:none" onclick="game.curr++; showRole()">فهمت، التالي</button>
+                    <button id="bnxt" class="btn-yellow" style="display:none" onclick="game.curr++; showRole()">فهمت، التالي</button>
                 </div>`;
         }
 
@@ -1623,7 +1452,7 @@ HTML_TEMPLATE = """
                         </div>
                     </div>
                     <div style="font-size:24px; margin:30px 0;"><b style="color:#a29bfe">${q.f}</b> يسأل <b style="color:#ff7675">${q.t}</b></div>
-                    <button onclick="clearInterval(timerInterval); game.qIdx++; showPhase1()">السؤال التالي</button>
+                    <button class="btn-yellow" onclick="clearInterval(timerInterval); game.qIdx++; showPhase1()">السؤال التالي</button>
                     <button style="background: #ffec00; color: #1b1464; font-weight: 900; box-shadow: 0 0 20px rgba(255, 236, 0, 0.4);" onclick="clearInterval(timerInterval); startVoting()">إنهاء الجولة والتصويت</button>
                 </div>`;
             startTimer(() => {
@@ -1722,7 +1551,7 @@ HTML_TEMPLATE = """
                         <h2 style="color:var(--error); font-size:40px;">${spy}</h2>
                         <div style="background:#0f0c29; padding:15px; border-radius:15px; margin:20px 0; text-align:right;">${resultsHtml}</div>
                         <h3>${game.spyCaught ? '🚨 تم كشف الجاسوس!' : '🏃 هرب الجاسوس!'}</h3>
-                        <button onclick="spyGuess()">التالي</button>
+                        <button class="btn-yellow" onclick="spyGuess()">التالي</button>
                     </div>`;
             }, 2000);
         }
@@ -1833,11 +1662,7 @@ HTML_TEMPLATE = """
                         <hr style="border:1px solid #3c339e; margin:15px 0;">
                         <h3>لوحة الصدارة (الهدف: ${winLimit}):</h3>
                         <div style="margin-bottom:20px;">${scoresList}</div>
-<<<<<<< HEAD
-                        <button class="btn-yellow" onclick="start(event, game.category)">بدء جولة جديدة</button>
-=======
-                        <button onclick="start(game.category)">بدء جولة جديدة</button>
->>>>>>> parent of 314d68f (بي)
+                        <button class="btn-yellow" onclick="start(game.category)">بدء جولة جديدة</button>
                         <button style="background:#636e72" onclick="showMenu()">إنهاء الجلسة</button>
                     </div>`;
             }
@@ -2180,16 +2005,19 @@ HTML_TEMPLATE = """
         }
 
         async function installApp() {
-            if (!deferredPrompt) return;
-            deferredPrompt.prompt();
-            const { outcome } = await deferredPrompt.userChoice;
-            if (outcome === 'accepted') {
-                console.log('User accepted install');
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                const { outcome } = await deferredPrompt.userChoice;
+                if (outcome === 'accepted') {
+                    console.log('User accepted install');
+                }
+                deferredPrompt = null;
+                const banner = document.getElementById('install-banner');
+                if (banner) banner.remove();
+            } else {
+                // تعليمات للمتصفحات التي لا تدعم التثبيت التلقائي (مثل Safari على iOS)
+                alert("لتثبيت التطبيق على جهازك:\n\n1. اضغط على زر 'مشاركة' (Share) في المتصفح.\n2. اختر 'إضافة إلى الشاشة الرئيسية' (Add to Home Screen).\n\nهذا سيجعل التطبيق يعمل كبرنامج مستقل مرتبط بالمتصفح.");
             }
-            deferredPrompt = null;
-            updateInstallButtonVisibility();
-            const banner = document.getElementById('install-banner');
-            if (banner) banner.remove();
         }
 
         init();

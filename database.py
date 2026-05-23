@@ -104,6 +104,20 @@ def init_db():
                     total_points INT DEFAULT 0,
                     PRIMARY KEY (player_name, creator_id))''')
 
+    # 7. جدول الإعدادات
+    cur.execute('''CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT)''')
+
+    # الإعدادات الافتراضية
+    default_settings = [
+        ('vote_timeout', '10'),
+        ('spy_guess_timeout', '15'),
+        ('question_timeout', '30')
+    ]
+    for key, val in default_settings:
+        cur.execute("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING", (key, val))
+
     # تحديثات إجبارية (في حال كانت الجداول منشأة سابقاً بدون هذه الأعمدة)
     alter_queries = [
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS username_key VARCHAR(50) UNIQUE;",
