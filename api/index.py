@@ -678,7 +678,7 @@ HTML_TEMPLATE = """
         <div style="background:#1b1464; padding:15px; border-radius:15px; margin:20px 0;">
             <p id="user-display" style="margin:0; font-weight:bold;">زائر</p>
         </div>
-        <button id="install-btn-sidebar" style="background:var(--accent); color:black; font-size:14px;" onclick="installApp()">📲 تثبيت التطبيق</button>
+        <button id="install-btn-sidebar" style="background:var(--accent); color:black; font-size:14px; display:none;" onclick="installApp()">📲 تثبيت التطبيق</button>
         <button style="background:var(--success); font-size:14px;" onclick="showReports()">📊 التقارير والمتصدرين</button>
         <button style="background:var(--primary); font-size:14px;" onclick="showEditProfile()">تعديل بيانات الحساب</button>
         <button style="background:var(--error); font-size:14px;" onclick="logout()">تسجيل الخروج</button>
@@ -756,7 +756,6 @@ HTML_TEMPLATE = """
             }
 
             updateSidebar();
-            updateInstallButtonVisibility();
             if (currentUser && localStorage.getItem('pendingJoin')) {
                 const code = localStorage.getItem('pendingJoin');
                 localStorage.removeItem('pendingJoin');
@@ -1964,17 +1963,13 @@ HTML_TEMPLATE = """
             updateInstallButtonVisibility();
         });
 
-        function isStandalone() {
-            return (window.matchMedia('(display-mode: standalone)').matches) || (window.navigator.standalone) || document.referrer.includes('android-app://');
-        }
-
         function updateInstallButtonVisibility() {
             const btn = document.getElementById('install-btn-sidebar');
             if (btn) {
-                if (isStandalone()) {
-                    btn.style.display = 'none';
+                if (deferredPrompt) {
+                    btn.style.setProperty('display', 'block', 'important');
                 } else {
-                    btn.style.display = 'block';
+                    btn.style.setProperty('display', 'none', 'important');
                 }
             }
         }
@@ -1995,15 +1990,7 @@ HTML_TEMPLATE = """
         }
 
         async function installApp() {
-            if (!deferredPrompt) {
-                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-                if (isIOS) {
-                    alert("لتثبيت التطبيق على iPhone:\n١. اضغط على زر المشاركة (Share) أسفل الشاشة\n٢. اختر 'إضافة إلى الشاشة الرئيسية' (Add to Home Screen)");
-                } else {
-                    alert("لتثبيت التطبيق:\n١. اضغط على زر الخيارات (⋮) في أعلى المتصفح\n٢. اختر 'تثبيت التطبيق' أو 'إضافة إلى الشاشة الرئيسية'");
-                }
-                return;
-            }
+            if (!deferredPrompt) return;
             deferredPrompt.prompt();
             const { outcome } = await deferredPrompt.userChoice;
             if (outcome === 'accepted') {
