@@ -77,12 +77,22 @@ def init_db():
                     id SERIAL PRIMARY KEY,
                     name TEXT UNIQUE,
                     image_url TEXT,
-                    display_order INTEGER DEFAULT 0
+                    display_order INTEGER DEFAULT 0,
+                    suggested_by TEXT
                 );
                 CREATE TABLE IF NOT EXISTS words (
                     id SERIAL PRIMARY KEY,
                     category TEXT REFERENCES categories(name) ON DELETE CASCADE,
                     word TEXT
+                );
+                CREATE TABLE IF NOT EXISTS category_suggestions (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT,
+                    image_url TEXT,
+                    words JSONB,
+                    suggested_by TEXT,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
@@ -96,6 +106,7 @@ def init_db():
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS saved_players JSONB DEFAULT '[]';
                 ALTER TABLE room_players ADD COLUMN IF NOT EXISTS join_order SERIAL;
                 ALTER TABLE categories ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0;
+                ALTER TABLE categories ADD COLUMN IF NOT EXISTS suggested_by TEXT;
             """)
 
             # --- Seeding Data ---
@@ -453,7 +464,13 @@ async def add_word(data: dict):
     if not conn: return {"success": False}
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (data['category'], data['word']))
+            if 'words' in data and isinstance(data['words'], list):
+                for raw_word in data['words']:
+                    word = str(raw_word).strip()
+                    if word:
+                        cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (data['category'], word))
+            else:
+                cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (data['category'], data['word']))
             conn.commit()
         return {"success": True}
     finally: conn.close()
@@ -559,6 +576,83 @@ async def delete_word(data: dict):
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM words WHERE id = %s", (data['id'],))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
+@app.post("/api/suggest/category")
+async def suggest_category(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False, "error": "db"}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM categories WHERE LOWER(name) = LOWER(%s)", (data['name'],))
+            if cur.fetchone():
+                return {"success": False, "error": "exists", "message": "الفئة موجودة بالفعل."}
+            cur.execute("INSERT INTO category_suggestions (name, image_url, words, suggested_by) VALUES (%s, %s, %s, %s)",
+                        (data['name'], data.get('image_url'), json.dumps(data.get('words', [])), data.get('suggested_by')))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
+@app.get("/api/admin/category_suggestions")
+async def admin_get_category_suggestions():
+    conn = get_db_conn()
+    if not conn: return []
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM category_suggestions WHERE status = 'pending' ORDER BY created_at DESC")
+            return cur.fetchall()
+    finally: conn.close()
+
+@app.get("/api/admin/category_suggestions/count")
+async def admin_category_suggestions_count():
+    conn = get_db_conn()
+    if not conn: return {"count": 0}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS count FROM category_suggestions WHERE status = 'pending'")
+            return {"count": cur.fetchone()[0]}
+    finally: conn.close()
+
+@app.post("/api/admin/category_suggestions/approve")
+async def admin_approve_category_suggestion(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM category_suggestions WHERE id = %s", (data['id'],))
+            suggestion = cur.fetchone()
+            if not suggestion:
+                return {"success": False, "error": "not_found"}
+            category_name = suggestion[1] if isinstance(suggestion, tuple) else suggestion['name']
+            image_url = suggestion[2] if isinstance(suggestion, tuple) else suggestion['image_url']
+            words = json.loads(suggestion[3]) if isinstance(suggestion, tuple) else suggestion['words']
+            suggested_by = suggestion[4] if isinstance(suggestion, tuple) else suggestion['suggested_by']
+            cur.execute("SELECT 1 FROM categories WHERE LOWER(name) = LOWER(%s)", (category_name,))
+            if cur.fetchone():
+                cur.execute("UPDATE category_suggestions SET status = 'rejected' WHERE id = %s", (data['id'],))
+                conn.commit()
+                return {"success": False, "error": "exists", "message": "الفئة موجودة بالفعل."}
+            cur.execute("INSERT INTO categories (name, image_url, display_order, suggested_by) VALUES (%s, %s, %s, %s)",
+                        (category_name, image_url, 0, suggested_by))
+            if isinstance(words, list):
+                for word in words:
+                    clean_word = str(word).strip()
+                    if clean_word:
+                        cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (category_name, clean_word))
+            cur.execute("UPDATE category_suggestions SET status = 'approved' WHERE id = %s", (data['id'],))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
+@app.post("/api/admin/category_suggestions/reject")
+async def admin_reject_category_suggestion(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE category_suggestions SET status = 'rejected' WHERE id = %s", (data['id'],))
             conn.commit()
         return {"success": True}
     finally: conn.close()
@@ -692,6 +786,7 @@ HTML_TEMPLATE = """
             <p id="user-display" style="margin:0; font-weight:bold;">زائر</p>
         </div>
         <button id="install-btn-sidebar" style="background:var(--accent); color:black; font-size:14px; display:none;" onclick="installApp()">📲 تثبيت التطبيق</button>
+        <button style="background:#ff9f43; font-size:14px;" onclick="showSuggestCategory()">💡 اقتراح فئات</button>
         <button style="background:var(--success); font-size:14px;" onclick="showReports()">📊 التقارير والمتصدرين</button>
         <button style="background:var(--primary); font-size:14px;" onclick="showEditProfile()">تعديل بيانات الحساب</button>
         <button style="background:var(--error); font-size:14px;" onclick="logout()">تسجيل الخروج</button>
@@ -1919,11 +2014,15 @@ HTML_TEMPLATE = """
                 history.pushState({screen: 'admin'}, "");
                 toggleSidebar();
             }
+            const resCount = await fetch('/api/admin/category_suggestions/count');
+            const pendingCountData = await resCount.json();
+            const pendingCount = pendingCountData.count || 0;
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h2>لوحة التحكم الإدارية</h2>
                     <button onclick="adminManagePlayers()">👥 إدارة اللاعبين</button>
                     <button onclick="adminManageCategories()">📂 إدارة الفئات والكلمات</button>
+                    <button onclick="adminManageCategorySuggestions()">📝 اقتراحات الفئات ${pendingCount > 0 ? '(' + pendingCount + ')' : ''}</button>
                     <button onclick="adminManageTimeouts()">⏱️ إعدادات المهل الزمنية</button>
                     <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
                 </div>`;
@@ -2004,6 +2103,7 @@ HTML_TEMPLATE = """
                                 ${c.image_url ? `<img src="${c.image_url}" style="width:40px; height:40px; border-radius:10px; margin-left:10px; object-fit:cover;">` : ''}
                                 <div>
                                     <b style="font-size:18px;">${c.name}</b>
+                                    ${c.suggested_by ? `<div style="font-size:12px; color:#f9ca24;">اقتُرح بواسطة: ${c.suggested_by}</div>` : ''}
                                     <div style="font-size:12px; color:var(--accent)">الترتيب: ${c.display_order}</div>
                                 </div>
                             </div>
@@ -2026,6 +2126,135 @@ HTML_TEMPLATE = """
                         <button onclick="showAdminDashboard()">رجوع</button>
                     </div>`;
             }
+        }
+
+        function showSuggestCategory() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>💡 اقتراح فئة جديدة</h2>
+                    <div style="text-align:right;">
+                        <label>اسم الفئة:</label>
+                        <input id="suggest_cat_name" placeholder="اكتب اسم الفئة" style="width:100%; margin-top:10px;">
+                        <div style="text-align:right; margin:15px 0;">
+                            <label>صورة الفئة (اختياري):</label>
+                            <input type="file" id="suggest_cat_file" accept="image/*" style="padding:10px; background:#0f0c29; margin-top:5px; width:100%;">
+                        </div>
+                        <label>أسماء الكلمات أو الأشياء (كل سطر كلمة):</label>
+                        <textarea id="suggest_cat_words" placeholder="مثال:\nفيلم 1\nفيلم 2\n..." style="width:100%; min-height:120px; margin-top:10px; padding:10px; background:#0f0c29; color:white; border:none; border-radius:12px;"></textarea>
+                        <div style="display:flex; gap:10px; margin-top:15px; flex-wrap:wrap;">
+                            <button onclick="submitCategorySuggestion()" style="background:var(--success);">إرسال الاقتراح</button>
+                            <button style="background:#636e72;" onclick="showMenu()">إلغاء</button>
+                        </div>
+                    </div>
+                </div>`;
+        }
+
+        async function submitCategorySuggestion() {
+            const name = document.getElementById('suggest_cat_name').value.trim();
+            const rawText = document.getElementById('suggest_cat_words').value.trim();
+            const fileInput = document.getElementById('suggest_cat_file');
+            if(!name) return alert("الرجاء إدخال اسم الفئة");
+            if(!rawText) return alert("الرجاء إدخال كلمة واحدة على الأقل");
+            const words = rawText.split('\n').map(line => line.trim()).filter(Boolean);
+            let imageUrl = null;
+            if (fileInput.files.length > 0) {
+                try {
+                    imageUrl = await compressImageFile(fileInput.files[0], 0.05, 800, 800);
+                } catch (err) {
+                    console.warn('Image compression failed', err);
+                    imageUrl = await new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onload = (e) => resolve(e.target.result);
+                        reader.readAsDataURL(fileInput.files[0]);
+                    });
+                }
+            }
+            const suggestedBy = currentUser ? (currentUser.player_name || currentUser.username_key) : 'زائر';
+            const res = await fetch('/api/suggest/category', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, image_url: imageUrl, words, suggested_by: suggestedBy})
+            });
+            const d = await res.json();
+            if(d.success) {
+                alert('تم إرسال الاقتراح بنجاح، سيتم عرضه على الإدارة.');
+                showMenu();
+            } else {
+                alert(d.message || 'حدث خطأ أثناء إرسال الاقتراح');
+            }
+        }
+
+        async function adminManageCategorySuggestions() {
+            showLoading('جارٍ تحميل اقتراحات الفئات...');
+            try {
+                const res = await fetch('/api/admin/category_suggestions');
+                const suggestions = await res.json();
+                let h = `<h2>اقتراحات الفئات</h2>`;
+                if (suggestions.length === 0) {
+                    h += `<p style="text-align:center; color:#aaa;">لا توجد اقتراحات حالياً.</p>`;
+                } else {
+                    suggestions.forEach(s => {
+                        const wordsHtml = (s.words || []).map(w => `<div style="padding:4px 0;">• ${w}</div>`).join('');
+                        h += `<div class="score-item" style="flex-direction:column; align-items:flex-start; gap:10px;">
+                            <div style="display:flex; justify-content:space-between; width:100%; align-items:flex-start; gap:10px;">
+                                <div style="flex:1; text-align:right;">
+                                    <b style="font-size:18px;">${s.name}</b>
+                                    <div style="font-size:12px; color:#f9ca24;">اقتُرح بواسطة: ${s.suggested_by || 'غير معروف'}</div>
+                                    <div style="font-size:12px; color:var(--accent); margin-top:8px;">عدد الكلمات: ${Array.isArray(s.words) ? s.words.length : 0}</div>
+                                </div>
+                                ${s.image_url ? `<img src="${s.image_url}" style="width:70px; height:70px; object-fit:cover; border-radius:12px;">` : ''}
+                            </div>
+                            <div style="width:100%; text-align:right; max-height:160px; overflow:auto;">${wordsHtml}</div>
+                            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                                <button style="background:var(--success);" onclick="approveCategorySuggestion(${s.id})">موافقة</button>
+                                <button style="background:var(--error);" onclick="rejectCategorySuggestion(${s.id})">رفض</button>
+                            </div>
+                        </div>`;
+                    });
+                }
+                h += `<button style="background:#636e72;" onclick="showAdminDashboard(false)">رجوع</button>`;
+                document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+            } catch (err) {
+                console.error('Failed to load category suggestions:', err);
+                document.getElementById('main-ui').innerHTML = `
+                    <div class="card">
+                        <h2>حدث خطأ أثناء تحميل الاقتراحات</h2>
+                        <p>${err.message || err}</p>
+                        <button onclick="showAdminDashboard(false)">رجوع</button>
+                    </div>`;
+            }
+        }
+
+        async function approveCategorySuggestion(id) {
+            showLoading('جارٍ الموافقة على الاقتراح...');
+            const res = await fetch('/api/admin/category_suggestions/approve', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id})
+            });
+            const d = await res.json();
+            if(d.success) {
+                alert('تمت الموافقة على الاقتراح وإضافته إلى الفئات.');
+            } else {
+                alert(d.message || 'فشل الموافقة');
+            }
+            adminManageCategorySuggestions();
+        }
+
+        async function rejectCategorySuggestion(id) {
+            showLoading('جارٍ رفض الاقتراح...');
+            const res = await fetch('/api/admin/category_suggestions/reject', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id})
+            });
+            const d = await res.json();
+            if(d.success) {
+                alert('تم رفض الاقتراح.');
+            } else {
+                alert('فشل الرفض');
+            }
+            adminManageCategorySuggestions();
         }
 
         function showAddCategoryForm() {
@@ -2153,8 +2382,8 @@ HTML_TEMPLATE = """
             let h = `<h2>كلمات قسم: ${catName}</h2>
                 <div id="word-form-container" style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin-bottom:20px;">
                     <input id="word_id" type="hidden">
-                    <input id="new_word_val" placeholder="الكلمة">
-                    <div style="display:flex; gap:10px; margin-top:10px;">
+                    <textarea id="new_word_val" placeholder="الكلمة أو أكثر (كل سطر كلمة)" style="width:100%; min-height:90px; padding:10px; background:#0f0c29; color:white; border:none; border-radius:12px;"></textarea>
+                    <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
                         <button id="word-save-btn" onclick="addWordToCat(${JSON.stringify(catName)})">إضافة للقسم</button>
                         <button id="word-cancel-btn" style="background:#636e72; display:none;" onclick="resetWordForm(${JSON.stringify(catName)})">إلغاء</button>
                     </div>
@@ -2218,12 +2447,19 @@ HTML_TEMPLATE = """
         }
 
         async function addWordToCat(cat) {
-            const word = document.getElementById('new_word_val').value.trim();
-            if(!word) return;
+            const rawValue = document.getElementById('new_word_val').value.trim();
+            if(!rawValue) return;
+            const lines = rawValue.split('\n').map(line => line.trim()).filter(Boolean);
+            const payload = {category: cat};
+            if(lines.length > 1) {
+                payload.words = lines;
+            } else {
+                payload.word = lines[0];
+            }
             const res = await fetch('/api/admin/add_word', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({category: cat, word})
+                body: JSON.stringify(payload)
             });
             const d = await res.json();
             if(d.success) manageWords(cat);
