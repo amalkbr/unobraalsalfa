@@ -960,12 +960,45 @@ HTML_TEMPLATE = """
 
             if(!currentUser.saved_players) currentUser.saved_players = [];
 
-            if(currentUser.saved_players.some(p => (typeof p === 'string' ? p : p.name) === name)) {
-                return alert("الاسم موجود مسبقاً!");
+            // البحث عن اللاعب إذا كان موجوداً مسبقاً في القائمة المخزنة
+            const existingIdx = currentUser.saved_players.findIndex(p => {
+                const pName = (typeof p === 'string' ? p : p.name).trim();
+                return pName.toLowerCase() === name.toLowerCase();
+            });
+
+            if(existingIdx !== -1) {
+                const items = document.querySelectorAll('#p_selection_list .score-item');
+                for(let item of items) {
+                    const spanName = item.querySelector('span').innerText.trim();
+                    if(spanName.toLowerCase() === name.toLowerCase()) {
+                        // تمرير القائمة للاعب الموجود
+                        item.scrollIntoView({behavior: 'smooth', block: 'center'});
+
+                        // تمييز اللاعب بصرياً
+                        item.style.transition = "all 0.3s";
+                        item.style.background = "rgba(162, 155, 254, 0.5)";
+                        item.style.transform = "scale(1.05)";
+                        item.style.borderRadius = "10px";
+
+                        // إذا لم يكن مختاراً، قم باختياره تلقائياً
+                        const icon = item.querySelector('.status-icon');
+                        if(icon.innerText === '⬜') {
+                            togglePSelection(item, spanName);
+                        }
+
+                        setTimeout(() => {
+                            item.style.background = "";
+                            item.style.transform = "";
+                        }, 2000);
+
+                        nameInp.value = ""; // مسح الحقل
+                        return;
+                    }
+                }
             }
 
+            // إذا كان لاعباً جديداً تماماً
             currentUser.saved_players.push({name: name, wins: 0});
-            // حفظ في الداتابيس
             const res = await fetch('/api/user/save_players', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -974,7 +1007,7 @@ HTML_TEMPLATE = """
             const d = await res.json();
             if(d.success) {
                 localStorage.setItem('user', JSON.stringify(currentUser));
-                showSetup(2); // إعادة رندر القائمة
+                showSetup(2);
             } else {
                 alert("فشل حفظ اللاعب في السيرفر");
             }
