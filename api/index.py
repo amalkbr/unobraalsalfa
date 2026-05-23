@@ -698,6 +698,9 @@ HTML_TEMPLATE = """
         let voteTimeout = 10;
         let spyGuessTimeout = 15;
         let timerInterval = null;
+        const DEFAULT_CATEGORIES = [
+            'أكلات', 'حيوانات', 'ملابس', 'كورة', 'سيارات', 'شركات', 'كواكب', 'أجهزة', 'تطبيقات', 'فواكه وخضار', 'شخصيات', 'كارتون', 'مشروبات', 'حلويات', 'مسلسلات', 'انمي', 'كيبوب', 'قيمرز', 'مهن'
+        ];
 
         async function fetchSettings() {
             try {
@@ -1264,7 +1267,8 @@ HTML_TEMPLATE = """
                     renderCategorySelection(cachedCats, true);
                     prefetchCategoryImages(cachedCats);
                 } else {
-                    showCategoryLoadingSkeleton();
+                    const defaultCats = DEFAULT_CATEGORIES.map(name => ({ name }));
+                    renderCategorySelection(defaultCats, false, true);
                 }
 
                 try {
@@ -1274,6 +1278,7 @@ HTML_TEMPLATE = """
                         if (cats && cats.length) {
                             saveCachedCategories(cats);
                             renderCategorySelection(cats);
+                            prefetchCategoryImages(cats);
                         } else if (!cachedCats || !cachedCats.length) {
                             showCategoryError();
                         }
