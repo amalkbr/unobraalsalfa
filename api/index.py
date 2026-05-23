@@ -698,14 +698,19 @@ HTML_TEMPLATE = """
         :root { --primary: #6c5ce7; --bg: #0f0c29; --card: #1b1464; --accent: #f9ca24; --error: #eb4d4b; --success: #2ecc71; }
         body { font-family: 'Cairo', sans-serif; background: var(--bg); color: white; margin: 0; min-height: 100vh; }
         .flex-center { display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction: column; }
-        .container { width: 95%; max-width: 500px; text-align: center; padding: 20px; box-sizing: border-box; }
-        .card { background: var(--card); padding: 30px; border-radius: 30px; box-shadow: 0 15px 35px rgba(0,0,0,0.6); border: 2px solid #3c339e; animation: fadeIn 0.3s ease; }
+        .container { width: 100%; max-width: 600px; text-align: center; padding: 15px; box-sizing: border-box; }
+        .card { background: var(--card); padding: 30px; border-radius: 30px; box-shadow: 0 15px 35px rgba(0,0,0,0.6); border: 2px solid #3c339e; animation: fadeIn 0.3s ease; width: 100%; box-sizing: border-box; }
+        @media (max-width: 500px) {
+            .card { background: transparent; border: none; box-shadow: none; padding: 15px; }
+            .container { padding: 5px; }
+            .cat-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 15px !important; }
+        }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         .reveal-text { animation: pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
         @keyframes pop { 0% { transform: scale(0.5); } 100% { transform: scale(1); } }
         h1 { font-weight: 900; color: #a29bfe; margin-bottom: 25px; font-size: 32px; }
-        input, select { width: 100%; padding: 15px; margin: 10px 0; border-radius: 15px; border: 2px solid #2f278c; background: #0f0c29; color: white; font-size: 16px; box-sizing: border-box; outline: none; }
+        input, select { width: 100%; padding: 15px; margin: 10px 0; border-radius: 15px; border: 2px solid #2f278c; background: #130f40; color: white; font-size: 16px; box-sizing: border-box; outline: none; }
         button { width: 100%; padding: 16px; margin: 12px 0; border-radius: 18px; border: none; background: linear-gradient(45deg, #6c5ce7, #a29bfe); color: white; font-weight: bold; cursor: pointer; font-size: 18px; transition: 0.3s; }
         button:hover { transform: translateY(-3px); }
         button:disabled { opacity: 0.6; cursor: not-allowed; transform: none !important; }
@@ -722,11 +727,11 @@ HTML_TEMPLATE = """
         .q-badge { background: var(--error); padding: 4px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 15px; display: inline-block; }
         .shuffling { animation: rotate 1s infinite linear; font-size: 50px; margin: 20px; display:inline-block; }
         .score-item { display: flex; justify-content: space-between; background: #0f0c29; padding: 10px 20px; border-radius: 10px; margin: 5px 0; border: 1px solid #3c339e; }
-        .cat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 20px 0; max-height: 340px; overflow-y: auto; padding: 10px; }
-        .cat-card { background: #130f40; border-radius: 15px; padding: 10px; cursor: pointer; border: 2px solid transparent; transition: 0.3s; display: flex; flex-direction: column; align-items: center; min-height: 170px; }
+        .cat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin: 20px 0; max-height: 450px; overflow-y: auto; padding: 10px; }
+        .cat-card { background: #130f40; border-radius: 20px; padding: 12px; cursor: pointer; border: 2px solid transparent; transition: 0.3s; display: flex; flex-direction: column; align-items: center; min-height: 200px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
         .cat-card.placeholder { opacity: 0.7; filter: blur(0.5px); }
-        .cat-card img { width: 100%; height: 120px; object-fit: cover; border-radius: 12px; margin-bottom: 8px; opacity: 0; transition: opacity 0.25s ease-in-out; }
-        .cat-card.selected { border-color: var(--accent); background: #1b1464; box-shadow: 0 0 15px var(--accent); }
+        .cat-card img { width: 100%; height: 150px; object-fit: cover; border-radius: 15px; margin-bottom: 10px; opacity: 0; transition: opacity 0.25s ease-in-out; }
+        .cat-card.selected { border-color: var(--accent); background: #1b1464; box-shadow: 0 0 20px var(--accent); }
         .cat-image-wrapper { position: relative; width: 100%; }
         .image-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #1a1538; border-radius: 12px; color: #9aa0b4; font-size: 18px; pointer-events: none; }
         .win-opt {
@@ -893,7 +898,7 @@ HTML_TEMPLATE = """
                 <div class="card">
                     <h1>ابدأ اللعب</h1>
                     <button onclick="navigateTo('online_menu')">🌐 أونلاين</button>
-                    <button style="background:#e056fd" onclick="navigateTo('setup', {step: 1})">🏠 أوفلاين (مجلس)</button>
+                    <button style="background:#e056fd" onclick="navigateTo('setup', {step: 2})">🏠 أوفلاين (مجلس)</button>
                 </div>`;
         }
 
@@ -1286,20 +1291,7 @@ HTML_TEMPLATE = """
 
         async function showSetup(step, push = true) {
             if(push) history.pushState({screen: 'setup', step}, "");
-            if(step === 1) {
-                let savedCount = localStorage.getItem('pCount') || 3;
-                document.getElementById('main-ui').innerHTML = `
-                    <div class="card">
-                        <h2>عدد اللاعبين</h2>
-                        <div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin: 20px 0;">
-                            <button onclick="changePCount(-1)" style="width: 60px; margin:0; background:var(--error); font-size: 24px;">-</button>
-                            <input type="number" id="p_count" value="${savedCount}" min="3" style="text-align: center; width: 100px; margin:0; font-size: 24px; font-weight: bold;">
-                            <button onclick="changePCount(1)" style="width: 60px; margin:0; background:var(--success); font-size: 24px;">+</button>
-                        </div>
-                        <button class="btn-yellow" onclick="saveAndNext(this)">التالي</button>
-                        <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
-                    </div>`;
-            } else if(step === 2) {
+            if(step === 2) {
                 const targetN = Math.max(3, parseInt(localStorage.getItem('pCount') || 3));
                 let savedPlayers = currentUser.saved_players || [];
 
