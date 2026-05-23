@@ -781,7 +781,14 @@ HTML_TEMPLATE = """
     </div>
     <div class="flex-center"><div class="container" id="main-ui"></div></div>
     <script>
-        let currentUser = JSON.parse(localStorage.getItem('user')) || null;
+        let currentUser = null;
+        try {
+            const savedUser = localStorage.getItem('user');
+            if (savedUser && savedUser !== "undefined") currentUser = JSON.parse(savedUser);
+        } catch (e) {
+            console.error("User session error", e);
+            localStorage.removeItem('user');
+        }
         let game = null;
         let p_votes = {};
         let totalScores = {}; // نقاط الجلسة
@@ -1410,68 +1417,46 @@ HTML_TEMPLATE = """
                 const request = indexedDB.open(THUMB_DB_NAME, 1);
                 request.onupgradeneeded = () => {
                     const db = request.result;
-                    if (!db.objectStoreNames.contains(THUMB_STORE_NAME)) {
-                        db.createObjectStore(THUMB_STORE_NAME);
-                    }
+                    if (!db.objectStoreNames.contains(THUMB_STORE_NAME)) db.createObjectStore(THUMB_STORE_NAME);
                 };
                 request.onsuccess = () => resolve(request.result);
                 request.onerror = () => reject(request.error);
             });
         }
 
-        function getCachedCategoryThumbnails() {
-            if (!('indexedDB' in window)) {
-                try {
-                    return Promise.resolve(JSON.parse(localStorage.getItem('cachedCategoryThumbnails') || '{}'));
-                } catch (err) {
-                    return Promise.resolve({});
-                }
-            }
-            return openThumbnailDB().then(db => new Promise((resolve, reject) => {
-                const tx = db.transaction(THUMB_STORE_NAME, 'readonly');
-                const store = tx.objectStore(THUMB_STORE_NAME);
-                const request = store.openCursor();
-                const result = {};
-                request.onsuccess = (event) => {
-                    const cursor = event.target.result;
-                    if (cursor) {
-                        result[cursor.key] = cursor.value;
-                        cursor.continue();
-                    } else {
-                        resolve(result);
-                    }
-                };
-                request.onerror = () => reject(request.error);
-            })).catch(() => {
-                try {
-                    return JSON.parse(localStorage.getItem('cachedCategoryThumbnails') || '{}');
-                } catch (err) {
-                    return {};
-                }
-            });
+        async function getCachedCategoryThumbnails() {
+            if (!('indexedDB' in window)) return JSON.parse(localStorage.getItem('cachedCategoryThumbnails') || '{}');
+            try {
+                const db = await openThumbnailDB();
+                return new Promise((resolve, reject) => {
+                    const tx = db.transaction(THUMB_STORE_NAME, 'readonly');
+                    const store = tx.objectStore(THUMB_STORE_NAME);
+                    const request = store.openCursor();
+                    const result = {};
+                    request.onsuccess = (e) => {
+                        const cursor = e.target.result;
+                        if (cursor) { result[cursor.key] = cursor.value; cursor.continue(); }
+                        else resolve(result);
+                    };
+                    request.onerror = () => reject(request.error);
+                });
+            } catch (err) { return {}; }
         }
 
-        function saveCachedCategoryThumbnail(name, dataUrl) {
+        async function saveCachedCategoryThumbnail(name, dataUrl) {
             if (!name || !dataUrl) return;
             if (!('indexedDB' in window)) {
-                try {
-                    const thumbs = JSON.parse(localStorage.getItem('cachedCategoryThumbnails') || '{}');
-                    thumbs[name] = dataUrl;
-                    localStorage.setItem('cachedCategoryThumbnails', JSON.stringify(thumbs));
-                } catch (err) {
-                    console.warn('Unable to save category thumbnail', err);
-                }
+                const thumbs = JSON.parse(localStorage.getItem('cachedCategoryThumbnails') || '{}');
+                thumbs[name] = dataUrl;
+                localStorage.setItem('cachedCategoryThumbnails', JSON.stringify(thumbs));
                 return;
             }
-            openThumbnailDB().then(db => {
+            try {
+                const db = await openThumbnailDB();
                 const tx = db.transaction(THUMB_STORE_NAME, 'readwrite');
-                const store = tx.objectStore(THUMB_STORE_NAME);
-                store.put(dataUrl, name);
+                tx.objectStore(THUMB_STORE_NAME).put(dataUrl, name);
                 tx.oncomplete = () => db.close();
-                tx.onerror = () => db.close();
-            }).catch(err => {
-                console.warn('Unable to save category thumbnail to IndexedDB', err);
-            });
+            } catch (err) { console.warn('Thumbnail save failed', err); }
         }
 
         function prefetchCategories() {
@@ -1584,7 +1569,11 @@ HTML_TEMPLATE = """
         }
 
         async function renderCategorySelection(cats, fromCache = false, isFallback = false) {
-            const thumbs = await getCachedCategoryThumbnails();
+            let thumbs = {};
+            try {
+                thumbs = await getCachedCategoryThumbnails();
+            } catch (e) { console.warn("Thumbnails not available", e); }
+
             const catsHtml = cats.map(c => {
                 const thumbnail = thumbs[c.name];
                 return `
@@ -1620,21 +1609,24 @@ HTML_TEMPLATE = """
                 card.addEventListener('click', () => selectCat(card, card.dataset.catName));
             });
 
-            loadCategoryImages();
-            if (fromCache) {
-                const notice = document.createElement('div');
-                notice.style = 'margin-top:14px; color:#a9a9a9; font-size:14px;';
-                notice.textContent = 'تم عرض الفئات من الكاش المحلي، ويتم تحميل الصور تدريجياً.';
-                document.querySelector('.card').appendChild(notice);
-            } else if (isFallback) {
-                const notice = document.createElement('div');
-                notice.style = 'margin-top:14px; color:#a9a0c2; font-size:14px;';
-                notice.textContent = 'يتم عرض الفئات الأساسية أولاً، والصور تُحمّل في الخلفية.';
-                document.querySelector('.card').appendChild(notice);
+            loadCategoryImages(thumbs);
+            const cardEl = document.getElementById('main-ui').querySelector('.card');
+            if (cardEl) {
+                if (fromCache) {
+                    const notice = document.createElement('div');
+                    notice.style = 'margin-top:14px; color:#a9a9a9; font-size:14px;';
+                    notice.textContent = 'تم عرض الفئات من الكاش المحلي، ويتم تحميل الصور تدريجياً.';
+                    cardEl.appendChild(notice);
+                } else if (isFallback) {
+                    const notice = document.createElement('div');
+                    notice.style = 'margin-top:14px; color:#a9a0c2; font-size:14px;';
+                    notice.textContent = 'يتم عرض الفئات الأساسية أولاً، والصور تُحمّل في الخلفية.';
+                    cardEl.appendChild(notice);
+                }
             }
         }
 
-        function loadCategoryImages() {
+        function loadCategoryImages(thumbs = {}) {
             document.querySelectorAll('.cat-image-wrapper img').forEach(img => {
                 const wrapper = img.closest('.cat-image-wrapper');
                 img.onload = () => {
@@ -1654,6 +1646,7 @@ HTML_TEMPLATE = """
                         if (placeholder) placeholder.textContent = '؟';
                     }
                 };
+                if (img.complete) img.onload();
             });
         }
 
