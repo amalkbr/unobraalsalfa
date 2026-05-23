@@ -54,7 +54,8 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS categories (
                     id SERIAL PRIMARY KEY,
                     name TEXT UNIQUE,
-                    image_url TEXT
+                    image_url TEXT,
+                    display_order INTEGER DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS words (
                     id SERIAL PRIMARY KEY,
@@ -65,6 +66,7 @@ def init_db():
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS total_wins INTEGER DEFAULT 0;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS saved_players JSONB DEFAULT '[]';
                 ALTER TABLE room_players ADD COLUMN IF NOT EXISTS join_order SERIAL;
+                ALTER TABLE categories ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0;
             """)
             conn.commit()
     finally: conn.close()
@@ -437,15 +439,15 @@ async def get_categories():
     if not conn: return []
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM categories ORDER BY name")
+            cur.execute("SELECT * FROM categories ORDER BY display_order ASC, name ASC")
             cats = cur.fetchall()
             # إذا الجدول فارغ، نعبئه بالبيانات الافتراضية
             if not cats:
                 default_cats = ["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"]
-                for c in default_cats:
-                    cur.execute("INSERT INTO categories (name) VALUES (%s) ON CONFLICT DO NOTHING", (c,))
+                for i, c in enumerate(default_cats):
+                    cur.execute("INSERT INTO categories (name, display_order) VALUES (%s, %s) ON CONFLICT DO NOTHING", (c, i))
                 conn.commit()
-                cur.execute("SELECT * FROM categories ORDER BY name")
+                cur.execute("SELECT * FROM categories ORDER BY display_order ASC, name ASC")
                 cats = cur.fetchall()
             return cats
     finally: conn.close()
@@ -455,7 +457,8 @@ async def add_category(data: dict):
     conn = get_db_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO categories (name, image_url) VALUES (%s, %s)", (data['name'], data.get('image_url')))
+            cur.execute("INSERT INTO categories (name, image_url, display_order) VALUES (%s, %s, %s)",
+                        (data['name'], data.get('image_url'), data.get('display_order', 0)))
             conn.commit()
         return {"success": True}
     finally: conn.close()
@@ -465,7 +468,12 @@ async def update_category(data: dict):
     conn = get_db_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE categories SET name = %s, image_url = %s WHERE id = %s", (data['name'], data.get('image_url'), data['id']))
+            # تحديث اسم الفئة في جدول الكلمات أولاً إذا تغير الاسم
+            if 'old_name' in data and data['old_name'] != data['name']:
+                cur.execute("UPDATE words SET category = %s WHERE category = %s", (data['name'], data['old_name']))
+
+            cur.execute("UPDATE categories SET name = %s, image_url = %s, display_order = %s WHERE id = %s",
+                        (data['name'], data.get('image_url'), data.get('display_order', 0), data['id']))
             conn.commit()
         return {"success": True}
     finally: conn.close()
@@ -508,7 +516,27 @@ async def report_winner(data: dict):
     if not conn: return {"success": False}
     try:
         with conn.cursor() as cur:
+            # تحديث اللاعب في جدول المستخدمين الرئيسي (إذا كان مسجلاً)
             cur.execute("UPDATE users SET total_wins = total_wins + 1 WHERE player_name = %s", (data['player_name'],))
+
+            # تحديث قائمة اللاعبين المحليين للمستخدم الحالي (Host)
+            if 'user_id' in data:
+                cur.execute("SELECT saved_players FROM users WHERE user_id = %s", (data['user_id'],))
+                row = cur.fetchone()
+                if row:
+                    players = row[0] if row[0] is not None else []
+                    updated = False
+                    for i, p in enumerate(players):
+                        p_name = p if isinstance(p, str) else p.get('name')
+                        if p_name == data['player_name']:
+                            if isinstance(p, str):
+                                players[i] = {"name": p, "wins": 1}
+                            else:
+                                p['wins'] = p.get('wins', 0) + 1
+                            updated = True
+                            break
+                    if updated:
+                        cur.execute("UPDATE users SET saved_players = %s WHERE user_id = %s", (json.dumps(players), data['user_id']))
             conn.commit()
         return {"success": True}
     finally: conn.close()
@@ -576,7 +604,21 @@ HTML_TEMPLATE = """
         let totalScores = {}; // نقاط الجلسة
         let winLimit = 1000;
 
-        function init() { currentUser ? showMenu() : showAuth(); updateSidebar(); }
+        function init() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const joinCode = urlParams.get('join');
+            if (joinCode) {
+                window.history.replaceState({}, document.title, window.location.pathname);
+                localStorage.setItem('pendingJoin', joinCode);
+            }
+            currentUser ? showMenu() : showAuth();
+            updateSidebar();
+            if (currentUser && localStorage.getItem('pendingJoin')) {
+                const code = localStorage.getItem('pendingJoin');
+                localStorage.removeItem('pendingJoin');
+                joinRoomByCode(code);
+            }
+        }
 
         function showAuth() {
             document.getElementById('main-ui').innerHTML = `
@@ -701,13 +743,31 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h2>غرفة: <span style="color:var(--accent)">${room.room_code}</span></h2>
-                    <div style="margin:20px 0; text-align:right;">${pList}</div>
+                    <button style="background:var(--primary); margin-bottom:10px; font-size:14px;" onclick="copyInviteLink()">🔗 نسخ رابط الدعوة</button>
+                    <div style="margin:10px 0; text-align:right;">${pList}</div>
                     ${room.host_id == currentUser.user_id ? `
                         <select id="online_cat" style="margin-bottom:10px">${["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"].map(c=>`<option value="${c}">${c}</option>`)}</select>
                         <button onclick="startOnlineGame()">بدء اللعبة</button>` :
                         '<p>بانتظار المضيف لبدء اللعبة...</p>'}
                     <button style="background:#636e72" onclick="leaveRoom()">خروج</button>
                 </div>`;
+        }
+
+        function copyInviteLink() {
+            const url = window.location.origin + '?join=' + currentRoom;
+            navigator.clipboard.writeText(url).then(() => {
+                alert("تم نسخ رابط الدعوة! أرسله لأصدقائك.");
+            });
+        }
+
+        async function joinRoomByCode(code) {
+            const res = await fetch('/api/online/join', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({room_code: code, user_id: currentUser.user_id, player_name: currentUser.player_name})
+            });
+            const d = await res.json();
+            if(d.success) enterRoom(code); else alert(d.msg);
         }
 
         async function startOnlineGame() {
@@ -882,9 +942,9 @@ HTML_TEMPLATE = """
         async function addNewPlayerToList() {
             const name = document.getElementById('new_p_name').value.trim();
             if(!name) return;
-            if(currentUser.saved_players.includes(name)) return alert("الاسم موجود مسبقاً!");
+            if(currentUser.saved_players.some(p => (typeof p === 'string' ? p : p.name) === name)) return alert("الاسم موجود مسبقاً!");
 
-            currentUser.saved_players.push(name);
+            currentUser.saved_players.push({name: name, wins: 0});
             // حفظ في الداتابيس
             await fetch('/api/user/save_players', {
                 method: 'POST',
@@ -933,7 +993,8 @@ HTML_TEMPLATE = """
                 let h = `<div id="p_selection_list" style="max-height: 300px; overflow-y: auto; margin-bottom: 20px; text-align: right;">`;
 
                 // عرض اللاعبين المخزنين أولاً مع خاصية الاختيار
-                savedPlayers.forEach((name, idx) => {
+                savedPlayers.forEach((p, idx) => {
+                    const name = typeof p === 'string' ? p : p.name;
                     const isSelected = idx < targetN;
                     h += `
                         <div class="score-item" style="cursor:pointer" onclick="togglePSelection(this, '${name.replace(/'/g, "\\'")}')">
@@ -1142,6 +1203,14 @@ HTML_TEMPLATE = """
 
             if(hasWinner) {
                 playSound('win');
+                // ابلاغ السيرفر بالفائز لتحديث الاحصائيات المحلية
+                const winnerName = sortedScores[0][0];
+                fetch('/api/game/report_winner', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({player_name: winnerName, user_id: currentUser.user_id})
+                });
+
                 let podiumHtml = "";
                 const medals = ["🥇 المركز الأول", "🥈 المركز الثاني", "🥉 المركز الثالث"];
                 const colors = ["gold", "silver", "#cd7f32"];
@@ -1227,21 +1296,34 @@ HTML_TEMPLATE = """
             const res = await fetch('/api/categories');
             const cats = await res.json();
             let h = `<h2>الفئات (الأنواع)</h2>
-                <div style="margin-bottom:20px;">
-                    <input id="new_cat_name" placeholder="اسم فئة جديدة (مثلاً: ابطال خارقين)">
-                    <input id="new_cat_img" placeholder="رابط صورة الفئة (اختياري)">
-                    <button onclick="addCategory()">إضافة فئة</button>
+                <div id="cat-form" style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin-bottom:20px;">
+                    <h3 id="form-title">إضافة فئة جديدة</h3>
+                    <input id="cat_id" type="hidden">
+                    <input id="cat_name" placeholder="اسم الفئة">
+                    <div style="text-align:right; margin:10px 0;">
+                        <label>صورة الفئة:</label>
+                        <input type="file" id="cat_file" accept="image/*" style="padding:10px; background:#0f0c29;">
+                    </div>
+                    <input id="cat_order" type="number" placeholder="التسلسل (0, 1, 2...)" value="0">
+                    <div style="display:flex; gap:10px;">
+                        <button id="cat-save-btn" onclick="saveCategory()">حفظ الفئة</button>
+                        <button id="cat-cancel-btn" style="background:#636e72; display:none;" onclick="resetCatForm()">إلغاء التعديل</button>
+                    </div>
                 </div>
                 <div style="max-height:400px; overflow-y:auto; text-align:right;">`;
             cats.forEach(c => {
                 h += `<div class="score-item" style="flex-direction:column; align-items:flex-start;">
                     <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
                         <div style="display:flex; align-items:center;">
-                            ${c.image_url ? `<img src="${c.image_url}" style="width:40px; height:40px; border-radius:10px; margin-left:10px;">` : ''}
-                            <b style="font-size:18px;">${c.name}</b>
+                            ${c.image_url ? `<img src="${c.image_url}" style="width:40px; height:40px; border-radius:10px; margin-left:10px; object-fit:cover;">` : ''}
+                            <div>
+                                <b style="font-size:18px;">${c.name}</b>
+                                <div style="font-size:12px; color:var(--accent)">الترتيب: ${c.display_order}</div>
+                            </div>
                         </div>
-                        <div>
-                            <button style="width:auto; padding:5px 10px; margin:0; background:var(--success)" onclick="manageWords('${c.name}')">الكلمات</button>
+                        <div style="display:flex; gap:5px;">
+                            <button style="width:auto; padding:5px 10px; margin:0; background:var(--success)" onclick="manageWords('${c.name.replace(/'/g, "\\'")}')">الكلمات</button>
+                            <button style="width:auto; padding:5px 10px; margin:0; background:var(--primary)" onclick="editCategory(${JSON.stringify(c).replace(/"/g, '&quot;')})">تعديل</button>
                             <button style="width:auto; padding:5px 10px; margin:0; background:var(--error)" onclick="deleteCategory(${c.id})">حذف</button>
                         </div>
                     </div>
@@ -1251,12 +1333,61 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
         }
 
-        async function addCategory() {
-            const name = document.getElementById('new_cat_name').value;
-            const img = document.getElementById('new_cat_img').value;
-            if(!name) return;
-            await fetch('/api/admin/category/add', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, image_url: img})});
-            adminManageCategories();
+        function editCategory(c) {
+            document.getElementById('form-title').innerText = "تعديل الفئة: " + c.name;
+            document.getElementById('cat_id').value = c.id;
+            document.getElementById('cat_name').value = c.name;
+            document.getElementById('cat_order').value = c.display_order;
+            window.oldCatName = c.name;
+            window.editingImage = c.image_url; // حفظ الصورة الحالية
+            document.getElementById('cat-cancel-btn').style.display = "block";
+            document.getElementById('cat-save-btn').innerText = "تحديث الفئة";
+            document.getElementById('cat-form').scrollIntoView();
+        }
+
+        function resetCatForm() {
+            document.getElementById('form-title').innerText = "إضافة فئة جديدة";
+            document.getElementById('cat_id').value = "";
+            document.getElementById('cat_name').value = "";
+            document.getElementById('cat_order').value = "0";
+            document.getElementById('cat_file').value = "";
+            document.getElementById('cat-cancel-btn').style.display = "none";
+            document.getElementById('cat-save-btn').innerText = "حفظ الفئة";
+            window.oldCatName = null;
+            window.editingImage = null;
+        }
+
+        async function saveCategory() {
+            const id = document.getElementById('cat_id').value;
+            const name = document.getElementById('cat_name').value;
+            const order = document.getElementById('cat_order').value;
+            const fileInput = document.getElementById('cat_file');
+
+            if(!name) return alert("الرجاء إدخال اسم الفئة");
+
+            let imageUrl = window.editingImage || null;
+            if (fileInput.files.length > 0) {
+                imageUrl = await new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.readAsDataURL(fileInput.files[0]);
+                });
+            }
+
+            const endpoint = id ? '/api/admin/category/update' : '/api/admin/category/add';
+            const payload = { id, name, display_order: parseInt(order), image_url: imageUrl };
+            if (id && window.oldCatName) payload.old_name = window.oldCatName;
+
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+
+            if ((await res.json()).success) {
+                resetCatForm();
+                adminManageCategories();
+            }
         }
 
         async function deleteCategory(id) {
@@ -1271,15 +1402,20 @@ HTML_TEMPLATE = """
             const words = allWords.filter(w => w.category === catName);
 
             let h = `<h2>كلمات قسم: ${catName}</h2>
-                <div style="margin-bottom:20px;">
+                <div style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin-bottom:20px;">
                     <input id="new_word_val" placeholder="إضافة كلمة جديدة">
-                    <button onclick="addWordToCat('${catName}')">إضافة</button>
+                    <button onclick="addWordToCat('${catName.replace(/'/g, "\\'")}')">إضافة للقسم</button>
                 </div>
-                <div style="max-height:400px; overflow-y:auto;">`;
+                <div style="max-height:400px; overflow-y:auto; text-align:right;">`;
+
+            if (words.length === 0) {
+                h += `<p style="text-align:center; color:#888;">لا توجد كلمات في هذا القسم حالياً</p>`;
+            }
+
             words.forEach(w => {
                 h += `<div class="score-item">
-                    <span>${w.word}</span>
-                    <button style="width:auto; padding:5px 10px; margin:0; background:var(--error)" onclick="deleteWord(${w.id}, '${catName}')">حذف</button>
+                    <span style="font-size:18px;">${w.word}</span>
+                    <button style="width:auto; padding:5px 10px; margin:0; background:var(--error)" onclick="deleteWord(${w.id}, '${catName.replace(/'/g, "\\'")}')">حذف</button>
                 </div>`;
             });
             h += `</div><button onclick="adminManageCategories()">رجوع للفئات</button>`;
@@ -1300,31 +1436,44 @@ HTML_TEMPLATE = """
 
         async function showReports() {
             toggleSidebar();
-            const res = await fetch('/api/admin/players');
-            const players = await res.json();
+            // تحديث بيانات المستخدم للحصول على أحدث النقاط للاعبين المحليين
+            const resAuth = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username: currentUser.username_key, password: currentUser.password_key})
+            });
+            const dAuth = await resAuth.json();
+            if(dAuth.success) {
+                currentUser = dAuth.user;
+                localStorage.setItem('user', JSON.stringify(currentUser));
+            }
 
-            let h = `<h2>📊 تقارير اللاعبين</h2>
-                <p style="font-size:14px; color:#aaa;">ترتيب اللاعبين المسجلين حسب عدد مرات الفوز</p>
+            let players = (currentUser.saved_players || []).map(p => typeof p === 'string' ? {name: p, wins: 0} : p);
+            players.sort((a, b) => (b.wins || 0) - (a.wins || 0));
+
+            let h = `<h2>📊 تقارير لاعبيك المحليين</h2>
+                <p style="font-size:14px; color:#aaa;">ترتيب اللاعبين الذين أضفتهم حسب عدد مرات الفوز</p>
                 <div style="max-height:400px; overflow-y:auto; margin:15px 0;">`;
 
             players.forEach((p, i) => {
                 let medal = "";
-                if(i === 0 && p.total_wins > 0) medal = "👑 ";
+                if(i === 0 && p.wins > 0) medal = "👑 ";
                 h += `<div class="score-item" style="border-left: 4px solid ${i<3 ? 'var(--accent)' : '#333'}">
                     <div style="text-align:right">
-                        <b>${medal}${p.player_name}</b>
-                        <br><small style="color:#888">@${p.username_key}</small>
+                        <b>${medal}${p.name}</b>
                     </div>
                     <div style="text-align:left">
-                        <b style="color:var(--success)">${p.total_wins}</b> <small>فوز</small>
+                        <b style="color:var(--success)">${p.wins || 0}</b> <small>فوز</small>
                     </div>
                 </div>`;
             });
 
+            if(players.length === 0) h += `<p style="padding:20px;">لم تقم بإضافة أي لاعبين محليين بعد.</p>`;
+
             if(players.length > 0) {
                 const least = players[players.length - 1];
                 h += `<div style="margin-top:20px; padding:10px; background:rgba(235, 77, 75, 0.1); border-radius:15px; font-size:14px;">
-                    🐢 الأقل فوزاً حالياً: <b>${least.player_name}</b>
+                    🐢 الأقل فوزاً حالياً: <b>${least.name}</b>
                 </div>`;
             }
 
