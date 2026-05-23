@@ -804,6 +804,30 @@ HTML_TEMPLATE = """
         }
         let game = null;
         let p_votes = {};
+
+        function displayFatalError(message) {
+            document.body.innerHTML = `
+                <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:#0f0c29; color:#fff; padding:20px; box-sizing:border-box;">
+                    <div style="max-width:700px; text-align:right; border:2px solid #e84118; border-radius:20px; padding:30px; background:rgba(0,0,0,0.7);">
+                        <h1 style="margin-top:0; color:#ff6b6b;">حدث خطأ في التطبيق</h1>
+                        <pre style="white-space:pre-wrap; word-break:break-word; color:#f8f9fa; background:rgba(255,255,255,0.04); padding:15px; border-radius:12px;">${message}</pre>
+                        <p style="margin:0; color:#dcdde1;">يرجى تحديث الصفحة أو مسح كاش المتصفح.</p>
+                    </div>
+                </div>`;
+        }
+
+        window.onerror = function(message, source, lineno, colno, error) {
+            const errMsg = `${message} at ${source}:${lineno}:${colno}` + (error && error.stack ? `\n\n${error.stack}` : '');
+            console.error('Global error caught:', errMsg);
+            displayFatalError(errMsg);
+            return true;
+        };
+
+        window.addEventListener('unhandledrejection', function(event) {
+            const reason = event.reason ? (event.reason.stack || event.reason) : 'Unknown promise rejection';
+            console.error('Unhandled rejection:', reason);
+            displayFatalError(`Unhandled promise rejection:\n${reason}`);
+        });
         let totalScores = {}; // نقاط الجلسة
         let winLimit = 1000;
         let questionTimeout = 30;
@@ -2579,6 +2603,10 @@ HTML_TEMPLATE = """
         // PWA Registration and Install Prompt
         let deferredPrompt;
         if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(registrations => {
+                registrations.forEach(reg => reg.unregister().catch(() => null));
+            }).catch(() => null);
+
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('/sw.js')
                     .then(reg => console.log('SW Registered', reg))
