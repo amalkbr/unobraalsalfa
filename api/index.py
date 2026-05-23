@@ -1255,22 +1255,16 @@ HTML_TEMPLATE = """
                 // تحديث العداد الأولي
                 updateSelectedCount();
             } else if(step === 3) {
-                const res = await fetch('/api/categories');
-                const cats = await res.json();
-
-                let catsHtml = "";
-                cats.forEach(c => {
-                    catsHtml += `
-                        <div class="cat-card" onclick="selectCat(this, '${c.name}')">
-                            ${c.image_url ? `<img src="${c.image_url}">` : '<div class="no-img">؟</div>'}
-                            <span>${c.name}</span>
-                        </div>`;
-                });
-
+                // إظهار الهيكل فوراً لتجنب التأخير
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
                         <h2>اختر نوع السالفة</h2>
-                        <div class="cat-grid">${catsHtml}</div>
+                        <div class="cat-grid" id="categories-container">
+                            <div style="grid-column: 1/-1; padding: 20px;">
+                                <span class="shuffling" style="font-size:30px;">🌀</span>
+                                <p>جاري تحميل الفئات...</p>
+                            </div>
+                        </div>
                         <input type="hidden" id="selected_cat">
 
                         <p style="margin-top:20px; font-weight:bold;">حد الفوز (نقاط):</p>
@@ -1284,6 +1278,27 @@ HTML_TEMPLATE = """
 
                         <button class="btn-yellow" onclick="startGameFinal(this)">ابدأ اللعب الآن</button>
                     </div>`;
+
+                // جلب الفئات في الخلفية
+                fetch('/api/categories')
+                    .then(res => res.json())
+                    .then(cats => {
+                        let catsHtml = "";
+                        cats.forEach(c => {
+                            catsHtml += `
+                                <div class="cat-card" onclick="selectCat(this, '${c.name.replace(/'/g, "\\'")}')">
+                                    ${c.image_url ? `<img src="${c.image_url}" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">` : ''}
+                                    <div class="no-img" style="${c.image_url ? 'display:none;' : ''}">؟</div>
+                                    <span>${c.name}</span>
+                                </div>`;
+                        });
+                        const container = document.getElementById('categories-container');
+                        if (container) container.innerHTML = catsHtml;
+                    })
+                    .catch(err => {
+                        const container = document.getElementById('categories-container');
+                        if (container) container.innerHTML = "<p>فشل تحميل الفئات. حاول مجدداً.</p>";
+                    });
             }
         }
 
