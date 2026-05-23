@@ -269,7 +269,9 @@ async def start_online_game(data: dict):
             players = [p['player_name'] for p in cur.fetchall()]
             if len(players) < 3: return {"success": False, "msg": "أقل عدد لاعبين هو 3"}
 
-            category = room['category'] or "أكلات"
+            category = data.get('category') or room['category'] or "أكلات"
+            if data.get('category'):
+                cur.execute("UPDATE rooms SET category = %s WHERE room_code = %s", (data['category'], room_code))
 
             # محاولة جلب الكلمات من قاعدة البيانات أولاً
             words = []
@@ -453,7 +455,14 @@ async def add_word(data: dict):
     if not conn: return {"success": False}
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (data['category'], data['word']))
+            # إذا كانت البيانات تحتوي على قائمة كلمات (Bulk add)
+            if 'words' in data and isinstance(data['words'], list):
+                for word in data['words']:
+                    if word.strip():
+                        cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (data['category'], word.strip()))
+            else:
+                # إضافة كلمة واحدة (الطريقة القديمة)
+                cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (data['category'], data['word']))
             conn.commit()
         return {"success": True}
     finally: conn.close()
@@ -695,6 +704,7 @@ HTML_TEMPLATE = """
         let voteTimeout = 10;
         let spyGuessTimeout = 15;
         let timerInterval = null;
+        let allCategories = [];
 
         async function fetchSettings() {
             try {
@@ -704,6 +714,17 @@ HTML_TEMPLATE = """
                 voteTimeout = d.vote_timeout || 10;
                 spyGuessTimeout = d.spy_guess_timeout || 15;
             } catch(e) { console.error("Settings fetch failed", e); }
+        }
+
+        async function fetchCategories() {
+            try {
+                const res = await fetch('/api/categories');
+                allCategories = await res.json();
+                // إذا كنا في صفحة الغرفة أونلاين، نحدث القائمة
+                if (currentRoom && document.getElementById('online_cat')) {
+                    renderRoom();
+                }
+            } catch(e) { console.error("Categories fetch failed", e); }
         }
 
         function navigateTo(screen, data = {}, push = true) {
@@ -731,6 +752,7 @@ HTML_TEMPLATE = """
 
         function init() {
             fetchSettings();
+            fetchCategories();
             // Check for /join/CODE path
             const pathParts = window.location.pathname.split('/');
             let joinCode = null;
@@ -888,13 +910,15 @@ HTML_TEMPLATE = """
             const {room, players} = window.roomData;
             let pList = players.map(p => `<div class="score-item"><span>${p.player_name}</span> ${p.is_ready ? '✅' : '⏳'}</div>`).join('');
 
+            const catList = allCategories.length > 0 ? allCategories.map(c => c.name) : ["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"];
+
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h2>غرفة: <span style="color:var(--accent)">${room.room_code}</span></h2>
                     <button style="background:var(--primary); margin-bottom:10px; font-size:14px;" onclick="copyInviteLink()">🔗 نسخ رابط الدعوة</button>
                     <div style="margin:10px 0; text-align:right;">${pList}</div>
                     ${room.host_id == currentUser.user_id ? `
-                        <select id="online_cat" style="margin-bottom:10px">${["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"].map(c=>`<option value="${c}">${c}</option>`)}</select>
+                        <select id="online_cat" style="margin-bottom:10px">${catList.map(c=>`<option value="${c}" ${room.category === c ? 'selected' : ''}>${c}</option>`).join('')}</select>
                         <button onclick="startOnlineGame()">بدء اللعبة</button>` :
                         '<p>بانتظار المضيف لبدء اللعبة...</p>'}
                     <button style="background:#636e72" onclick="leaveRoom()">خروج</button>
@@ -919,11 +943,12 @@ HTML_TEMPLATE = """
         }
 
         async function startOnlineGame() {
+            const cat = document.getElementById('online_cat') ? document.getElementById('online_cat').value : null;
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'block';
             const res = await fetch('/api/online/start', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
+                body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id, category: cat})
             });
             const d = await res.json();
             if(!d.success) alert(d.msg || "تعذر بدء اللعبة");
@@ -1255,16 +1280,21 @@ HTML_TEMPLATE = """
                 // تحديث العداد الأولي
                 updateSelectedCount();
             } else if(step === 3) {
-                // إظهار الهيكل فوراً لتجنب التأخير
+                const defaultCats = ["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"];
+
+                let catsHtml = "";
+                defaultCats.forEach(name => {
+                    catsHtml += `
+                        <div class="cat-card" onclick="selectCat(this, '${name.replace(/'/g, "\\'")}')" id="cat-${name}">
+                            <div class="no-img">؟</div>
+                            <span>${name}</span>
+                        </div>`;
+                });
+
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
                         <h2>اختر نوع السالفة</h2>
-                        <div class="cat-grid" id="categories-container">
-                            <div style="grid-column: 1/-1; padding: 20px;">
-                                <span class="shuffling" style="font-size:30px;">🌀</span>
-                                <p>جاري تحميل الفئات...</p>
-                            </div>
-                        </div>
+                        <div class="cat-grid" id="categories-container">${catsHtml}</div>
                         <input type="hidden" id="selected_cat">
 
                         <p style="margin-top:20px; font-weight:bold;">حد الفوز (نقاط):</p>
@@ -1279,25 +1309,30 @@ HTML_TEMPLATE = """
                         <button class="btn-yellow" onclick="startGameFinal(this)">ابدأ اللعب الآن</button>
                     </div>`;
 
-                // جلب الفئات في الخلفية
+                // جلب البيانات الإضافية والصور في الخلفية
                 fetch('/api/categories')
                     .then(res => res.json())
                     .then(cats => {
-                        let catsHtml = "";
+                        allCategories = cats;
                         cats.forEach(c => {
-                            catsHtml += `
-                                <div class="cat-card" onclick="selectCat(this, '${c.name.replace(/'/g, "\\'")}')">
-                                    ${c.image_url ? `<img src="${c.image_url}" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">` : ''}
-                                    <div class="no-img" style="${c.image_url ? 'display:none;' : ''}">؟</div>
-                                    <span>${c.name}</span>
-                                </div>`;
+                            let el = document.getElementById(`cat-${c.name}`);
+                            if (el) {
+                                if (c.image_url) {
+                                    el.innerHTML = `<img src="${c.image_url}" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                                                    <div class="no-img" style="display:none;">؟</div>
+                                                    <span>${c.name}</span>`;
+                                }
+                            } else {
+                                // فئة جديدة غير موجودة في القائمة الافتراضية
+                                const newCatHtml = `
+                                    <div class="cat-card" onclick="selectCat(this, '${c.name.replace(/'/g, "\\'")}')" id="cat-${c.name}">
+                                        ${c.image_url ? `<img src="${c.image_url}" loading="lazy" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">` : ''}
+                                        <div class="no-img" style="${c.image_url ? 'display:none;' : ''}">؟</div>
+                                        <span>${c.name}</span>
+                                    </div>`;
+                                document.getElementById('categories-container').insertAdjacentHTML('beforeend', newCatHtml);
+                            }
                         });
-                        const container = document.getElementById('categories-container');
-                        if (container) container.innerHTML = catsHtml;
-                    })
-                    .catch(err => {
-                        const container = document.getElementById('categories-container');
-                        if (container) container.innerHTML = "<p>فشل تحميل الفئات. حاول مجدداً.</p>";
                     });
             }
         }
@@ -1799,6 +1834,7 @@ HTML_TEMPLATE = """
             if ((await res.json()).success) {
                 resetCatForm();
                 adminManageCategories();
+                fetchCategories();
             }
         }
 
@@ -1818,9 +1854,9 @@ HTML_TEMPLATE = """
             let h = `<h2>كلمات قسم: ${catName}</h2>
                 <div id="word-form-container" style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin-bottom:20px;">
                     <input id="word_id" type="hidden">
-                    <input id="new_word_val" placeholder="الكلمة">
+                    <textarea id="new_word_val" placeholder="أدخل الكلمات هنا.. كل كلمة في سطر" rows="5" style="width:100%; padding:12px; border-radius:15px; background:#0f0c29; color:white; border:2px solid #2f278c; outline:none; font-family:'Cairo'; box-sizing:border-box; resize:vertical;"></textarea>
                     <div style="display:flex; gap:10px; margin-top:10px;">
-                        <button id="word-save-btn" onclick="addWordToCat('${catName.replace(/'/g, "\\'")}')">إضافة للقسم</button>
+                        <button id="word-save-btn" onclick="addWordToCat('${catName.replace(/'/g, "\\'")}')">حفظ الكلمات</button>
                         <button id="word-cancel-btn" style="background:#636e72; display:none;" onclick="resetWordForm('${catName.replace(/'/g, "\\'")}')">إلغاء</button>
                     </div>
                 </div>
@@ -1874,12 +1910,17 @@ HTML_TEMPLATE = """
         }
 
         async function addWordToCat(cat) {
-            const word = document.getElementById('new_word_val').value.trim();
-            if(!word) return;
+            const val = document.getElementById('new_word_val').value.trim();
+            if(!val) return;
+
+            // تقسيم النص إلى أسطر وتنظيفها من المسافات
+            const wordsList = val.split('\n').map(w => w.trim()).filter(w => w !== "");
+            if(wordsList.length === 0) return;
+
             const res = await fetch('/api/admin/add_word', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({category: cat, word})
+                body: JSON.stringify({category: cat, words: wordsList})
             });
             const d = await res.json();
             if(d.success) manageWords(cat);
