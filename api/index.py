@@ -647,7 +647,7 @@ HTML_TEMPLATE = """
         .score-item { display: flex; justify-content: space-between; background: #0f0c29; padding: 10px 20px; border-radius: 10px; margin: 5px 0; border: 1px solid #3c339e; }
         .cat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 20px 0; max-height: 300px; overflow-y: auto; padding: 10px; }
         .cat-card { background: #130f40; border-radius: 15px; padding: 10px; cursor: pointer; border: 2px solid transparent; transition: 0.3s; display: flex; flex-direction: column; align-items: center; }
-        .cat-card img { width: 100%; height: 60px; object-fit: cover; border-radius: 10px; margin-bottom: 5px; background: #2f278c; transition: opacity 0.3s; }
+        .cat-card img { width: 100%; height: 60px; object-fit: cover; border-radius: 10px; margin-bottom: 5px; }
         .cat-card.selected { border-color: var(--accent); background: #1b1464; box-shadow: 0 0 15px var(--accent); }
         .win-opt {
             padding: 10px 20px;
@@ -663,9 +663,7 @@ HTML_TEMPLATE = """
             color: white;
             border-color: white;
         }
-        .cat-card span { font-size: 12px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; }
-        .loader-inline { display: inline-block; width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: #fff; animation: spin 1s ease-in-out infinite; }
-        @keyframes spin { to { transform: rotate(360deg); } }
+        .cat-card span { font-size: 12px; font-weight: bold; }
         .exit-btn { position: fixed; left: 20px; top: 20px; font-size: 20px; cursor: pointer; z-index: 1001; background: var(--error); width: 50px; height: 50px; border-radius: 15px; text-align: center; line-height: 50px; color: white; display: none; box-shadow: 0 4px 10px rgba(0,0,0,0.3); transition: 0.3s; }
         .exit-btn:hover { transform: scale(1.1); }
         .no-img { width: 100%; height: 60px; background: #2f278c; display: flex; align-items: center; justify-content: center; border-radius: 10px; font-size: 24px; }
@@ -1213,6 +1211,7 @@ HTML_TEMPLATE = """
 
                 let h = `<div id="p_selection_list" style="max-height: 300px; overflow-y: auto; margin-bottom: 20px; text-align: right;">`;
 
+                // عرض اللاعبين المخزنين أولاً مع خاصية الاختيار
                 savedPlayers.forEach((p, idx) => {
                     const name = typeof p === 'string' ? p : p.name;
                     const isSelected = idx < targetN;
@@ -1224,6 +1223,7 @@ HTML_TEMPLATE = """
                 });
                 h += `</div>`;
 
+                // حقل لإضافة لاعب جديد للقائمة
                 h += `
                     <div style="display:flex; gap:10px; margin-bottom:15px;">
                         <input id="new_p_name" placeholder="اسم لاعب جديد" style="margin:0">
@@ -1251,15 +1251,26 @@ HTML_TEMPLATE = """
                         <h2>اختر اللاعبين</h2>
                         ${h}
                     </div>`;
+
+                // تحديث العداد الأولي
                 updateSelectedCount();
             } else if(step === 3) {
-                // عرض هيكل الصفحة فوراً مع تحميل البيانات من الكاش أو الشبكة
+                const res = await fetch('/api/categories');
+                const cats = await res.json();
+
+                let catsHtml = "";
+                cats.forEach(c => {
+                    catsHtml += `
+                        <div class="cat-card" onclick="selectCat(this, '${c.name}')">
+                            ${c.image_url ? `<img src="${c.image_url}">` : '<div class="no-img">؟</div>'}
+                            <span>${c.name}</span>
+                        </div>`;
+                });
+
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
                         <h2>اختر نوع السالفة</h2>
-                        <div id="cats-container" class="cat-grid">
-                            <div style="grid-column: 1/-1; padding: 40px;"><div class="loader-inline"></div> جاري تحميل الفئات...</div>
-                        </div>
+                        <div class="cat-grid">${catsHtml}</div>
                         <input type="hidden" id="selected_cat">
 
                         <p style="margin-top:20px; font-weight:bold;">حد الفوز (نقاط):</p>
@@ -1271,65 +1282,8 @@ HTML_TEMPLATE = """
                         </div>
                         <input type="hidden" id="win_limit_val" value="10">
 
-                        <button class="btn-yellow" id="start-btn" onclick="startGameFinal(this)">ابدأ اللعب الآن</button>
+                        <button class="btn-yellow" onclick="startGameFinal(this)">ابدأ اللعب الآن</button>
                     </div>`;
-
-                // محاولة استرداد الفئات من الكاش أولاً لعرضها فوراً
-                if ('caches' in window) {
-                    caches.match('/api/categories').then(response => {
-                        if (response) {
-                            response.json().then(cats => {
-                                if (document.getElementById('cats-container').querySelector('.loader-inline')) {
-                                    renderCategories(cats);
-                                }
-                            });
-                        }
-                    });
-                }
-
-                try {
-                    const res = await fetch('/api/categories');
-                    const cats = await res.json();
-                    renderCategories(cats);
-
-                    // محرك التحميل التسلسلي للصور لتخزينها في الكاش
-                    const imageUrls = cats.map(c => c.image_url).filter(url => url);
-                    if (imageUrls.length > 0) {
-                        (async function prefetchImages(urls) {
-                            for (const url of urls) {
-                                try {
-                                    const cache = await caches.open('alsalfa-v2');
-                                    const cachedResponse = await cache.match(url);
-                                    if (!cachedResponse) {
-                                        await fetch(url, { mode: 'no-cors' });
-                                        console.log('Cached:', url);
-                                        await new Promise(r => setTimeout(r, 200));
-                                    }
-                                } catch (e) {}
-                            }
-                        })(imageUrls);
-                    }
-                } catch(e) {
-                    if (document.getElementById('cats-container').querySelector('.loader-inline')) {
-                        document.getElementById('cats-container').innerHTML = `<p style="grid-column:1/-1">تعذر تحميل الفئات. حاول مجدداً.</p>`;
-                    }
-                }
-            }
-        }
-
-        function renderCategories(cats) {
-            let catsHtml = "";
-            cats.forEach(c => {
-                catsHtml += `
-                    <div class="cat-card" onclick="selectCat(this, '${c.name.replace(/'/g, "\\'")}')">
-                        <div class="img-wrapper" style="width:100%; height:60px; position:relative; background:#2f278c; border-radius:10px; margin-bottom:5px; overflow:hidden;">
-                            ${c.image_url ? `<img src="${c.image_url}" loading="lazy" style="width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity 0.5s;" onload="this.style.opacity='1'">` : '<div class="no-img" style="height:100%; display:flex; align-items:center; justify-content:center;">؟</div>'}
-                        </div>
-                        <span>${c.name}</span>
-                    </div>`;
-            });
-            document.getElementById('cats-container').innerHTML = catsHtml;
-        }
             }
         }
 
