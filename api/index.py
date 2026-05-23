@@ -669,6 +669,25 @@ HTML_TEMPLATE = """
         .exit-btn { position: fixed; left: 20px; top: 20px; font-size: 20px; cursor: pointer; z-index: 1001; background: var(--error); width: 50px; height: 50px; border-radius: 15px; text-align: center; line-height: 50px; color: white; display: none; box-shadow: 0 4px 10px rgba(0,0,0,0.3); transition: 0.3s; }
         .exit-btn:hover { transform: scale(1.1); }
         .no-img { width: 100%; height: 60px; background: #2f278c; display: flex; align-items: center; justify-content: center; border-radius: 10px; font-size: 24px; }
+        /* تأثير الوميض للتحميل */
+        .shimmer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(90deg, #2f278c 25%, #3c339e 50%, #2f278c 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+        }
+        @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+        .img-loading-bar {
+            position: absolute;
+            bottom: 0; left: 0; height: 3px;
+            background: var(--accent);
+            width: 0%;
+            transition: width 0.3s;
+        }
         @keyframes rotate { from { transform: rotate(0); } to { transform: rotate(360deg); } }
     </style>
 </head>
@@ -1308,13 +1327,24 @@ HTML_TEMPLATE = """
 
             cats.forEach(c => {
                 const isSelected = (c.name === selectedCat);
+                const safeName = c.name.replace(/'/g, "\\'");
+
+                // إذا كانت الصورة موجودة، نعرض Shimmer (وميض) حتى تكتمل
+                // إذا كانت الصورة غير موجودة، نعرض Shimmer (كعلامة على أنها ستحمل)
+                let imgContent = "";
+                if (c.image_url) {
+                    imgContent = `
+                        <div class="shimmer" id="shimmer-${c.name}"></div>
+                        <img src="${c.image_url}" loading="lazy" style="width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity 0.5s;"
+                             onload="let s=document.getElementById('shimmer-${c.name}'); if(s) s.remove(); this.style.opacity='1';">`;
+                } else {
+                    imgContent = `<div class="shimmer"></div><div class="no-img" style="position:absolute; top:0; left:0; width:100%; height:100%; display:flex; align-items:center; justify-content:center; background:transparent; z-index:1;">؟</div>`;
+                }
+
                 catsHtml += `
-                    <div class="cat-card ${isSelected ? 'selected' : ''}" onclick="selectCat(this, '${c.name.replace(/'/g, "\\'")}')">
+                    <div class="cat-card ${isSelected ? 'selected' : ''}" onclick="selectCat(this, '${safeName}')">
                         <div class="img-wrapper" style="width:100%; height:60px; position:relative; background:#2f278c; border-radius:10px; margin-bottom:5px; overflow:hidden;">
-                            ${c.image_url ?
-                                `<img src="${c.image_url}" loading="lazy" style="width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity 0.5s;" onload="this.style.opacity='1'">` :
-                                `<div class="no-img" style="height:100%; display:flex; align-items:center; justify-content:center; background:#2f278c;">؟</div>`
-                            }
+                            ${imgContent}
                         </div>
                         <span>${c.name}</span>
                     </div>`;
@@ -1337,10 +1367,15 @@ HTML_TEMPLATE = """
         function startGameFinal(btn) {
             const cat = document.getElementById('selected_cat').value;
             if(!cat) return alert("اختر فئة أولاً!");
-            if(btn) {
-                btn.disabled = true;
-                btn.innerHTML = '<span class="shuffling" style="font-size:20px; margin:0;">🌀</span> جاري البدء...';
-            }
+
+            // شاشة انتقالية فورية لإزالة الإحساس بالتعليق
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card" style="padding: 50px 20px; text-align: center;">
+                    <div class="shuffling">🕵️</div>
+                    <h2 style="margin-top:20px;">جاري تجهيز السالفة...</h2>
+                    <p style="color:#aaa; font-size:14px;">تأكد أن لا أحد يرى الشاشة غيرك</p>
+                </div>`;
+
             winLimit = parseInt(document.getElementById('win_limit_val').value);
             start(cat);
         }
@@ -1349,13 +1384,57 @@ HTML_TEMPLATE = """
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'block';
             const players = window.pNamesSave;
             if(Object.keys(totalScores).length === 0) players.forEach(p => totalScores[p] = 0);
-            const res = await fetch('/api/game/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({players, category})});
-            game = await res.json();
-            game.players = players;
-            game.category = category; // حفظ الفئة للجولة القادمة
-            game.curr = 0;
-            game.qIdx = 0;
-            showRole();
+
+            try {
+                // نطلب البيانات من السيرفر لكننا لا ننتظر النتيجة لعرض شاشة البدء إذا أردت سرعة خيالية،
+                // لكن هنا سننتظر الاستجابة لضمان وجود "السالفة" قبل البدء
+                const responsePromise = fetch('/api/game/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({players, category})
+                });
+
+                const res = await responsePromise;
+                if (!res.ok) throw new Error("Server error");
+
+                game = await res.json();
+                game.players = players;
+                game.category = category;
+                game.curr = 0;
+                game.qIdx = 0;
+
+                // انتقال فوري بعد استلام البيانات
+                showRole();
+            } catch (e) {
+                console.error("Start failed:", e);
+                alert("خطأ في الاتصال بالسيرفر");
+                showSetup(3, false); // العودة لشاشة الاختيار
+            }
+        }
+                const res = await fetch('/api/game/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({players, category})
+                });
+
+                if (!res.ok) throw new Error("Server error");
+
+                game = await res.json();
+                game.players = players;
+                game.category = category;
+                game.curr = 0;
+                game.qIdx = 0;
+                showRole();
+            } catch (e) {
+                console.error("Failed to start game:", e);
+                alert("حدث خطأ أثناء الاتصال بالسيرفر. تأكد من الإنترنت.");
+                // إعادة تفعيل الزر في حال الفشل
+                const btn = document.getElementById('start-btn');
+                if(btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = 'ابدأ اللعب الآن';
+                }
+            }
         }
 
         function showRole() {
