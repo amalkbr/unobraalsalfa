@@ -794,7 +794,14 @@ HTML_TEMPLATE = """
     </div>
     <div class="flex-center"><div class="container" id="main-ui"></div></div>
     <script>
-        let currentUser = JSON.parse(localStorage.getItem('user')) || null;
+        let currentUser = null;
+        try {
+            currentUser = JSON.parse(localStorage.getItem('user')) || null;
+        } catch (e) {
+            console.warn('Invalid user data in localStorage, clearing it.', e);
+            localStorage.removeItem('user');
+            currentUser = null;
+        }
         let game = null;
         let p_votes = {};
         let totalScores = {}; // نقاط الجلسة
@@ -889,14 +896,19 @@ HTML_TEMPLATE = """
         }
 
         async function login() {
-            const res = await fetch('/api/auth/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u_name.value, password: u_pass.value})});
+            const username = document.getElementById('u_name').value.trim();
+            const password = document.getElementById('u_pass').value;
+            const res = await fetch('/api/auth/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username, password})});
             const d = await res.json();
             if(d.success) { localStorage.setItem('user', JSON.stringify(d.user)); currentUser = d.user; init(); } else alert(d.msg);
         }
 
         async function register() {
-            if(!u_name.value || !u_pass.value || !r_nick.value) return alert("املأ كل الحقول!");
-            const res = await fetch('/api/auth/register', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u_name.value, password: u_pass.value, name: r_nick.value})});
+            const username = document.getElementById('u_name').value.trim();
+            const password = document.getElementById('u_pass').value;
+            const name = document.getElementById('r_nick').value.trim();
+            if(!username || !password || !name) return alert("املأ كل الحقول!");
+            const res = await fetch('/api/auth/register', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username, password, name})});
             const d = await res.json();
             d.success ? alert("تم التسجيل! ادخل الآن") : alert(d.msg);
         }
