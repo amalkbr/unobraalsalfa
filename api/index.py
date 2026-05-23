@@ -1343,9 +1343,18 @@ HTML_TEMPLATE = """
                 if (!cat.image_url) return;
                 const img = new Image();
                 img.src = cat.image_url;
-                img.onload = () => { /* loaded */ };
-                img.onerror = () => { /* ignore */ };
+                img.onload = () => { cacheImage(cat.image_url); };
+                img.onerror = () => { cacheImage(cat.image_url); };
             });
+        }
+
+        function cacheImage(url) {
+            if (!('caches' in window) || !url) return;
+            caches.open('alsalfa-dynamic-v1').then(cache => {
+                cache.match(url).then(response => {
+                    if (!response) cache.add(url).catch(() => null);
+                }).catch(() => null);
+            }).catch(() => null);
         }
 
         function showCategoryLoadingSkeleton() {
@@ -1377,11 +1386,7 @@ HTML_TEMPLATE = """
                     ${c.image_url ? `
                         <div class="cat-image-wrapper">
                             <div class="image-placeholder">⌛</div>
-                            <img data-src="${c.image_url}" alt="${c.name}" loading="lazy">
-                        </div>` : '<div class="no-img">؟</div>'}
-                    <span>${c.name}</span>
-                </div>`).join('');
-
+                            <img src="${c.image_url}" alt="${c.name}" loading="lazy">
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h2>اختر نوع السالفة</h2>
@@ -1419,7 +1424,7 @@ HTML_TEMPLATE = """
         }
 
         function loadCategoryImages() {
-            document.querySelectorAll('img[data-src]').forEach(img => {
+            document.querySelectorAll('.cat-image-wrapper img').forEach(img => {
                 const wrapper = img.closest('.cat-image-wrapper');
                 img.onload = () => {
                     img.style.opacity = '1';
@@ -1434,7 +1439,6 @@ HTML_TEMPLATE = """
                         if (placeholder) placeholder.textContent = '؟';
                     }
                 };
-                img.src = img.dataset.src;
             });
         }
 
