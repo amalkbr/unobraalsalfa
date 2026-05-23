@@ -786,7 +786,7 @@ HTML_TEMPLATE = """
             <p id="user-display" style="margin:0; font-weight:bold;">زائر</p>
         </div>
         <button id="install-btn-sidebar" style="background:var(--accent); color:black; font-size:14px; display:none;" onclick="installApp()">📲 تثبيت التطبيق</button>
-        <button style="background:#ff9f43; font-size:14px;" onclick="showSuggestCategory()">💡 اقتراح فئات</button>
+        <button id="suggest-category-btn" style="background:#ff9f43; font-size:14px; position:relative;" onclick="showSuggestCategory()">💡 اقتراح فئات <span id="suggestion-badge" style="display:none; position:absolute; top:8px; left:8px; background:#e84118; color:white; border-radius:999px; padding:2px 8px; font-size:12px;"></span></button>
         <button style="background:var(--success); font-size:14px;" onclick="showReports()">📊 التقارير والمتصدرين</button>
         <button style="background:var(--primary); font-size:14px;" onclick="showEditProfile()">تعديل بيانات الحساب</button>
         <button style="background:var(--error); font-size:14px;" onclick="logout()">تسجيل الخروج</button>
@@ -1994,6 +1994,27 @@ HTML_TEMPLATE = """
                     </div>
                 </div>`;
         }
+        function updateSuggestionBadge() {
+            const badge = document.getElementById('suggestion-badge');
+            if (!badge || !currentUser || currentUser.username_key !== 'admin') {
+                if (badge) badge.style.display = 'none';
+                return;
+            }
+            fetch('/api/admin/category_suggestions/count')
+                .then(res => res.json())
+                .then(data => {
+                    const count = data.count || 0;
+                    if (count > 0) {
+                        badge.innerText = count;
+                        badge.style.display = 'inline-block';
+                    } else {
+                        badge.style.display = 'none';
+                    }
+                })
+                .catch(() => {
+                    if (badge) badge.style.display = 'none';
+                });
+        }
         function updateSidebar() { if(currentUser) {
             document.getElementById('user-display').innerText = currentUser.player_name;
             if(currentUser.username_key === 'admin') {
@@ -2006,6 +2027,7 @@ HTML_TEMPLATE = """
                     btn.onclick = () => navigateTo('admin');
                     document.getElementById('sidebar').appendChild(btn);
                 }
+                updateSuggestionBadge();
             }
         }}
 
@@ -2238,6 +2260,7 @@ HTML_TEMPLATE = """
             } else {
                 alert(d.message || 'فشل الموافقة');
             }
+            updateSuggestionBadge();
             adminManageCategorySuggestions();
         }
 
