@@ -603,6 +603,7 @@ HTML_TEMPLATE = """
         input, select { width: 100%; padding: 15px; margin: 10px 0; border-radius: 15px; border: 2px solid #2f278c; background: #0f0c29; color: white; font-size: 16px; box-sizing: border-box; outline: none; }
         button { width: 100%; padding: 16px; margin: 12px 0; border-radius: 18px; border: none; background: linear-gradient(45deg, #6c5ce7, #a29bfe); color: white; font-weight: bold; cursor: pointer; font-size: 18px; transition: 0.3s; }
         button:hover { transform: translateY(-3px); }
+        .btn-yellow { background: linear-gradient(45deg, #f9ca24, #f0932b) !important; color: #1b1464 !important; font-weight: 900 !important; box-shadow: 0 4px 15px rgba(249, 202, 36, 0.3) !important; }
         .sidebar { position: fixed; right: -280px; top: 0; width: 280px; height: 100%; background: #130f40; transition: 0.4s; z-index: 1000; padding: 30px 20px; box-sizing: border-box; border-left: 2px solid var(--primary); }
         .sidebar.open { right: 0; }
         .menu-btn { position: fixed; right: 20px; top: 20px; font-size: 28px; cursor: pointer; z-index: 1001; background: var(--card); width: 50px; height: 50px; border-radius: 15px; text-align: center; line-height: 50px; }
@@ -645,7 +646,7 @@ HTML_TEMPLATE = """
         <div style="background:#1b1464; padding:15px; border-radius:15px; margin:20px 0;">
             <p id="user-display" style="margin:0; font-weight:bold;">زائر</p>
         </div>
-        <button id="install-btn-sidebar" style="background:var(--accent); color:black; font-size:14px; display:none;" onclick="installApp()">📲 تثبيت التطبيق</button>
+        <button id="install-btn-sidebar" style="background:linear-gradient(45deg, #2ecc71, #27ae60); color:white; font-size:14px;" onclick="installApp()">📲 تحميل التطبيق المساعد</button>
         <button style="background:var(--success); font-size:14px;" onclick="showReports()">📊 التقارير والمتصدرين</button>
         <button style="background:var(--primary); font-size:14px;" onclick="showEditProfile()">تعديل بيانات الحساب</button>
         <button style="background:var(--error); font-size:14px;" onclick="logout()">تسجيل الخروج</button>
@@ -862,7 +863,7 @@ HTML_TEMPLATE = """
                     <div style="margin:10px 0; text-align:right;">${pList}</div>
                     ${room.host_id == currentUser.user_id ? `
                         <select id="online_cat" style="margin-bottom:10px">${["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"].map(c=>`<option value="${c}">${c}</option>`)}</select>
-                        <button onclick="startOnlineGame()">بدء اللعبة</button>` :
+                        <button class="btn-yellow" onclick="startOnlineGame()">بدء اللعبة</button>` :
                         '<p>بانتظار المضيف لبدء اللعبة...</p>'}
                     <button style="background:#636e72" onclick="leaveRoom()">خروج</button>
                 </div>`;
@@ -886,14 +887,27 @@ HTML_TEMPLATE = """
         }
 
         async function startOnlineGame() {
+            const btn = event.target;
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = "جاري التحميل...";
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'block';
-            const res = await fetch('/api/online/start', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
-            });
-            const d = await res.json();
-            if(!d.success) alert(d.msg || "تعذر بدء اللعبة");
+            try {
+                const res = await fetch('/api/online/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
+                });
+                const d = await res.json();
+                if(!d.success) {
+                    alert(d.msg || "تعذر بدء اللعبة");
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                }
+            } catch(e) {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
         }
 
         function showOnlineRole() {
@@ -921,11 +935,25 @@ HTML_TEMPLATE = """
         }
 
         async function onlineAction(action, extra = {}) {
-            await fetch('/api/online/action', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id, action, ...extra})
-            });
+            const btn = (event && event.target && event.target.tagName === 'BUTTON') ? event.target : null;
+            let originalText = "";
+            if (btn) {
+                originalText = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = "جاري...";
+            }
+            try {
+                await fetch('/api/online/action', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id, action, ...extra})
+                });
+            } catch (e) {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                }
+            }
         }
 
         function showOnlineQuestions() {
@@ -938,7 +966,7 @@ HTML_TEMPLATE = """
                     <div style="font-size:24px; margin:30px 0;">
                         <b style="color:#a29bfe">${q.f}</b> يسأل <b style="color:#ff7675">${q.t}</b>
                     </div>
-                    ${isHost ? `<button onclick="onlineAction('next_question')">السؤال التالي</button>` : `<p>بانتظار المضيف...</p>`}
+                    ${isHost ? `<button class="btn-yellow" onclick="onlineAction('next_question')">السؤال التالي</button>` : `<p>بانتظار المضيف...</p>`}
                 </div>`;
         }
 
@@ -997,7 +1025,7 @@ HTML_TEMPLATE = """
                     <hr style="border:1px solid #3c339e; margin:15px 0;">
                     <h3>النقاط الحالية:</h3>
                     <div style="margin-bottom:20px;">${scoresList}</div>
-                    ${isHost ? `<button onclick="startOnlineGame()">جولة جديدة</button>` : `<p>بانتظار المضيف لبدء جولة جديدة...</p>`}
+                    ${isHost ? `<button class="btn-yellow" onclick="startOnlineGame()">جولة جديدة</button>` : `<p>بانتظار المضيف لبدء جولة جديدة...</p>`}
                     <button style="background:#636e72" onclick="leaveRoom()">خروج من الغرفة</button>
                 </div>`;
         }
@@ -1163,7 +1191,7 @@ HTML_TEMPLATE = """
                             <input type="number" id="p_count" value="${savedCount}" min="3" style="text-align: center; width: 100px; margin:0; font-size: 24px; font-weight: bold;">
                             <button onclick="changePCount(1)" style="width: 60px; margin:0; background:var(--success); font-size: 24px;">+</button>
                         </div>
-                        <button onclick="saveAndNext()">التالي</button>
+                        <button class="btn-yellow" onclick="saveAndNext()">التالي</button>
                         <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
                     </div>`;
             } else if(step === 2) {
@@ -1205,7 +1233,7 @@ HTML_TEMPLATE = """
                         من أصل
                         <span id="required_n_summary" style="font-weight:bold;">${targetN}</span> لاعبين
                     </p>
-                    <button onclick="confirmPlayersAndNext()">التالي</button>`;
+                    <button class="btn-yellow" onclick="confirmPlayersAndNext()">التالي</button>`;
 
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
@@ -1243,7 +1271,7 @@ HTML_TEMPLATE = """
                         </div>
                         <input type="hidden" id="win_limit_val" value="10">
 
-                        <button onclick="startGameFinal()">ابدأ اللعب الآن</button>
+                        <button class="btn-yellow" onclick="startGameFinal()">ابدأ اللعب الآن</button>
                     </div>`;
             }
         }
@@ -1264,20 +1292,38 @@ HTML_TEMPLATE = """
             const cat = document.getElementById('selected_cat').value;
             if(!cat) return alert("اختر فئة أولاً!");
             winLimit = parseInt(document.getElementById('win_limit_val').value);
+
+            const btn = event.target;
+            btn.disabled = true;
+            btn.innerHTML = "جاري التحميل...";
+
             start(cat);
         }
 
         async function start(category) {
+            const btn = (event && event.target && event.target.tagName === 'BUTTON') ? event.target : null;
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = "جاري التحميل...";
+            }
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'block';
             const players = window.pNamesSave;
             if(Object.keys(totalScores).length === 0) players.forEach(p => totalScores[p] = 0);
-            const res = await fetch('/api/game/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({players, category})});
-            game = await res.json();
-            game.players = players;
-            game.category = category; // حفظ الفئة للجولة القادمة
-            game.curr = 0;
-            game.qIdx = 0;
-            showRole();
+            try {
+                const res = await fetch('/api/game/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({players, category})});
+                game = await res.json();
+                game.players = players;
+                game.category = category; // حفظ الفئة للجولة القادمة
+                game.curr = 0;
+                game.qIdx = 0;
+                showRole();
+            } catch (e) {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = "بدء جولة جديدة";
+                }
+                alert("حدث خطأ أثناء بدء اللعبة");
+            }
         }
 
         function showRole() {
@@ -1291,7 +1337,7 @@ HTML_TEMPLATE = """
                         <h3 class="reveal-text">${game.roles[game.curr] === 'spy' ? '🕵️ أنت برة السالفة!' : '🤫 السالفة هي: ' + game.word}</h3>
                     </div>
                     <button onclick="document.getElementById('box').classList.remove('hidden'); this.style.display='none'; document.getElementById('bnxt').style.display='block'; playSound('click')">اكشف الدور</button>
-                    <button id="bnxt" style="display:none" onclick="game.curr++; showRole()">فهمت، التالي</button>
+                    <button id="bnxt" class="btn-yellow" style="display:none" onclick="game.curr++; showRole()">فهمت، التالي</button>
                 </div>`;
         }
 
@@ -1323,7 +1369,7 @@ HTML_TEMPLATE = """
                         </div>
                     </div>
                     <div style="font-size:24px; margin:30px 0;"><b style="color:#a29bfe">${q.f}</b> يسأل <b style="color:#ff7675">${q.t}</b></div>
-                    <button onclick="clearInterval(timerInterval); game.qIdx++; showPhase1()">السؤال التالي</button>
+                    <button class="btn-yellow" onclick="clearInterval(timerInterval); game.qIdx++; showPhase1()">السؤال التالي</button>
                     <button style="background: #ffec00; color: #1b1464; font-weight: 900; box-shadow: 0 0 20px rgba(255, 236, 0, 0.4);" onclick="clearInterval(timerInterval); startVoting()">إنهاء الجولة والتصويت</button>
                 </div>`;
             startTimer(() => {
@@ -1422,7 +1468,7 @@ HTML_TEMPLATE = """
                         <h2 style="color:var(--error); font-size:40px;">${spy}</h2>
                         <div style="background:#0f0c29; padding:15px; border-radius:15px; margin:20px 0; text-align:right;">${resultsHtml}</div>
                         <h3>${game.spyCaught ? '🚨 تم كشف الجاسوس!' : '🏃 هرب الجاسوس!'}</h3>
-                        <button onclick="spyGuess()">التالي</button>
+                        <button class="btn-yellow" onclick="spyGuess()">التالي</button>
                     </div>`;
             }, 2000);
         }
@@ -1532,7 +1578,7 @@ HTML_TEMPLATE = """
                         <hr style="border:1px solid #3c339e; margin:15px 0;">
                         <h3>لوحة الصدارة (الهدف: ${winLimit}):</h3>
                         <div style="margin-bottom:20px;">${scoresList}</div>
-                        <button onclick="start(game.category)">بدء جولة جديدة</button>
+                        <button class="btn-yellow" onclick="start(game.category)">بدء جولة جديدة</button>
                         <button style="background:#636e72" onclick="showMenu()">إنهاء الجلسة</button>
                     </div>`;
             }
@@ -1868,16 +1914,19 @@ HTML_TEMPLATE = """
         }
 
         async function installApp() {
-            if (!deferredPrompt) return;
-            deferredPrompt.prompt();
-            const { outcome } = await deferredPrompt.userChoice;
-            if (outcome === 'accepted') {
-                console.log('User accepted install');
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                const { outcome } = await deferredPrompt.userChoice;
+                if (outcome === 'accepted') {
+                    console.log('User accepted install');
+                }
+                deferredPrompt = null;
+                const banner = document.getElementById('install-banner');
+                if (banner) banner.remove();
+            } else {
+                // تعليمات للمتصفحات التي لا تدعم التثبيت التلقائي (مثل Safari على iOS)
+                alert("لتثبيت التطبيق على جهازك:\n\n1. اضغط على زر 'مشاركة' (Share) في المتصفح.\n2. اختر 'إضافة إلى الشاشة الرئيسية' (Add to Home Screen).\n\nهذا سيجعل التطبيق يعمل كبرنامج مستقل مرتبط بالمتصفح.");
             }
-            deferredPrompt = null;
-            updateInstallButtonVisibility();
-            const banner = document.getElementById('install-banner');
-            if (banner) banner.remove();
         }
 
         init();

@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import bot, ADMIN_ID
+from database import db_query
 
 router = Router()
 
@@ -18,8 +19,10 @@ CATEGORIES = {
 }
 
 # أوقات اللعبة الافتراضية
-BARA_VOTE_TIME = 10
-BARA_SPY_TIME = 15
+def get_bara_settings():
+    res = db_query("SELECT key, value FROM settings WHERE key IN ('vote_timeout', 'spy_guess_timeout')")
+    settings = {row['key']: int(row['value']) for row in res} if res else {}
+    return settings.get('vote_timeout', 10), settings.get('spy_guess_timeout', 15)
 
 class BaraState(StatesGroup):
     waiting_players = State()
@@ -120,6 +123,7 @@ async def start_voting_callback(callback: types.CallbackQuery, state: FSMContext
         await callback.answer("أنت لست في اللعبة!")
         return
 
+    vote_time, _ = get_bara_settings()
     await state.set_state(BaraState.voting)
     await state.update_data(votes={})
 
@@ -130,7 +134,7 @@ async def start_voting_callback(callback: types.CallbackQuery, state: FSMContext
     builder.adjust(2)
 
     await callback.message.edit_text(
-        f"🗳 **وقت التصويت!**\n\nأمامكم {BARA_VOTE_TIME} ثواني للتصويت.\nاللي ما يصوت النظام بيصوت عنه عشوائي!",
+        f"🗳 **وقت التصويت!**\n\nأمامكم {vote_time} ثواني للتصويت.\nاللي ما يصوت النظام بيصوت عنه عشوائي!",
         reply_markup=builder.as_markup(),
         parse_mode="Markdown"
     )
@@ -138,7 +142,8 @@ async def start_voting_callback(callback: types.CallbackQuery, state: FSMContext
     asyncio.create_task(vote_timeout_handler(callback.message, state))
 
 async def vote_timeout_handler(message: types.Message, state: FSMContext):
-    await asyncio.sleep(BARA_VOTE_TIME)
+    vote_time, spy_time = get_bara_settings()
+    await asyncio.sleep(vote_time)
     if await state.get_state() != BaraState.voting:
         return
 
@@ -161,7 +166,7 @@ async def vote_timeout_handler(message: types.Message, state: FSMContext):
     await message.answer(f"📊 انتهى الوقت!\nتم التصويت ضد: **{voted_out_name}**", parse_mode="Markdown")
 
     if voted_out_id == out_player:
-        await message.answer(f"🎯 كفو! **{voted_out_name}** هو اللي برا السالفة.\n\nيا {voted_out_name}، قدامك {BARA_SPY_TIME} ثانية تحزر السالفة وتفوز!")
+        await message.answer(f"🎯 كفو! **{voted_out_name}** هو اللي برا السالفة.\n\nيا {voted_out_name}، قدامك {spy_time} ثانية تحزر السالفة وتفوز!")
         await start_spy_guess(message, state)
     else:
         spy_name = player_names[out_player]
@@ -199,7 +204,8 @@ async def start_spy_guess(message: types.Message, state: FSMContext):
     asyncio.create_task(spy_timeout_handler(message, state))
 
 async def spy_timeout_handler(message: types.Message, state: FSMContext):
-    await asyncio.sleep(BARA_SPY_TIME)
+    _, spy_time = get_bara_settings()
+    await asyncio.sleep(spy_time)
     if await state.get_state() != BaraState.spy_guessing: return
 
     data = await state.get_data()
@@ -231,8 +237,12 @@ async def set_bara_time(message: types.Message):
         await message.answer("الاستخدام: `/bara_time <vote/spy> <seconds>`")
         return
 
-    global BARA_VOTE_TIME, BARA_SPY_TIME
-    type_, sec = args[1].lower(), int(args[2])
-    if type_ == "vote": BARA_VOTE_TIME = sec
-    elif type_ == "spy": BARA_SPY_TIME = sec
-    await message.answer(f"✅ تم تحديث وقت {type_} إلى {sec} ثانية.")
+    type_, sec = args[1].lower(), args[2]
+    if type_ == "vote":
+        db_query("UPDATE settings SET value = %s WHERE key = 'vote_timeout'", (sec,), commit=True)
+    elif type_ == "spy":
+        db_query("UPDATE settings SET value = %s WHERE key = 'spy_guess_timeout'", (sec,), commit=True)
+    else:
+        await message.answer("النوع غير معروف. استخدم `vote` أو `spy`.")
+        return
+    await message.answer(f"✅ تم تحديث وقت {type_} إلى {sec} ثانية في قاعدة البيانات.")
