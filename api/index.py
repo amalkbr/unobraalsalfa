@@ -18,11 +18,25 @@ def get_db_conn():
 
 # --- Game Data ---
 CATEGORIES = {
-    "سيارات": ["تويوتا", "مرسيدس", "فورد", "تسلا", "نيسان", "هوندا", "بي ام دبليو", "لكزس", "مازدا", "كيا", "باجيرو", "لاند كروزر", "شفروليه", "كامري"],
-    "انمي": ["ون بيس", "ناروتو", "هجوم العمالقة", "دراجون بول", "هنتر", "بليتش", "كونان", "ديمون سلاير", "جوجوتسو", "ديث نوت", "بلاك كلوفر"],
-    "أكلات": ["بيتزا", "برجر", "شاورما", "منسف", "كبسة", "فلافل", "مندي", "باستا", "دولمة", "برياني", "مسحب", "كبة", "بخاري", "مقلوبة"],
-    "فواكه": ["تفاح", "موز", "مانجو", "فراولة", "بطيخ", "عنب", "برتقال", "أناناس", "كيوي", "توت", "كرز", "رمان", "افوكادو"],
-    "أجهزة": ["آيفون", "بليستيشن", "لابتوب", "تلفزيون", "ساعة ذكية", "كاميرا", "ايباد", "اكس بوكس", "بي سي", "سماعات", "غسالة", "مكيف"]
+    "أكلات": ["بيتزا", "برجر", "شاورما", "منسف", "كبسة", "فلافل", "مندي", "باستا", "دولمة", "برياني", "مسحب", "كبة", "بخاري", "مقلوبة", "سوشي", "تاكو", "ملوخية", "باشميل"],
+    "حيوانات": ["أسد", "نمر", "زرافة", "فيل", "قطة", "كلب", "أرنب", "قرد", "تمساح", "ثعلب", "ذئب", "جمل", "حصان", "سنجاب", "بطريق", "دولفين", "قرش"],
+    "ملابس": ["قميص", "بنطلون", "فستان", "تنورة", "جاكيت", "قبعة", "جوارب", "حذاء", "ربطة عنق", "بلوزة", "بشت", "شماغ", "عباية", "هودي"],
+    "كورة": ["ريال مدريد", "برشلونة", "ليفربول", "الهلال", "النصر", "الاتحاد", "الاهلي", "ميسي", "رونالدو", "صلاح", "مبابي", "نيمار", "مانشستر سيتي", "بايرن ميونخ"],
+    "سيارات": ["تويوتا", "مرسيدس", "فورد", "تسلا", "نيسان", "هوندا", "بي ام دبليو", "لكزس", "مازدا", "كيا", "باجيرو", "لاند كروزر", "شفروليه", "كامري", "بنتلي"],
+    "شركات": ["جوجل", "ابل", "مايكروسوفت", "سامسونج", "امازون", "فيسبوك", "تسلا", "كوكاكولا", "بيبسي", "نايكي", "اديداس", "هواوي", "سوني"],
+    "كواكب": ["المريخ", "المشتري", "زحل", "الأرض", "الزهرة", "عطارد", "نبتون", "أورانوس", "الشمس", "القمر", "بلوتو"],
+    "أجهزة": ["آيفون", "بليستيشن", "لابتوب", "تلفزيون", "ساعة ذكية", "كاميرا", "ايباد", "اكس بوكس", "بي سي", "سماعات", "غسالة", "مكيف", "ثلاجة", "مايكرويف"],
+    "تطبيقات": ["واتساب", "انستقرام", "تيك توك", "سناب شات", "تلغرام", "يوتيوب", "تويتر", "فيسبوك", "ديسكورد", "سبوتيفاي", "نتفلكس", "بوجي"],
+    "فواكه وخضار": ["تفاح", "موز", "مانجو", "فراولة", "بطيخ", "عنب", "برتقال", "أناناس", "كيوي", "توت", "كرز", "رمان", "خيار", "طماطم", "جزر", "بطاطس", "بصل"],
+    "شخصيات": ["سوبرمان", "باتمان", "سبايدرمان", "جوكر", "هالك", "ايرون مان", "ثور", "كابتن امريكا", "ثانوس", "بلاك بانثر"],
+    "كارتون": ["توم وجيري", "ميكي ماوس", "سبونج بوب", "بن 10", "غامبول", "سبيستون", "سابق ولاحق", "كونان", "بوكيمون", "سندباد"],
+    "مشروبات": ["شاي", "قهوة", "عصير", "حليب", "بيبسي", "كوكاكولا", "ميرندا", "سفن اب", "كود رد", "بايسن", "موخيتو", "كركديه"],
+    "حلويات": ["كنافة", "بسبوسة", "بقلاوة", "دونات", "تشيز كيك", "كيك", "كريب", "وافل", "ايس كريم", "ماكرون", "سينابون"],
+    "مسلسلات": ["صراع العروش", "لا كاسا دي بابل", "بريكنج باد", "فريندز", "الموتى السائرون", "بيكي بلايندرز", "سكيد جيم", "رشاش"],
+    "انمي": ["ون بيس", "ناروتو", "هجوم العمالقة", "دراجون بول", "هنتر", "بليتش", "كونان", "ديمون سلاير", "جوجوتسو", "ديث نوت"],
+    "كيبوب": ["بي تي اس", "بلاك بينك", "اكسو", "توايس", "ستراي كيدز", "ريد فيلفيت", "ايتيز", "نيوجينز"],
+    "قيمرز": ["نينجا", "بندريتا", "ابو فلة", "تي ام فيصل", "باور", "سيد", "اوشي", "شراود", "ميث"],
+    "مهن": ["طيار", "دكتور", "مهندس", "طباخ", "شرطي", "رائد فضاء", "معلم", "لاعب كرة", "مبرمج", "حلاق"]
 }
 
 @app.get("/", response_class=HTMLResponse)
@@ -100,7 +114,7 @@ HTML_TEMPLATE = """
     <title>برا السالفة | المجلس</title>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
-        :root { --primary: #6c5ce7; --bg: #0f0c29; --card: #1b1464; --accent: #f9ca24; --error: #eb4d4b; }
+        :root { --primary: #6c5ce7; --bg: #0f0c29; --card: #1b1464; --accent: #f9ca24; --error: #eb4d4b; --success: #2ecc71; }
         body { font-family: 'Cairo', sans-serif; background: var(--bg); color: white; margin: 0; min-height: 100vh; }
         .flex-center { display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction: column; }
         .container { width: 95%; max-width: 500px; text-align: center; padding: 20px; box-sizing: border-box; }
@@ -118,6 +132,7 @@ HTML_TEMPLATE = """
         .hidden { display: none !important; }
         .q-badge { background: var(--error); padding: 4px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 15px; display: inline-block; }
         .shuffling { animation: rotate 1s infinite linear; font-size: 50px; margin: 20px; display:inline-block; }
+        .score-item { display: flex; justify-content: space-between; background: #0f0c29; padding: 10px 20px; border-radius: 10px; margin: 5px 0; border: 1px solid #3c339e; }
         @keyframes rotate { from { transform: rotate(0); } to { transform: rotate(360deg); } }
     </style>
 </head>
@@ -137,6 +152,8 @@ HTML_TEMPLATE = """
         let currentUser = JSON.parse(localStorage.getItem('user')) || null;
         let game = null;
         let p_votes = {};
+        let totalScores = {}; // نقاط الجلسة
+        let winLimit = 1000;
 
         function init() { currentUser ? showMenu() : showAuth(); updateSidebar(); }
 
@@ -167,6 +184,7 @@ HTML_TEMPLATE = """
         }
 
         function showMenu() {
+            totalScores = {}; // ريست للنقاط عند العودة للقائمة
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>ابدأ اللعب</h1>
@@ -180,11 +198,8 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h2>تعديل بياناتي</h2>
-                    <p style="margin-bottom:0">اليوزر نيم:</p>
                     <input id="edit_u" value="${currentUser.username_key}">
-                    <p style="margin-bottom:0">الاسم المستعار:</p>
                     <input id="edit_n" value="${currentUser.player_name}">
-                    <p style="margin-bottom:0">الباسوورد الجديد:</p>
                     <input id="edit_p" type="password" value="${currentUser.password_key}">
                     <button onclick="updateProfile()">حفظ التعديلات</button>
                     <button style="background:#636e72" onclick="showMenu()">إلغاء</button>
@@ -192,16 +207,7 @@ HTML_TEMPLATE = """
         }
 
         async function updateProfile() {
-            const res = await fetch('/api/auth/update', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    old_username: currentUser.username_key,
-                    username: edit_u.value,
-                    password: edit_p.value,
-                    name: edit_n.value
-                })
-            });
+            const res = await fetch('/api/auth/update', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({old_username: currentUser.username_key, username: edit_u.value, password: edit_p.value, name: edit_n.value})});
             const d = await res.json();
             if(d.success) { alert("تم التحديث! سجل دخولك مجدداً"); logout(); } else alert(d.msg);
         }
@@ -217,7 +223,6 @@ HTML_TEMPLATE = """
                     </div>`;
             } else if(step === 2) {
                 const n = Math.max(3, parseInt(document.getElementById('p_count').value));
-                window.pCountSave = n;
                 let h = '';
                 for(let i=1; i<=n; i++) h += `<input class="pn" placeholder="اللاعب ${i}" value="لاعب ${i}">`;
                 document.getElementById('main-ui').innerHTML = `
@@ -225,30 +230,28 @@ HTML_TEMPLATE = """
                         <h2>أسماء اللاعبين</h2>
                         <div id="p_inputs">${h}</div>
                         <button onclick="showSetup(3)">التالي</button>
-                        <button style="background:#636e72" onclick="showSetup(1)">رجوع</button>
                     </div>`;
             } else if(step === 3) {
                 window.pNamesSave = Array.from(document.querySelectorAll('.pn')).map(i => i.value);
+                let catsHtml = "";
+                const cats = ["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"];
+                cats.forEach(c => catsHtml += `<option value="${c}">${c}</option>`);
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
                         <h2>إعدادات الجولة</h2>
-                        <select id="g_cat"><option value="أكلات">فئة الأكلات</option><option value="سيارات">فئة السيارات</option><option value="انمي">فئة الانمي</option><option value="فواكه">فئة الفواكه</option><option value="أجهزة">فئة الأجهزة</option></select>
-                        <p>حد الفوز:</p>
-                        <select id="win_limit"><option>5</option><option selected>10</option><option>20</option></select>
-                        <button onclick="start()">ابدأ اللعب الآن</button>
-                        <button style="background:#636e72" onclick="showSetup(2)">رجوع</button>
+                        <select id="g_cat">${catsHtml}</select>
+                        <p>حد الفوز (نقاط):</p>
+                        <select id="win_limit_sel"><option value="300">300 نقطة</option><option value="500">500 نقطة</option><option value="1000" selected>1000 نقطة</option></select>
+                        <button onclick="winLimit = parseInt(win_limit_sel.value); start()">ابدأ اللعب الآن</button>
                     </div>`;
             }
         }
 
         async function start() {
             const players = window.pNamesSave;
+            if(Object.keys(totalScores).length === 0) players.forEach(p => totalScores[p] = 0);
             const res = await fetch('/api/game/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({players, category: g_cat.value})});
-            game = await res.json();
-            game.players = players;
-            game.curr = 0;
-            game.qIdx = 0; // عداد الأسئلة
-            showRole();
+            game = await res.json(); game.players = players; game.curr = 0; game.qIdx = 0; showRole();
         }
 
         function showRole() {
@@ -269,11 +272,9 @@ HTML_TEMPLATE = """
             const q = game.q_seq[game.qIdx];
             document.getElementById('main-ui').innerHTML = `
                 <div class="card"><span class="q-badge">مرحلة إجبارية</span>
-                    <div style="font-size:24px; margin:30px 0;">
-                        <b style="color:#a29bfe">${q.f}</b> يسأل <b style="color:#ff7675">${q.t}</b>
-                    </div>
+                    <div style="font-size:24px; margin:30px 0;"><b style="color:#a29bfe">${q.f}</b> يسأل <b style="color:#ff7675">${q.t}</b></div>
                     <button onclick="game.qIdx++; showPhase1()">السؤال التالي</button>
-                    <button style="background:#636e72; font-size:14px;" onclick="startVoting()">إنهاء الجولة والتصويت</button>
+                    <button style="background:#636e72" onclick="startVoting()">إنهاء الجولة والتصويت</button>
                 </div>`;
         }
 
@@ -281,14 +282,10 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `
                 <div class="card"><span class="q-badge" style="background:var(--primary)">مرحلة الاختيار الحر</span>
                     <h3>دور <b style="color:var(--accent)">${asker}</b> يختار مين يسأل؟</h3>
-                    <p style="font-size:13px; color:#bdc3c7;">ممنوع تسأل اللي سألك (${last || '---'})</p>
                     <div id="plist"></div>
                     <button style="margin-top:20px; background:#636e72" onclick="startVoting()">بدء التصويت</button>
                 </div>`;
-            game.players.forEach(p => {
-                if(p!==asker && p!==last)
-                    document.getElementById('plist').innerHTML += `<button class="vote-item" onclick="showPhase2('${p}', '${asker}')">اسأل ${p}</button>`;
-            });
+            game.players.forEach(p => { if(p!==asker && p!==last) document.getElementById('plist').innerHTML += `<button class="vote-item" onclick="showPhase2('${p}', '${asker}')">اسأل ${p}</button>`; });
         }
 
         function startVoting() { p_votes = {}; performVote(0); }
@@ -298,13 +295,12 @@ HTML_TEMPLATE = """
             let list = [...game.players].sort(() => Math.random() - 0.5);
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
-                    <p>مرر الجهاز لـ</p><h3>${game.players[idx]}</h3>
-                    <p style="font-size:14px">صوت سراً: منو اللي برة السالفة؟</p>
+                    <p>مرر لـ <b>${game.players[idx]}</b></p>
+                    <p>صوت سراً: منو اللي برة السالفة؟</p>
                     <div id="vbox"></div>
                 </div>`;
             list.forEach(p => {
-                let btn = document.createElement('button');
-                btn.className = 'vote-item'; btn.innerText = p;
+                let btn = document.createElement('button'); btn.className = 'vote-item'; btn.innerText = p;
                 btn.onclick = () => { p_votes[game.players[idx]] = p; performVote(idx+1); };
                 document.getElementById('vbox').appendChild(btn);
             });
@@ -314,29 +310,86 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `<div class="card"><h1>جاري فرز الأصوات...</h1><div class="shuffling">🌀</div></div>`;
             setTimeout(() => {
                 const spy = game.players[game.spy_idx];
+                let resultsHtml = "";
+                let voteCounts = {};
+                game.players.forEach(p => voteCounts[p] = 0);
+
+                Object.keys(p_votes).forEach(voter => {
+                    const target = p_votes[voter];
+                    voteCounts[target]++;
+                    const isCorrect = (target === spy);
+                    resultsHtml += `<div style="margin:5px 0;">${voter} صوّت لـ ${target} ${isCorrect?'✅':'❌'}</div>`;
+                });
+
+                // هل انكشف الجاسوس؟ (الأغلبية صوتت عليه)
+                let maxVotes = 0, votedOut = "";
+                for(let p in voteCounts) { if(voteCounts[p] > maxVotes) { maxVotes = voteCounts[p]; votedOut = p; } }
+                game.spyCaught = (votedOut === spy);
+
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
-                        <h1>اللي برة السالفة كان:</h1>
+                        <h1>اللي برة السالفة هو:</h1>
                         <h2 style="color:var(--error); font-size:40px;">${spy}</h2>
-                        <button onclick="spyGuess()">شاشة تخمين السالفة</button>
+                        <div style="background:#0f0c29; padding:15px; border-radius:15px; margin:20px 0; text-align:right;">${resultsHtml}</div>
+                        <h3>${game.spyCaught ? '🚨 تم كشف الجاسوس!' : '🏃 هرب الجاسوس!'}</h3>
+                        <button onclick="spyGuess()">التالي</button>
                     </div>`;
             }, 2000);
         }
 
         function spyGuess() {
-            let h = `<h3>خمن وش السالفة؟ (فرصتك الأخيرة)</h3>`;
+            let h = `<h3>خمن وش السالفة؟ (فرصتك الأخيرة كجاسوس)</h3>`;
             game.guesses.forEach(g => h += `<div class="vote-item" onclick="finish('${g}')">${g}</div>`);
             document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
         }
 
-        function finish(g) {
-            const win = (g === game.word);
-            document.getElementById('main-ui').innerHTML = `
-                <div class="card">
-                    <h1>${win ? '🎉 مبروك! الجاسوس فاز' : '🔥 خسر الجاسوس!'}</h1>
-                    <p>السالفة كانت: <b>${game.word}</b></p>
-                    <button onclick="showMenu()">جولة جديدة</button>
-                </div>`;
+        function finish(guessedWord) {
+            const spy = game.players[game.spy_idx];
+            const spyGuessedRight = (guessedWord === game.word);
+            let roundMsg = "";
+
+            // توزيع النقاط
+            if (game.spyCaught) {
+                if (spyGuessedRight) {
+                    totalScores[spy] += 100;
+                    roundMsg = "الجاسوس انقفط بس عرف السالفة وفاز بالنقاط!";
+                } else {
+                    game.players.forEach(p => { if(p_votes[p] === spy) totalScores[p] += 100; });
+                    roundMsg = "اللاعبين كشفوا الجاسوس وما عرف السالفة! نقاط للاعبين";
+                }
+            } else {
+                totalScores[spy] += 200;
+                roundMsg = "الجاسوس هرب بذكاء وفاز بنقاط الجولة!";
+            }
+
+            // فحص الفائز النهائي
+            let finalWinner = null;
+            for(let p in totalScores) { if(totalScores[p] >= winLimit) finalWinner = p; }
+
+            if(finalWinner) {
+                document.getElementById('main-ui').innerHTML = `
+                    <div class="card">
+                        <h1 style="color:var(--accent)">👑 الفائز النهائي 👑</h1>
+                        <h2 style="font-size:50px;">${finalWinner}</h2>
+                        <p>مبروك! وصلت للحد المطلوب: ${totalScores[finalWinner]} نقطة</p>
+                        <button onclick="showMenu()">العودة للقائمة الرئيسية</button>
+                    </div>`;
+            } else {
+                let scoresList = "";
+                Object.entries(totalScores).sort((a,b) => b[1]-a[1]).forEach(([p, s]) => {
+                    scoresList += `<div class="score-item"><span>${p}</span> <b>${s}</b></div>`;
+                });
+                document.getElementById('main-ui').innerHTML = `
+                    <div class="card">
+                        <h2 style="color:${spyGuessedRight? 'var(--success)':'var(--error)'}">${spyGuessedRight?'صح!':'خطأ!'} السالفة كانت: ${game.word}</h2>
+                        <p>${roundMsg}</p>
+                        <hr style="border:1px solid #3c339e; margin:15px 0;">
+                        <h3>لوحة الصدارة:</h3>
+                        <div style="margin-bottom:20px;">${scoresList}</div>
+                        <button onclick="start()">بدء جولة جديدة</button>
+                        <button style="background:#636e72" onclick="showMenu()">إنهاء الجلسة</button>
+                    </div>`;
+            }
         }
 
         function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
