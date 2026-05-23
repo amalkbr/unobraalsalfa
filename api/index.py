@@ -579,6 +579,20 @@ HTML_TEMPLATE = """
         .cat-card { background: #130f40; border-radius: 15px; padding: 10px; cursor: pointer; border: 2px solid transparent; transition: 0.3s; display: flex; flex-direction: column; align-items: center; }
         .cat-card img { width: 100%; height: 60px; object-fit: cover; border-radius: 10px; margin-bottom: 5px; }
         .cat-card.selected { border-color: var(--accent); background: #1b1464; box-shadow: 0 0 15px var(--accent); }
+        .win-opt {
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: 0.3s;
+            border: 2px solid transparent;
+            font-weight: bold;
+        }
+        .win-opt.selected {
+            background: var(--accent);
+            color: white;
+            border-color: white;
+        }
         .cat-card span { font-size: 12px; font-weight: bold; }
         .no-img { width: 100%; height: 60px; background: #2f278c; display: flex; align-items: center; justify-content: center; border-radius: 10px; font-size: 24px; }
         @keyframes rotate { from { transform: rotate(0); } to { transform: rotate(360deg); } }
@@ -912,11 +926,17 @@ HTML_TEMPLATE = """
         }
 
         function changePCount(delta) {
-            let inp = document.getElementById('p_count');
-            let val = parseInt(inp.value) + delta;
+            let val = parseInt(localStorage.getItem('pCount') || 3) + delta;
             if(val >= 3 && val <= 20) {
-                inp.value = val;
                 localStorage.setItem('pCount', val);
+
+                let inp = document.getElementById('p_count');
+                if(inp) inp.value = val;
+
+                const reqEl = document.getElementById('required_n_display');
+                if(reqEl) reqEl.innerText = val;
+
+                updateSelectedCount();
             }
         }
         function saveAndNext() {
@@ -1060,8 +1080,15 @@ HTML_TEMPLATE = """
                         <input id="new_p_name" placeholder="اسم لاعب جديد" style="margin:0">
                         <button onclick="addNewPlayerToList()" style="width:80px; margin:0; background:var(--success)">+</button>
                     </div>
-                    <p id="selection_info" style="margin-top:15px; font-size:14px; color:var(--accent)">
-                        المطلوب: ${targetN} لاعبين | المختار: <span id="selected_count">0</span>
+
+                    <div style="display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 15px; background: rgba(255,255,255,0.05); padding: 5px; border-radius: 10px;">
+                        <button onclick="changePCount(-1)" style="width: 40px; height: 35px; margin:0; background:var(--error); display: flex; align-items: center; justify-content: center; font-size: 20px;">-</button>
+                        <span style="font-weight:bold; font-size:14px;">تعديل العدد المطلوب</span>
+                        <button onclick="changePCount(1)" style="width: 40px; height: 35px; margin:0; background:var(--success); display: flex; align-items: center; justify-content: center; font-size: 20px;">+</button>
+                    </div>
+
+                    <p id="selection_info" style="margin-top:10px; font-size:14px; color:var(--accent)">
+                        المطلوب: <span id="required_n_display">${targetN}</span> لاعبين | المختار: <span id="selected_count">0</span>
                     </p>
                     <button onclick="confirmPlayersAndNext()">التالي</button>`;
 
@@ -1091,16 +1118,25 @@ HTML_TEMPLATE = """
                         <h2>اختر نوع السالفة</h2>
                         <div class="cat-grid">${catsHtml}</div>
                         <input type="hidden" id="selected_cat">
-                        <p>حد الفوز (نقاط):</p>
-                        <select id="win_limit_sel">
-                            <option value="5">5 نقاط</option>
-                            <option value="10" selected>10 نقاط</option>
-                            <option value="15">15 نقطة</option>
-                            <option value="20">20 نقطة</option>
-                        </select>
+
+                        <p style="margin-top:20px; font-weight:bold;">حد الفوز (نقاط):</p>
+                        <div style="display: flex; gap: 10px; justify-content: center; margin-bottom: 20px;">
+                            <div class="win-opt" onclick="selectWinLimit(this, 5)">5</div>
+                            <div class="win-opt selected" onclick="selectWinLimit(this, 10)">10</div>
+                            <div class="win-opt" onclick="selectWinLimit(this, 15)">15</div>
+                            <div class="win-opt" onclick="selectWinLimit(this, 20)">20</div>
+                        </div>
+                        <input type="hidden" id="win_limit_val" value="10">
+
                         <button onclick="startGameFinal()">ابدأ اللعب الآن</button>
                     </div>`;
             }
+        }
+
+        function selectWinLimit(el, val) {
+            document.querySelectorAll('.win-opt').forEach(opt => opt.classList.remove('selected'));
+            el.classList.add('selected');
+            document.getElementById('win_limit_val').value = val;
         }
 
         function selectCat(el, name) {
@@ -1112,7 +1148,7 @@ HTML_TEMPLATE = """
         function startGameFinal() {
             const cat = document.getElementById('selected_cat').value;
             if(!cat) return alert("اختر فئة أولاً!");
-            winLimit = parseInt(win_limit_sel.value);
+            winLimit = parseInt(document.getElementById('win_limit_val').value);
             start(cat);
         }
 
