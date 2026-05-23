@@ -444,26 +444,6 @@ async def online_action(data: dict):
                     cur.execute("UPDATE rooms SET status = 'playing', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
                     cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
                     conn.commit()
-                    spy_idx = random.randint(0, len(players)-1)
-                    roles[spy_idx] = "spy"
-                    other = [w for w in words if w != correct]
-                    guesses = random.sample(other, min(len(other), 6)) + [correct]
-                    random.shuffle(guesses)
-
-                    q_seq = []
-                    n = len(players)
-                    for i in range(0, n, 2):
-                        if i+1 < n: q_seq.append({"f": players[i], "t": players[i+1]})
-                        else: q_seq.append({"f": players[i], "t": players[0]})
-
-                    game_data = {
-                        "word": correct, "roles": roles, "guesses": guesses,
-                        "q_seq": q_seq, "spy_idx": spy_idx, "players": players,
-                        "current_phase": "roles", "q_idx": 0
-                    }
-                    cur.execute("UPDATE rooms SET status = 'playing', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                    cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
-                    conn.commit()
 
         return {"success": True}
     finally: conn.close()
@@ -820,16 +800,16 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>اللعب أونلاين</h1>
-                    <button style="background:var(--success)" onclick="createRoom()">إنشاء غرفة جديدة</button>
+                    <button style="background:var(--success)" onclick="createRoom(event)">إنشاء غرفة جديدة</button>
                     <div style="margin:20px 0;">
                         <input id="join_code" placeholder="رمز الغرفة (مثال: ABCD)" style="text-transform:uppercase">
-                        <button onclick="joinRoom()">دخول غرفة</button>
+                        <button onclick="joinRoom(event)">دخول غرفة</button>
                     </div>
                     <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
                 </div>`;
         }
 
-        async function createRoom() {
+        async function createRoom(event) {
             const btn = (event && event.target) ? event.target : null;
             let originalText = "";
             if(btn) {
@@ -854,7 +834,7 @@ HTML_TEMPLATE = """
             }
         }
 
-        async function joinRoom() {
+        async function joinRoom(event) {
             const btn = (event && event.target) ? event.target : null;
             let originalText = "";
             const code = document.getElementById('join_code').value.trim().toUpperCase();
@@ -937,7 +917,7 @@ HTML_TEMPLATE = """
                     <div style="margin:10px 0; text-align:right;">${pList}</div>
                     ${room.host_id == currentUser.user_id ? `
                         <select id="online_cat" style="margin-bottom:10px">${catOptions || '<option>أكلات</option>'}</select>
-                        <button class="btn-yellow" onclick="startOnlineGame()">بدء اللعبة</button>` :
+                        <button class="btn-yellow" onclick="startOnlineGame(event)">بدء اللعبة</button>` :
                         `<p>الفئة: <b style="color:var(--accent)">${room.category || 'أكلات'}</b></p>
                          <p>بانتظار المضيف لبدء اللعبة...</p>`}
                     <button style="background:#636e72" onclick="leaveRoom()">خروج</button>
@@ -961,11 +941,14 @@ HTML_TEMPLATE = """
             if(d.success) enterRoom(code); else alert(d.msg);
         }
 
-        async function startOnlineGame() {
-            const btn = event.target;
-            const originalText = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = "جاري التحميل...";
+        async function startOnlineGame(event) {
+            const btn = (event && event.target) ? event.target : null;
+            let originalText = "";
+            if(btn) {
+                originalText = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = "جاري التحميل...";
+            }
 
             const catEl = document.getElementById('online_cat');
             const selectedCategory = catEl ? catEl.value : "أكلات";
@@ -1013,11 +996,11 @@ HTML_TEMPLATE = """
                     <div id="box" style="background:#0f0c29; padding:20px; border-radius:20px; margin:20px 0;">
                         <h3>${game.roles[myIdx] === 'spy' ? '🕵️ أنت برة السالفة!' : '🤫 السالفة هي: ' + game.word}</h3>
                     </div>
-                    <button onclick="onlineAction('ready_role')">فهمت، جاهز</button>
+                    <button onclick="onlineAction(event, 'ready_role')">فهمت، جاهز</button>
                 </div>`;
         }
 
-        async function onlineAction(action, extra = {}) {
+        async function onlineAction(event, action, extra = {}) {
             const btn = (event && event.target && event.target.tagName === 'BUTTON') ? event.target : null;
             let originalText = "";
             if (btn) {
@@ -1049,7 +1032,7 @@ HTML_TEMPLATE = """
                     <div style="font-size:24px; margin:30px 0;">
                         <b style="color:#a29bfe">${q.f}</b> يسأل <b style="color:#ff7675">${q.t}</b>
                     </div>
-                    ${isHost ? `<button class="btn-yellow" onclick="onlineAction('next_question')">السؤال التالي</button>` : `<p>بانتظار المضيف...</p>`}
+                    ${isHost ? `<button class="btn-yellow" onclick="onlineAction(event, 'next_question')">السؤال التالي</button>` : `<p>بانتظار المضيف...</p>`}
                 </div>`;
         }
 
@@ -1067,7 +1050,7 @@ HTML_TEMPLATE = """
 
             game.players.forEach(p => {
                 let btn = document.createElement('button'); btn.className = 'vote-item'; btn.innerText = p;
-                btn.onclick = () => onlineAction('vote', {target: p});
+                btn.onclick = (e) => onlineAction(e, 'vote', {target: p});
                 document.getElementById('vbox').appendChild(btn);
             });
         }
@@ -1078,7 +1061,7 @@ HTML_TEMPLATE = """
 
             if(isSpy) {
                 let h = `<h3>كشفوك! خمن وش السالفة؟</h3>`;
-                game.guesses.forEach(g => h += `<div class="vote-item" onclick="onlineAction('spy_guess', {guess: '${g}'})">${g}</div>`);
+                game.guesses.forEach(g => h += `<div class="vote-item" onclick="onlineAction(event, 'spy_guess', {guess: '${g}'})">${g}</div>`);
                 document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
             } else {
                 document.getElementById('main-ui').innerHTML = `
@@ -1108,7 +1091,7 @@ HTML_TEMPLATE = """
                     <hr style="border:1px solid #3c339e; margin:15px 0;">
                     <h3>النقاط الحالية:</h3>
                     <div style="margin-bottom:20px;">${scoresList}</div>
-                    ${isHost ? `<button class="btn-yellow" onclick="startOnlineGame()">جولة جديدة</button>` : `<p>بانتظار المضيف لبدء جولة جديدة...</p>`}
+                    ${isHost ? `<button class="btn-yellow" onclick="startOnlineGame(event)">جولة جديدة</button>` : `<p>بانتظار المضيف لبدء جولة جديدة...</p>`}
                     <button style="background:#636e72" onclick="leaveRoom()">خروج من الغرفة</button>
                 </div>`;
         }
@@ -1354,7 +1337,7 @@ HTML_TEMPLATE = """
                         </div>
                         <input type="hidden" id="win_limit_val" value="10">
 
-                        <button class="btn-yellow" onclick="startGameFinal()">ابدأ اللعب الآن</button>
+                        <button class="btn-yellow" onclick="startGameFinal(event)">ابدأ اللعب الآن</button>
                     </div>`;
             }
         }
@@ -1371,19 +1354,21 @@ HTML_TEMPLATE = """
             document.getElementById('selected_cat').value = name;
         }
 
-        function startGameFinal() {
+        function startGameFinal(event) {
             const cat = document.getElementById('selected_cat').value;
             if(!cat) return alert("اختر فئة أولاً!");
             winLimit = parseInt(document.getElementById('win_limit_val').value);
 
-            const btn = event.target;
-            btn.disabled = true;
-            btn.innerHTML = "جاري التحميل...";
+            const btn = (event && event.target) ? event.target : null;
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = "جاري التحميل...";
+            }
 
-            start(cat);
+            start(event, cat);
         }
 
-        async function start(category) {
+        async function start(event, category) {
             const btn = (event && event.target && event.target.tagName === 'BUTTON') ? event.target : null;
             if (btn) {
                 btn.disabled = true;
@@ -1662,7 +1647,7 @@ HTML_TEMPLATE = """
                         <hr style="border:1px solid #3c339e; margin:15px 0;">
                         <h3>لوحة الصدارة (الهدف: ${winLimit}):</h3>
                         <div style="margin-bottom:20px;">${scoresList}</div>
-                        <button class="btn-yellow" onclick="start(game.category)">بدء جولة جديدة</button>
+                        <button class="btn-yellow" onclick="start(event, game.category)">بدء جولة جديدة</button>
                         <button style="background:#636e72" onclick="showMenu()">إنهاء الجلسة</button>
                     </div>`;
             }
