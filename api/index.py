@@ -777,9 +777,15 @@ HTML_TEMPLATE = """
         @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
-<body>
+<body onload="init()">
     <div class="menu-btn" onclick="toggleSidebar()">☰</div>
     <div class="exit-btn" id="global-exit-btn" onclick="confirmExitGame()">✖</div>
+    <noscript>
+        <div class="card" style="margin:20px;">
+            <h2>يرجى تمكين JavaScript</h2>
+            <p>هذا التطبيق يعتمد على جافاسكربت لعرض المحتوى.</p>
+        </div>
+    </noscript>
     <div id="sidebar" class="sidebar">
         <h2 style="color:var(--accent)">القائمة</h2>
         <div style="background:#1b1464; padding:15px; border-radius:15px; margin:20px 0;">
@@ -809,6 +815,15 @@ HTML_TEMPLATE = """
         }
         let game = null;
         let p_votes = {};
+
+        const mainUiDebug = document.getElementById('main-ui');
+        if (mainUiDebug) {
+            mainUiDebug.innerHTML = `
+                <div class="card" style="border:2px solid #f9ca24; padding:20px; text-align:right;">
+                    <h2 style="color:#f9ca24; margin:0;">JS يعمل</h2>
+                    <p style="color:#fff; margin:10px 0 0;">إذا ظهرت هذه الرسالة، فقد فشل الكود بعد نقطة التحميل المبكر.</p>
+                </div>`;
+        }
 
         function displayFatalError(message) {
             document.body.innerHTML = `
