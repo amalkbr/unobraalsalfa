@@ -9,13 +9,27 @@ from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-# --- Database Logic Integrated ---
+# 1. التكوين الأساسي لـ Vercel - يجب أن يكون 'app' في مستوى علوي
+app = FastAPI()
+
+# إعداد السجلات
+logging.basicConfig(level=logging.INFO)
+
+# 2. منطق قاعدة البيانات مع معالجة الأخطاء لضمان عدم ظهور شاشة بيضاء
 def get_db_conn():
     db_url = os.environ.get('DATABASE_URL')
-    return psycopg2.connect(db_url)
+    if not db_url:
+        return None
+    try:
+        return psycopg2.connect(db_url, connect_timeout=5)
+    except Exception as e:
+        logging.error(f"Database connection failed: {e}")
+        return None
 
 def db_query(sql, params=(), commit=False):
     conn = get_db_conn()
+    if not conn:
+        return None
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         cur.execute(sql, params)
@@ -24,36 +38,30 @@ def db_query(sql, params=(), commit=False):
             return True
         return cur.fetchall()
     except Exception as e:
-        logging.error(f"DB Error: {e}")
+        logging.error(f"Query Error: {e}")
         return None
     finally:
         cur.close()
         conn.close()
 
-def init_db():
-    conn = get_db_conn()
-    cur = conn.cursor()
-    cur.execute('''CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
-                    player_name TEXT,
-                    username_key VARCHAR(50) UNIQUE,
-                    password_key VARCHAR(50),
-                    avatar_url TEXT,
-                    is_registered BOOLEAN DEFAULT FALSE)''')
-    conn.commit()
-    cur.close()
-    conn.close()
-
-# --- FastAPI App ---
-app = FastAPI()
-
+# تهيئة الجداول عند أول طلب أو تشغيل
 @app.on_event("startup")
-async def startup():
-    try:
-        init_db()
-    except Exception as e:
-        logging.error(f"Startup DB Error: {e}")
+async def startup_db():
+    conn = get_db_conn()
+    if conn:
+        cur = conn.cursor()
+        cur.execute('''CREATE TABLE IF NOT EXISTS users (
+                        user_id BIGINT PRIMARY KEY,
+                        player_name TEXT,
+                        username_key VARCHAR(50) UNIQUE,
+                        password_key VARCHAR(50),
+                        avatar_url TEXT,
+                        is_registered BOOLEAN DEFAULT FALSE)''')
+        conn.commit()
+        cur.close()
+        conn.close()
 
+# 3. بيانات اللعبة (برا السالفة)
 CATEGORIES = {
     "ألعاب": ["ببجي", "فيفا", "ماينكرافت", "قراند", "فورتنايت", "كول اوف ديوتي", "روبلوكس", "فري فاير"],
     "حيوانات": ["أسد", "فيل", "زرافة", "نمر", "دب", "ثعلب", "حمار وحشي", "قطة", "كلب", "حصان"],
@@ -64,29 +72,33 @@ CATEGORIES = {
     "مدن": ["الرياض", "دبي", "القاهرة", "عمان", "الكويت", "الدوحة", "بغداد", "المنامة", "مسقط", "القدس"]
 }
 
+# 4. الواجهة الأمامية (HTML) مدمجة في الـ Route الرئيسي
 @app.get("/", response_class=HTMLResponse)
-async def get_index():
+async def home():
     cat_json = json.dumps(list(CATEGORIES.keys()), ensure_ascii=False)
     return f"""
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>برا السالفة</title>
     <style>
-        body {{ font-family: sans-serif; background: #f0f2f5; margin: 0; padding: 15px; text-align: center; direction: rtl; }}
-        .card {{ background: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); max-width: 450px; margin: auto; }}
-        input, select, button {{ width: 100%; padding: 12px; margin: 8px 0; border-radius: 10px; border: 1px solid #ddd; font-size: 16px; box-sizing: border-box; }}
-        button {{ background: #007bff; color: white; border: none; font-weight: bold; cursor: pointer; }}
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; margin: 0; padding: 15px; text-align: center; direction: rtl; color: #333; }}
+        .card {{ background: white; padding: 25px; border-radius: 20px; box-shadow: 0 8px 20px rgba(0,0,0,0.1); max-width: 450px; margin: 20px auto; }}
+        input, select, button {{ width: 100%; padding: 14px; margin: 10px 0; border-radius: 12px; border: 1px solid #ddd; font-size: 16px; box-sizing: border-box; outline: none; }}
+        button {{ background: #007bff; color: white; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; }}
+        button:active {{ transform: scale(0.95); }}
         .secondary {{ background: #28a745; }}
         .danger {{ background: #dc3545; }}
-        .avatar-img {{ width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid #007bff; }}
-        .word-display {{ font-size: 28px; font-weight: bold; color: #dc3545; padding: 20px; background: #fff0f0; border-radius: 15px; display: none; margin: 15px 0; }}
+        .avatar-img {{ width: 90px; height: 90px; border-radius: 50%; object-fit: cover; border: 4px solid #007bff; margin-bottom: 10px; }}
+        .word-display {{ font-size: 32px; font-weight: bold; color: #dc3545; padding: 30px; background: #fff0f0; border-radius: 20px; display: none; margin: 20px 0; border: 2px dashed #dc3545; }}
+        .p-item {{ background: #f8f9fa; padding: 10px; border-radius: 10px; margin: 5px 0; display: flex; align-items: center; }}
     </style>
 </head>
 <body>
-    <div id="app"></div>
+    <div id="app"><div class="card"><h1>جاري التحميل...</h1></div></div>
+
     <script>
         const cats = {cat_json};
         const state = {{
@@ -96,49 +108,49 @@ async def get_index():
         }};
 
         function render() {{
-            const app = document.getElementById('app');
-            if (!state.user) return renderAuth(app);
-            if (state.view === 'main') return renderMain(app);
-            if (state.view === 'profile') return renderProfile(app);
-            if (state.view === 'offline') return renderOffline(app);
-            if (state.view === 'play') return renderPlay(app);
-            renderMain(app);
+            const appDiv = document.getElementById('app');
+            if (!state.user) return renderAuth(appDiv);
+            if (state.view === 'profile') return renderProfile(appDiv);
+            if (state.view === 'offline') return renderOffline(appDiv);
+            if (state.view === 'play') return renderPlay(appDiv);
+            renderMain(appDiv);
         }}
 
         function renderAuth(app) {{
             app.innerHTML = `
                 <div class="card">
-                    <h2>تسجيل الدخول</h2>
+                    <h2>برا السالفة - دخول</h2>
                     <input id="u" placeholder="اليوزر">
                     <input id="p" type="password" placeholder="كلمة المرور">
                     <button onclick="login()">دخول</button>
                     <hr>
+                    <p>ليس لديك حساب؟ سجل أدناه:</p>
                     <input id="rn" placeholder="الاسم بالعربي">
                     <input id="ru" placeholder="يوزر جديد">
                     <input id="rp" type="password" placeholder="باسورد">
-                    <button class="secondary" onclick="reg()">إنشاء حساب</button>
+                    <button class="secondary" onclick="reg()">إنشاء حساب جديد</button>
                 </div>`;
         }
 
         async function login() {{
-            const res = await fetch('/api/login', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{username:id('u').value, password:id('p').value}})}});
+            const res = await fetch('/api/login', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{username:document.getElementById('u').value, password:document.getElementById('p').value}})}});
             const d = await res.json();
             if(d.ok) {{ state.user=d.user; localStorage.setItem('user', JSON.stringify(d.user)); state.view='main'; render(); }} else alert(d.error);
         }}
 
         async function reg() {{
-            const res = await fetch('/api/register', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{name:id('rn').value, username:id('ru').value, password:id('rp').value}})}});
+            const res = await fetch('/api/register', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{name:document.getElementById('rn').value, username:document.getElementById('ru').value, password:document.getElementById('rp').value}})}});
             const d = await res.json();
-            if(d.ok) alert('تم! سجل دخولك'); else alert(d.error);
+            if(d.ok) alert('تم التسجيل! يمكنك الآن تسجيل الدخول'); else alert(d.error);
         }}
 
         function renderMain(app) {{
             app.innerHTML = `
                 <div class="card">
-                    <img src="${{state.user.avatar || 'https://via.placeholder.com/80'}}" class="avatar-img" onclick="state.view='profile';render()">
-                    <h3>هلا ${{state.user.name}}</h3>
-                    <button class="secondary" style="padding:25px" onclick="state.view='offline';render()">لعب أوفلاين</button>
-                    <button class="danger" onclick="logout()">خروج</button>
+                    <img src="${{state.user.avatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}}" class="avatar-img" onclick="state.view='profile';render()">
+                    <h3>مرحباً، ${{state.user.name}} 👋</h3>
+                    <button class="secondary" style="padding:30px; font-size:20px" onclick="state.view='offline';render()">🎮 لعب أوفلاين</button>
+                    <button class="danger" onclick="logout()">تسجيل خروج</button>
                 </div>`;
         }
 
@@ -146,9 +158,10 @@ async def get_index():
             app.innerHTML = `
                 <div class="card">
                     <h2>الملف الشخصي</h2>
-                    <img src="${{state.user.avatar || 'https://via.placeholder.com/80'}}" class="avatar-img">
+                    <img src="${{state.user.avatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}}" class="avatar-img">
+                    <p>تغيير الصورة الشخصية:</p>
                     <input type="file" onchange="up(this)" accept="image/*">
-                    <button onclick="state.view='main';render()">رجوع</button>
+                    <button onclick="state.view='main';render()">العودة للرئيسية</button>
                 </div>`;
         }
 
@@ -166,20 +179,25 @@ async def get_index():
             app.innerHTML = `
                 <div class="card">
                     <h2>إعداد اللعبة</h2>
-                    <div id="ps"><input class="pi" placeholder="لاعب 1"><input class="pi" placeholder="لاعب 2"><input class="pi" placeholder="لاعب 3"></div>
-                    <button onclick="addP()">+ لاعب</button>
+                    <div id="ps">
+                        <input class="pi" placeholder="لاعب 1">
+                        <input class="pi" placeholder="لاعب 2">
+                        <input class="pi" placeholder="لاعب 3">
+                    </div>
+                    <button class="warning" onclick="addP()">+ إضافة لاعب</button>
+                    <label>اختر القسم:</label>
                     <select id="sc">${{options}}</select>
-                    <button class="secondary" onclick="start()">ابدأ</button>
+                    <button class="secondary" onclick="start()">ابدأ اللعب الآن</button>
                     <button class="danger" onclick="state.view='main';render()">رجوع</button>
                 </div>`;
         }
 
-        function addP() {{ const i=document.createElement('input'); i.className='pi'; i.placeholder='لاعب جديد'; id('ps').appendChild(i); }}
+        function addP() {{ const i=document.createElement('input'); i.className='pi'; i.placeholder='لاعب جديد'; document.getElementById('ps').appendChild(i); }}
 
         async function start() {{
             const players = Array.from(document.querySelectorAll('.pi')).map(i=>i.value).filter(v=>v);
-            if(players.length < 3) return alert('3 لاعبين عالأقل');
-            const res = await fetch('/api/start-offline', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{players, category:id('sc').value}})}});
+            if(players.length < 3) return alert('يجب تواجد 3 لاعبين على الأقل');
+            const res = await fetch('/api/start-offline', {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify({{players, category:document.getElementById('sc').value}})}});
             state.game = await res.json(); state.view='play'; render();
         }}
 
@@ -188,35 +206,36 @@ async def get_index():
             const p = g.players[g.idx];
             app.innerHTML = `
                 <div class="card">
-                    <h3>دور: ${{p}}</h3>
+                    <h3>دور اللاعب: <span style="color:#007bff">${{p}}</span></h3>
+                    <p>مرر الجهاز له ثم اضغط الزر</p>
                     <div id="wb" class="word-display"></div>
                     <button id="sb" onclick="show()">اكشف السالفة</button>
-                    <button id="nb" style="display:none" onclick="next()">التالي</button>
+                    <button id="nb" style="display:none" onclick="next()">اللاعب التالي</button>
                 </div>`;
         }
 
         function show() {{
             const g = state.game;
-            const box = id('wb');
-            box.innerText = g.roles[g.idx] === 'spy' ? 'أنت برا السالفة!' : g.word;
-            box.style.display = 'block'; id('sb').style.display='none'; id('nb').style.display='block';
+            const box = document.getElementById('wb');
+            box.innerText = g.roles[g.idx] === 'spy' ? '🕵️ أنت برا السالفة!' : '🤫 السالفة هي: ' + g.word;
+            box.style.display = 'block'; document.getElementById('sb').style.display='none'; document.getElementById('nb').style.display='block';
         }}
 
         function next() {{
             state.game.idx++;
-            if(state.game.idx >= state.game.players.length) {{ alert('ابدأوا النقاش!'); state.view='main'; }}
+            if(state.game.idx >= state.game.players.length) {{ alert('انتهى توزيع الأدوار! ابدأوا النقاش الآن'); state.view='main'; }}
             render();
         }}
 
         function logout() {{ localStorage.clear(); location.reload(); }}
-        const id = i => document.getElementById(i);
+        function id(i) {{ return document.getElementById(i); }}
         window.onload = render;
     </script>
 </body>
 </html>
     """
 
-# API Models
+# 5. واجهات البرمجية (API)
 class UserAuth(BaseModel):
     name: str = ""
     username: str
@@ -224,17 +243,19 @@ class UserAuth(BaseModel):
 
 @app.post("/api/register")
 async def register(data: UserAuth):
-    if len(data.username) < 3: return {"ok": False, "error": "اليوزر قصير"}
+    if len(data.username) < 3: return {"ok": False, "error": "اسم المستخدم قصير جداً"}
     uid = random.randint(1000, 999999)
     res = db_query("INSERT INTO users (user_id, player_name, username_key, password_key, is_registered) VALUES (%s, %s, %s, %s, TRUE)",
                    (uid, data.name, data.username, data.password), commit=True)
-    return {"ok": True} if res else {"ok": False, "error": "اليوزر مأخوذ"}
+    if res: return {"ok": True}
+    return {"ok": False, "error": "اليوزر مأخوذ أو حدث خطأ في القاعدة"}
 
 @app.post("/api/login")
 async def login(data: UserAuth):
     u = db_query("SELECT user_id, player_name, avatar_url FROM users WHERE username_key=%s AND password_key=%s", (data.username, data.password))
-    if u: return {"ok": True, "user": {"id": u[0]['user_id'], "name": u[0]['player_name'], "avatar": u[0]['avatar_url']}}
-    return {"ok": False, "error": "خطأ في البيانات"}
+    if u:
+        return {"ok": True, "user": {"id": u[0]['user_id'], "name": u[0]['player_name'], "avatar": u[0]['avatar_url']}}
+    return {"ok": False, "error": "اسم المستخدم أو كلمة المرور خطأ"}
 
 class Avatar(BaseModel):
     user_id: int
@@ -242,8 +263,8 @@ class Avatar(BaseModel):
 
 @app.post("/api/update-avatar")
 async def update_avatar(data: Avatar):
-    db_query("UPDATE users SET avatar_url=%s WHERE user_id=%s", (data.image, data.user_id), commit=True)
-    return {"ok": True}
+    res = db_query("UPDATE users SET avatar_url=%s WHERE user_id=%s", (data.image, data.user_id), commit=True)
+    return {"ok": True if res else False}
 
 class GameStart(BaseModel):
     players: list
