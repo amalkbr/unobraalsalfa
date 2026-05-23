@@ -179,7 +179,7 @@ async def update_profile(data: dict):
 @app.post("/api/game/start")
 async def start_game(data: dict):
     players = data.get('players', [])
-    category = data.get('category', 'أكلات').strip()
+    category = data.get('category', 'أكلات')
 
     conn = get_db_conn()
     words = []
@@ -187,14 +187,11 @@ async def start_game(data: dict):
         try:
             with conn.cursor() as cur:
                 cur.execute("SELECT word FROM words WHERE category = %s", (category,))
-                words = [r[0].strip() for r in cur.fetchall() if r[0]]
+                words = [r[0] for r in cur.fetchall()]
         finally: conn.close()
 
     if not words:
         words = CATEGORIES.get(category, CATEGORIES["أكلات"])
-
-    # إزالة التكرارات والمسافات
-    words = list(set([w.strip() for w in words if w]))
 
     correct = random.choice(words)
     roles = ["in"] * len(players)
@@ -262,21 +259,15 @@ async def start_online_game(data: dict):
             players = [p['player_name'] for p in cur.fetchall()]
             if len(players) < 3: return {"success": False, "msg": "أقل عدد لاعبين هو 3"}
 
-            # تحديث الفئة إذا تم إرسالها من الواجهة
-            category = data.get('category', room['category'] or "أكلات").strip()
-            if category != room['category']:
-                cur.execute("UPDATE rooms SET category = %s WHERE room_code = %s", (category, room_code))
+            category = room['category'] or "أكلات"
 
             # محاولة جلب الكلمات من قاعدة البيانات أولاً
             words = []
             cur.execute("SELECT word FROM words WHERE category = %s", (category,))
-            words = [r['word'].strip() for r in cur.fetchall() if r['word']]
+            words = [r['word'] for r in cur.fetchall()]
 
             if not words:
                 words = CATEGORIES.get(category, CATEGORIES["أكلات"])
-
-            # إزالة التكرارات والمسافات
-            words = list(set([w.strip() for w in words if w]))
 
             correct = random.choice(words)
             roles = ["in"] * len(players)
@@ -383,8 +374,7 @@ async def online_action(data: dict):
 
                 # توزيع النقاط (نفس منطق الـ offline)
                 spy_name = game_data['players'][game_data['spy_idx']]
-                # مقارنة نظيفة بدون مسافات
-                spy_guessed_right = (str(guess).strip() == str(game_data.get('word', '')).strip())
+                spy_guessed_right = (guess == game_data['word'])
 
                 # حساب الأصوات لمعرفة هل انكشف الجاسوس
                 vote_counts = {}
@@ -418,32 +408,11 @@ async def online_action(data: dict):
                     category = room['category'] or "أكلات"
 
                     cur.execute("SELECT word FROM words WHERE category = %s", (category,))
-                    words = [r['word'].strip() for r in cur.fetchall() if r['word']]
+                    words = [r['word'] for r in cur.fetchall()]
                     if not words: words = CATEGORIES.get(category, CATEGORIES["أكلات"])
 
-                    words = list(set([w.strip() for w in words if w]))
                     correct = random.choice(words)
                     roles = ["in"] * len(players)
-                    spy_idx = random.randint(0, len(players)-1)
-                    roles[spy_idx] = "spy"
-                    other = [w for w in words if w != correct]
-                    guesses = random.sample(other, min(len(other), 6)) + [correct]
-                    random.shuffle(guesses)
-
-                    q_seq = []
-                    n = len(players)
-                    for i in range(0, n, 2):
-                        if i+1 < n: q_seq.append({"f": players[i], "t": players[i+1]})
-                        else: q_seq.append({"f": players[i], "t": players[0]})
-
-                    game_data = {
-                        "word": correct, "roles": roles, "guesses": guesses,
-                        "q_seq": q_seq, "spy_idx": spy_idx, "players": players,
-                        "current_phase": "roles", "q_idx": 0
-                    }
-                    cur.execute("UPDATE rooms SET status = 'playing', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                    cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
-                    conn.commit()
                     spy_idx = random.randint(0, len(players)-1)
                     roles[spy_idx] = "spy"
                     other = [w for w in words if w != correct]
@@ -473,10 +442,8 @@ async def add_word(data: dict):
     conn = get_db_conn()
     if not conn: return {"success": False}
     try:
-        word = data['word'].strip()
-        category = data['category'].strip()
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (category, word))
+            cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (data['category'], data['word']))
             conn.commit()
         return {"success": True}
     finally: conn.close()
@@ -526,10 +493,9 @@ async def get_categories():
 async def add_category(data: dict):
     conn = get_db_conn()
     try:
-        name = data['name'].strip()
         with conn.cursor() as cur:
             cur.execute("INSERT INTO categories (name, image_url, display_order) VALUES (%s, %s, %s)",
-                        (name, data.get('image_url'), data.get('display_order', 0)))
+                        (data['name'], data.get('image_url'), data.get('display_order', 0)))
             conn.commit()
         return {"success": True}
     finally: conn.close()
@@ -538,15 +504,13 @@ async def add_category(data: dict):
 async def update_category(data: dict):
     conn = get_db_conn()
     try:
-        name = data['name'].strip()
-        old_name = data.get('old_name', '').strip()
         with conn.cursor() as cur:
             # تحديث اسم الفئة في جدول الكلمات أولاً إذا تغير الاسم
-            if old_name and old_name != name:
-                cur.execute("UPDATE words SET category = %s WHERE category = %s", (name, old_name))
+            if 'old_name' in data and data['old_name'] != data['name']:
+                cur.execute("UPDATE words SET category = %s WHERE category = %s", (data['name'], data['old_name']))
 
             cur.execute("UPDATE categories SET name = %s, image_url = %s, display_order = %s WHERE id = %s",
-                        (name, data.get('image_url'), data.get('display_order', 0), data['id']))
+                        (data['name'], data.get('image_url'), data.get('display_order', 0), data['id']))
             conn.commit()
         return {"success": True}
     finally: conn.close()
@@ -707,10 +671,6 @@ HTML_TEMPLATE = """
                 questionTimeout = d.question_timeout || 30;
                 voteTimeout = d.vote_timeout || 10;
                 spyGuessTimeout = d.spy_guess_timeout || 15;
-
-                // جلب الفئات أيضاً لاستخدامها في الأونلاين
-                const resCats = await fetch('/api/categories');
-                window.allCategories = await resCats.json();
             } catch(e) { console.error("Settings fetch failed", e); }
         }
 
@@ -806,8 +766,8 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>ابدأ اللعب</h1>
-                    <button class="btn-yellow" onclick="navigateTo('online_menu')">🌐 أونلاين</button>
-                    <button class="btn-yellow" style="background:linear-gradient(45deg, #e056fd, #be2edd) !important; color:white !important;" onclick="navigateTo('setup', {step: 1})">🏠 أوفلاين (مجلس)</button>
+                    <button onclick="navigateTo('online_menu')">🌐 أونلاين</button>
+                    <button style="background:#e056fd" onclick="navigateTo('setup', {step: 1})">🏠 أوفلاين (مجلس)</button>
                 </div>`;
         }
 
@@ -830,56 +790,25 @@ HTML_TEMPLATE = """
         }
 
         async function createRoom() {
-            const btn = (event && event.target) ? event.target : null;
-            let originalText = "";
-            if(btn) {
-                originalText = btn.innerHTML;
-                btn.disabled = true;
-                btn.innerHTML = "جاري إنشاء الغرفة...";
-            }
-            try {
-                const res = await fetch('/api/online/create', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({user_id: currentUser.user_id, player_name: currentUser.player_name})
-                });
-                const d = await res.json();
-                if(d.success) enterRoom(d.room_code);
-                else {
-                    if(btn) { btn.disabled = false; btn.innerHTML = originalText; }
-                    alert(d.msg);
-                }
-            } catch(e) {
-                if(btn) { btn.disabled = false; btn.innerHTML = originalText; }
-            }
+            const res = await fetch('/api/online/create', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({user_id: currentUser.user_id, player_name: currentUser.player_name})
+            });
+            const d = await res.json();
+            if(d.success) enterRoom(d.room_code);
         }
 
         async function joinRoom() {
-            const btn = (event && event.target) ? event.target : null;
-            let originalText = "";
             const code = document.getElementById('join_code').value.trim().toUpperCase();
-            if(!code) return alert("أدخل رمز الغرفة");
-
-            if(btn) {
-                originalText = btn.innerHTML;
-                btn.disabled = true;
-                btn.innerHTML = "جاري الدخول...";
-            }
-            try {
-                const res = await fetch('/api/online/join', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({room_code: code, user_id: currentUser.user_id, player_name: currentUser.player_name})
-                });
-                const d = await res.json();
-                if(d.success) enterRoom(code);
-                else {
-                    if(btn) { btn.disabled = false; btn.innerHTML = originalText; }
-                    alert(d.msg);
-                }
-            } catch(e) {
-                if(btn) { btn.disabled = false; btn.innerHTML = originalText; }
-            }
+            if(!code) return;
+            const res = await fetch('/api/online/join', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({room_code: code, user_id: currentUser.user_id, player_name: currentUser.player_name})
+            });
+            const d = await res.json();
+            if(d.success) enterRoom(code); else alert(d.msg);
         }
 
         function enterRoom(code) {
@@ -927,19 +856,15 @@ HTML_TEMPLATE = """
             const {room, players} = window.roomData;
             let pList = players.map(p => `<div class="score-item"><span>${p.player_name}</span> ${p.is_ready ? '✅' : '⏳'}</div>`).join('');
 
-            const cats = window.allCategories || [];
-            const catOptions = cats.map(c => `<option value="${c.name}" ${room.category === c.name ? 'selected' : ''}>${c.name}</option>`).join('');
-
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h2>غرفة: <span style="color:var(--accent)">${room.room_code}</span></h2>
                     <button style="background:var(--primary); margin-bottom:10px; font-size:14px;" onclick="copyInviteLink()">🔗 نسخ رابط الدعوة</button>
                     <div style="margin:10px 0; text-align:right;">${pList}</div>
                     ${room.host_id == currentUser.user_id ? `
-                        <select id="online_cat" style="margin-bottom:10px">${catOptions || '<option>أكلات</option>'}</select>
+                        <select id="online_cat" style="margin-bottom:10px">${["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"].map(c=>`<option value="${c}">${c}</option>`)}</select>
                         <button class="btn-yellow" onclick="startOnlineGame()">بدء اللعبة</button>` :
-                        `<p>الفئة: <b style="color:var(--accent)">${room.category || 'أكلات'}</b></p>
-                         <p>بانتظار المضيف لبدء اللعبة...</p>`}
+                        '<p>بانتظار المضيف لبدء اللعبة...</p>'}
                     <button style="background:#636e72" onclick="leaveRoom()">خروج</button>
                 </div>`;
         }
@@ -966,20 +891,12 @@ HTML_TEMPLATE = """
             const originalText = btn.innerHTML;
             btn.disabled = true;
             btn.innerHTML = "جاري التحميل...";
-
-            const catEl = document.getElementById('online_cat');
-            const selectedCategory = catEl ? catEl.value : "أكلات";
-
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'block';
             try {
                 const res = await fetch('/api/online/start', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        room_code: currentRoom,
-                        user_id: currentUser.user_id,
-                        category: selectedCategory
-                    })
+                    body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
                 });
                 const d = await res.json();
                 if(!d.success) {
@@ -1472,7 +1389,7 @@ HTML_TEMPLATE = """
                     </div>
                     <h3>دور <b style="color:var(--accent)">${asker}</b> يختار مين يسأل؟</h3>
                     <div id="plist"></div>
-                    <button class="btn-yellow" style="margin-top:20px;" onclick="clearInterval(timerInterval); startVoting()">بدء التصويت</button>
+                    <button style="margin-top:20px; background: #ffec00; color: #1b1464; font-weight: 900; box-shadow: 0 0 20px rgba(255, 236, 0, 0.4);" onclick="clearInterval(timerInterval); startVoting()">بدء التصويت</button>
                 </div>`;
             game.players.forEach(p => {
                 if(p!==asker && p!==last) {
@@ -1564,19 +1481,18 @@ HTML_TEMPLATE = """
         }
 
         function handleSpyGuess(el, guessedWord) {
-            const correctWord = game.word.trim();
-            const normalizedGuessed = guessedWord.trim();
+            const correctWord = game.word;
             const items = document.querySelectorAll('.guess-item');
 
             items.forEach(item => {
                 item.style.pointerEvents = "none";
-                if (item.innerText.trim() === correctWord) {
+                if (item.innerText === correctWord) {
                     item.style.background = "var(--success)";
                     item.style.boxShadow = "0 0 20px var(--success)";
                 }
             });
 
-            if (normalizedGuessed === correctWord) {
+            if (guessedWord === correctWord) {
                 playSound('win'); // صوت النجاح
             } else {
                 el.style.background = "var(--error)";
@@ -1585,7 +1501,7 @@ HTML_TEMPLATE = """
             }
 
             setTimeout(() => {
-                finish(normalizedGuessed);
+                finish(guessedWord);
             }, 3000);
         }
 
@@ -1751,8 +1667,7 @@ HTML_TEMPLATE = """
             const res = await fetch('/api/categories');
             const cats = await res.json();
             let h = `<h2>الفئات (الأنواع)</h2>
-                <button id="add-cat-toggle-btn" class="btn-yellow" style="margin-bottom:20px;" onclick="showCatForm()">➕ إضافة فئة جديدة</button>
-                <div id="cat-form" style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin-bottom:20px; display:none;">
+                <div id="cat-form" style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin-bottom:20px;">
                     <h3 id="form-title">إضافة فئة جديدة</h3>
                     <input id="cat_id" type="hidden">
                     <input id="cat_name" placeholder="اسم الفئة">
@@ -1763,7 +1678,7 @@ HTML_TEMPLATE = """
                     <input id="cat_order" type="number" placeholder="التسلسل (0, 1, 2...)" value="0">
                     <div style="display:flex; gap:10px;">
                         <button id="cat-save-btn" onclick="saveCategory()">حفظ الفئة</button>
-                        <button style="background:#636e72" onclick="resetCatForm()">إلغاء</button>
+                        <button id="cat-cancel-btn" style="background:#636e72; display:none;" onclick="resetCatForm()">إلغاء التعديل</button>
                     </div>
                 </div>
                 <div style="max-height:400px; overflow-y:auto; text-align:right;">`;
@@ -1789,31 +1704,25 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
         }
 
-        function showCatForm() {
-            document.getElementById('cat-form').style.display = 'block';
-            document.getElementById('add-cat-toggle-btn').style.display = 'none';
-        }
-
         function editCategory(c) {
-            showCatForm();
             document.getElementById('form-title').innerText = "تعديل الفئة: " + c.name;
             document.getElementById('cat_id').value = c.id;
             document.getElementById('cat_name').value = c.name;
             document.getElementById('cat_order').value = c.display_order;
             window.oldCatName = c.name;
             window.editingImage = c.image_url; // حفظ الصورة الحالية
+            document.getElementById('cat-cancel-btn').style.display = "block";
             document.getElementById('cat-save-btn').innerText = "تحديث الفئة";
             document.getElementById('cat-form').scrollIntoView();
         }
 
         function resetCatForm() {
-            document.getElementById('cat-form').style.display = 'none';
-            document.getElementById('add-cat-toggle-btn').style.display = 'block';
             document.getElementById('form-title').innerText = "إضافة فئة جديدة";
             document.getElementById('cat_id').value = "";
             document.getElementById('cat_name').value = "";
             document.getElementById('cat_order').value = "0";
             document.getElementById('cat_file').value = "";
+            document.getElementById('cat-cancel-btn').style.display = "none";
             document.getElementById('cat-save-btn').innerText = "حفظ الفئة";
             window.oldCatName = null;
             window.editingImage = null;
