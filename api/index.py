@@ -63,6 +63,7 @@ def init_db():
                 );
                 -- تحديث جدول المستخدمين ليشمل إحصائيات
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS total_wins INTEGER DEFAULT 0;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS saved_players JSONB DEFAULT '[]';
                 ALTER TABLE room_players ADD COLUMN IF NOT EXISTS join_order SERIAL;
             """)
             conn.commit()
@@ -116,9 +117,10 @@ async def login(data: dict):
     if not conn: return {"success": False, "msg": "قاعدة البيانات غير متصلة"}
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT username_key, player_name, password_key FROM users WHERE username_key = %s AND password_key = %s",
+            cur.execute("SELECT user_id, username_key, player_name, password_key, saved_players FROM users WHERE username_key = %s AND password_key = %s",
                         (data['username'], data['password']))
             user = cur.fetchone()
+            if user and not user.get('saved_players'): user['saved_players'] = []
             return {"success": True, "user": user} if user else {"success": False, "msg": "بيانات الدخول خاطئة"}
     finally: conn.close()
 
@@ -488,6 +490,18 @@ async def delete_word(data: dict):
         return {"success": True}
     finally: conn.close()
 
+@app.post("/api/user/save_players")
+async def save_players(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE users SET saved_players = %s WHERE user_id = %s",
+                        (json.dumps(data['players']), data['user_id']))
+            conn.commit()
+        return {"success": True}
+    finally: conn.close()
+
 @app.post("/api/game/report_winner")
 async def report_winner(data: dict):
     conn = get_db_conn()
@@ -506,6 +520,9 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>برا السالفة | المجلس</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#6c5ce7">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/8030/8030198.png">
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
         :root { --primary: #6c5ce7; --bg: #0f0c29; --card: #1b1464; --accent: #f9ca24; --error: #eb4d4b; --success: #2ecc71; }
@@ -847,6 +864,54 @@ HTML_TEMPLATE = """
             showSetup(2);
         }
 
+        function togglePSelection(el, name) {
+            const icon = el.querySelector('.status-icon');
+            if(icon.innerText === '✅') {
+                icon.innerText = '⬜';
+            } else {
+                icon.innerText = '✅';
+            }
+            updateSelectedCount();
+        }
+
+        function updateSelectedCount() {
+            const count = Array.from(document.querySelectorAll('.status-icon')).filter(i => i.innerText === '✅').length;
+            document.getElementById('selected_count').innerText = count;
+        }
+
+        async function addNewPlayerToList() {
+            const name = document.getElementById('new_p_name').value.trim();
+            if(!name) return;
+            if(currentUser.saved_players.includes(name)) return alert("الاسم موجود مسبقاً!");
+
+            currentUser.saved_players.push(name);
+            // حفظ في الداتابيس
+            await fetch('/api/user/save_players', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({user_id: currentUser.user_id, players: currentUser.saved_players})
+            });
+            localStorage.setItem('user', JSON.stringify(currentUser));
+            showSetup(2); // إعادة رندر القائمة
+        }
+
+        function confirmPlayersAndNext() {
+            const targetN = parseInt(localStorage.getItem('pCount'));
+            const selected = Array.from(document.querySelectorAll('#p_selection_list .score-item'))
+                .filter(el => el.querySelector('.status-icon').innerText === '✅')
+                .map(el => el.querySelector('span').innerText);
+
+            if(selected.length !== targetN) {
+                if(confirm(`لقد اخترت ${selected.length} لاعبين، والمطلوب ${targetN}. هل تريد تغيير عدد اللاعبين إلى ${selected.length} والبدء؟`)) {
+                    localStorage.setItem('pCount', selected.length);
+                } else {
+                    return;
+                }
+            }
+            window.pNamesSave = selected;
+            showSetup(3);
+        }
+
         async function showSetup(step) {
             if(step === 1) {
                 let savedCount = localStorage.getItem('pCount') || 3;
@@ -862,15 +927,41 @@ HTML_TEMPLATE = """
                         <button style="background:#636e72" onclick="showMenu()">رجوع</button>
                     </div>`;
             } else if(step === 2) {
-                const n = Math.max(3, parseInt(document.getElementById('p_count').value));
-                let h = '';
-                for(let i=1; i<=n; i++) h += `<input class="pn" placeholder="اللاعب ${i}" value="لاعب ${i}">`;
+                const targetN = Math.max(3, parseInt(localStorage.getItem('pCount') || 3));
+                let savedPlayers = currentUser.saved_players || [];
+
+                let h = `<div id="p_selection_list" style="max-height: 300px; overflow-y: auto; margin-bottom: 20px; text-align: right;">`;
+
+                // عرض اللاعبين المخزنين أولاً مع خاصية الاختيار
+                savedPlayers.forEach((name, idx) => {
+                    const isSelected = idx < targetN;
+                    h += `
+                        <div class="score-item" style="cursor:pointer" onclick="togglePSelection(this, '${name.replace(/'/g, "\\'")}')">
+                            <span>${name}</span>
+                            <span class="status-icon">${isSelected ? '✅' : '⬜'}</span>
+                        </div>`;
+                });
+                h += `</div>`;
+
+                // حقل لإضافة لاعب جديد للقائمة
+                h += `
+                    <div style="display:flex; gap:10px;">
+                        <input id="new_p_name" placeholder="اسم لاعب جديد" style="margin:0">
+                        <button onclick="addNewPlayerToList()" style="width:80px; margin:0; background:var(--success)">+</button>
+                    </div>
+                    <p id="selection_info" style="margin-top:15px; font-size:14px; color:var(--accent)">
+                        المطلوب: ${targetN} لاعبين | المختار: <span id="selected_count">0</span>
+                    </p>
+                    <button onclick="confirmPlayersAndNext()">التالي</button>`;
+
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
-                        <h2>أسماء اللاعبين</h2>
-                        <div id="p_inputs">${h}</div>
-                        <button onclick="showSetup(3)">التالي</button>
+                        <h2>اختر اللاعبين</h2>
+                        ${h}
                     </div>`;
+
+                // تحديث العداد الأولي
+                updateSelectedCount();
             } else if(step === 3) {
                 window.pNamesSave = Array.from(document.querySelectorAll('.pn')).map(i => i.value);
                 const res = await fetch('/api/categories');
@@ -1248,6 +1339,48 @@ HTML_TEMPLATE = """
             win: new Audio('https://assets.mixkit.co/active_storage/sfx/2013/2013-preview.mp3')
         };
         function playSound(name) { sounds[name].currentTime = 0; sounds[name].play().catch(()=>null); }
+
+        // PWA Registration and Install Prompt
+        let deferredPrompt;
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(reg => console.log('SW Registered', reg))
+                    .catch(err => console.log('SW Failed', err));
+            });
+        }
+
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            showInstallBanner();
+        });
+
+        function showInstallBanner() {
+            if (document.getElementById('install-banner')) return;
+            const banner = document.createElement('div');
+            banner.id = 'install-banner';
+            banner.style = "position:fixed; bottom:20px; left:20px; right:20px; background:var(--primary); padding:15px; border-radius:15px; display:flex; justify-content:space-between; align-items:center; z-index:2000; box-shadow: 0 5px 15px rgba(0,0,0,0.5);";
+            banner.innerHTML = `
+                <span style="font-weight:bold;">ثبت التطبيق لتجربة أفضل! 📱</span>
+                <div style="display:flex; gap:10px;">
+                    <button onclick="installApp()" style="width:auto; padding:5px 15px; margin:0; background:var(--accent); color:black;">تثبيت</button>
+                    <button onclick="this.parentElement.parentElement.remove()" style="width:auto; padding:5px 10px; margin:0; background:rgba(0,0,0,0.2);">إغلاق</button>
+                </div>
+            `;
+            document.body.appendChild(banner);
+        }
+
+        async function installApp() {
+            if (!deferredPrompt) return;
+            deferredPrompt.prompt();
+            const { outcome } = await deferredPrompt.userChoice;
+            if (outcome === 'accepted') {
+                console.log('User accepted install');
+            }
+            deferredPrompt = null;
+            document.getElementById('install-banner').remove();
+        }
 
         init();
     </script>
