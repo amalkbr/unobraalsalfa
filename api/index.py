@@ -124,6 +124,7 @@ def init_db():
                 "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS secret_word TEXT",
                 "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS spy_id BIGINT",
                 "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_data JSONB DEFAULT '{}'::jsonb",
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
                 "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS room_code TEXT",
                 "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS room_id TEXT",
                 "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS join_order INTEGER DEFAULT 0",
@@ -343,13 +344,20 @@ async def start_game(data: dict):
 
 # --- Online Mode API ---
 
-def cleanup_stale_rooms(cur):
+def cleanup_stale_rooms():
+    conn = get_db_conn()
+    if not conn: return
     try:
-        # Delete stale players and rooms inactive for more than 30 minutes
-        cur.execute("DELETE FROM room_players WHERE room_code IN (SELECT room_code FROM rooms WHERE updated_at < NOW() - INTERVAL '30 minutes')")
-        cur.execute("DELETE FROM rooms WHERE updated_at < NOW() - INTERVAL '30 minutes'")
+        with conn.cursor() as cur:
+            # Delete stale players and rooms inactive for more than 30 minutes
+            cur.execute("DELETE FROM room_players WHERE room_code IN (SELECT room_code FROM rooms WHERE updated_at < NOW() - INTERVAL '30 minutes')")
+            cur.execute("DELETE FROM rooms WHERE updated_at < NOW() - INTERVAL '30 minutes'")
+            conn.commit()
     except Exception as e:
         print(f"Cleanup stale rooms error: {e}")
+        if conn: conn.rollback()
+    finally:
+        if conn: conn.close()
 
 @app.post("/api/online/create")
 async def create_room(data: dict):
@@ -370,9 +378,8 @@ async def create_room(data: dict):
     room_code = None
 
     try:
+        cleanup_stale_rooms()
         with conn.cursor() as cur:
-            # Clean up stale inactive rooms first to save space/limit queries
-            cleanup_stale_rooms(cur)
 
             cur.execute("""
                 INSERT INTO users (user_id, player_name, is_registered)
