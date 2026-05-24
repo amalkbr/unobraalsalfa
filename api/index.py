@@ -56,6 +56,7 @@ def init_db():
                     player_name TEXT,
                     is_registered BOOLEAN DEFAULT FALSE,
                     total_wins INTEGER DEFAULT 0,
+                    online_points INTEGER DEFAULT 0,
                     saved_players JSONB DEFAULT '[]'
                 );
                 CREATE TABLE IF NOT EXISTS rooms (
@@ -106,19 +107,11 @@ def init_db():
                 INSERT INTO settings (key, value) VALUES ('sound_reveal', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
                 INSERT INTO settings (key, value) VALUES ('sound_win', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
                 INSERT INTO settings (key, value) VALUES ('sound_fail', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
-                -- تحويل الأعمدة لتدعم أرقام تيليجرام الكبيرة
-                ALTER TABLE users ALTER COLUMN user_id TYPE BIGINT;
-                ALTER TABLE rooms ALTER COLUMN host_id TYPE BIGINT;
-                ALTER TABLE rooms ALTER COLUMN current_turn_asker TYPE BIGINT;
-                ALTER TABLE rooms ALTER COLUMN current_turn_answerer TYPE BIGINT;
-                ALTER TABLE rooms ALTER COLUMN spy_id TYPE BIGINT;
-                ALTER TABLE room_players ALTER COLUMN user_id TYPE BIGINT;
 
-                -- تحديث جدول المستخدمين ليشمل إحصائيات
+                -- Ensure columns exist for older schemas
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS total_wins INTEGER DEFAULT 0;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS online_points INTEGER DEFAULT 0;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS saved_players JSONB DEFAULT '[]';
-                ALTER TABLE room_players ADD COLUMN IF NOT EXISTS join_order SERIAL;
                 ALTER TABLE categories ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0;
             """)
 
@@ -176,21 +169,30 @@ async def get_settings():
                 if k not in settings:
                     settings[k] = v
                 elif k.endswith('_timeout'):
-                    settings[k] = int(settings[k])
+                    try: settings[k] = int(settings[k])
+                    except: settings[k] = v
 
             return settings
-    finally: conn.close()
+    except Exception as e:
+        print(f"Error in get_settings: {e}")
+        return defaults
+    finally:
+        if conn: conn.close()
 
 @app.post("/api/admin/settings/update")
 async def update_settings(data: dict):
     conn = get_db_conn()
-    if not conn: return {"success": False}
+    if not conn: return {"success": False, "msg": "فشل الاتصال بقاعدة البيانات"}
     try:
         with conn.cursor() as cur:
             cur.execute("UPDATE settings SET value = %s WHERE key = %s", (str(data['value']), data['key']))
             conn.commit()
         return {"success": True}
-    finally: conn.close()
+    except Exception as e:
+        print(f"Error in update_settings: {e}")
+        return {"success": False, "msg": str(e)}
+    finally:
+        if conn: conn.close()
 
 @app.post("/api/auth/register")
 async def register(data: dict):
@@ -217,7 +219,11 @@ async def login(data: dict):
             user = cur.fetchone()
             if user and not user.get('saved_players'): user['saved_players'] = []
             return {"success": True, "user": user} if user else {"success": False, "msg": "بيانات الدخول خاطئة"}
-    finally: conn.close()
+    except Exception as e:
+        print(f"Error in login: {e}")
+        return {"success": False, "msg": "حدث خطأ أثناء تسجيل الدخول"}
+    finally:
+        if conn: conn.close()
 
 @app.post("/api/auth/update")
 async def update_profile(data: dict):
@@ -249,24 +255,28 @@ async def start_game(data: dict):
     if not words:
         words = [w.strip() for w in CATEGORIES.get(category, CATEGORIES["أكلات"])]
 
-    correct = random.choice(words)
-    roles = ["in"] * len(players)
-    spy_idx = random.randint(0, len(players)-1)
-    roles[spy_idx] = "spy"
+    try:
+        correct = random.choice(words)
+        roles = ["in"] * len(players)
+        spy_idx = random.randint(0, len(players)-1)
+        roles[spy_idx] = "spy"
 
-    other = [w for w in words if w != correct]
-    guesses = random.sample(other, min(len(other), 6)) + [correct]
-    random.shuffle(guesses)
+        other = [w for w in words if w != correct]
+        guesses = random.sample(other, min(len(other), 6)) + [correct]
+        random.shuffle(guesses)
 
-    q_seq = []
-    n = len(players)
-    for i in range(0, n, 2):
-        if i+1 < n: q_seq.append({"f": players[i], "t": players[i+1]})
-        else: q_seq.append({"f": players[i], "t": players[0]})
-    for i in range(0, n, 2):
-        if i+1 < n: q_seq.append({"f": players[i+1], "t": players[(i+2)%n]})
+        q_seq = []
+        n = len(players)
+        for i in range(0, n, 2):
+            if i+1 < n: q_seq.append({"f": players[i], "t": players[i+1]})
+            else: q_seq.append({"f": players[i], "t": players[0]})
+        for i in range(0, n, 2):
+            if i+1 < n: q_seq.append({"f": players[i+1], "t": players[(i+2)%n]})
 
-    return {"word": correct, "roles": roles, "guesses": guesses, "q_seq": q_seq, "spy_idx": spy_idx}
+        return {"word": correct, "roles": roles, "guesses": guesses, "q_seq": q_seq, "spy_idx": spy_idx}
+    except Exception as e:
+        print(f"Error in start_game: {e}")
+        return {"error": str(e)}
 
 # --- Online Mode API ---
 
@@ -325,10 +335,14 @@ async def join_room(data: dict):
             if room['status'] != 'waiting': return {"success": False, "msg": "اللعبة بدأت بالفعل"}
 
             cur.execute("INSERT INTO room_players (room_code, user_id, player_name) VALUES (%s, %s, %s) ON CONFLICT (room_code, user_id) DO UPDATE SET player_name = EXCLUDED.player_name",
-                        (room_code, data['user_id'], data['player_name']))
+                        (data['room_code'].upper(), data['user_id'], data['player_name']))
             conn.commit()
         return {"success": True}
-    finally: conn.close()
+    except Exception as e:
+        print(f"Error in join_room: {e}")
+        return {"success": False, "msg": f"خطأ: {str(e)}"}
+    finally:
+        if conn: conn.close()
 
 @app.post("/api/online/vote")
 async def online_vote(data: dict):
@@ -352,13 +366,14 @@ async def online_vote(data: dict):
 @app.post("/api/online/start")
 async def start_online_game(data: dict):
     conn = get_db_conn()
-    if not conn: return {"success": False}
+    if not conn: return {"success": False, "msg": "لا يوجد اتصال بقاعدة البيانات"}
     try:
         room_code = data['room_code'].upper()
         with conn.cursor() as cur:
             cur.execute("SELECT host_id FROM rooms WHERE room_code = %s", (room_code,))
             r = cur.fetchone()
-            if not r or r[0] != data['user_id']: return {"success": False, "msg": "فقط المضيف يمكنه البدء"}
+            if not r: return {"success": False, "msg": "الغرفة غير موجودة"}
+            if r[0] != data['user_id']: return {"success": False, "msg": "فقط المضيف يمكنه البدء"}
 
             # التأكد من عدد اللاعبين
             cur.execute("SELECT COUNT(*) FROM room_players WHERE room_code = %s", (room_code,))
@@ -368,15 +383,19 @@ async def start_online_game(data: dict):
             cur.execute("UPDATE rooms SET status = 'voting_limit' WHERE room_code = %s", (room_code,))
             conn.commit()
         return {"success": True}
-    finally: conn.close()
+    except Exception as e:
+        print(f"Error in start_online_game: {e}")
+        return {"success": False, "msg": f"خطأ: {str(e)}"}
+    finally:
+        if conn: conn.close()
 
 @app.post("/api/online/submit_vote")
 async def submit_vote(data: dict):
     conn = get_db_conn()
-    if not conn: return {"success": False}
+    if not conn: return {"success": False, "msg": "Database connection failed"}
     try:
         room_code = data['room_code'].upper()
-        user_id = data['user_id']
+        user_id = int(data['user_id'])
         vote_type = data['type'] # 'limit' or 'cat'
         val = data['value']
 
@@ -402,6 +421,9 @@ async def submit_vote(data: dict):
 
             conn.commit()
         return {"success": True}
+    except Exception as e:
+        print(f"Error in submit_vote: {e}")
+        return {"success": False, "msg": str(e)}
     finally: conn.close()
 
 async def prepare_round(room_code):
@@ -527,18 +549,21 @@ async def calculate_online_results(room_code):
 
             cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
             conn.commit()
-    finally: conn.close()
+    except Exception as e:
+        print(f"Error in calculate_online_results: {e}")
+    finally:
+        if conn: conn.close()
 
 @app.get("/api/online/room/{room_code}")
 async def get_room(room_code: str):
     conn = get_db_conn()
-    if not conn: return {"success": False}
+    if not conn: return {"success": False, "msg": "No DB connection"}
     try:
         room_code = room_code.upper()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
             room = cur.fetchone()
-            if not room: return {"success": False}
+            if not room: return {"success": False, "msg": "Room not found"}
 
             # --- Penalty Logic & Timeout Check ---
             status = room['status']
@@ -562,8 +587,8 @@ async def get_room(room_code: str):
                         # Apply Penalty
                         cur.execute("UPDATE room_players SET yellow_cards = yellow_cards + 1 WHERE room_code = %s AND user_id = %s", (room_code, target_user_id))
                         cur.execute("SELECT yellow_cards FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, target_user_id))
-                        y_cards = cur.fetchone()['yellow_cards']
-                        if y_cards >= 2:
+                        y_cards_row = cur.fetchone()
+                        if y_cards_row and y_cards_row['yellow_cards'] >= 2:
                             cur.execute("UPDATE room_players SET red_card = TRUE WHERE room_code = %s AND user_id = %s", (room_code, target_user_id))
 
                         # Move to next question
@@ -588,12 +613,16 @@ async def get_room(room_code: str):
             cur.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card FROM room_players WHERE room_code = %s ORDER BY join_order ASC", (room_code,))
             players = cur.fetchall()
             return {"success": True, "room": room, "players": players}
-    finally: conn.close()
+    except Exception as e:
+        print(f"Error in get_room: {e}")
+        return {"success": False, "msg": str(e)}
+    finally:
+        if conn: conn.close()
 
 @app.post("/api/online/action")
 async def online_action(data: dict):
     conn = get_db_conn()
-    if not conn: return {"success": False}
+    if not conn: return {"success": False, "msg": "No DB connection"}
     try:
         room_code = data['room_code'].upper()
         user_id = data['user_id']
@@ -602,7 +631,7 @@ async def online_action(data: dict):
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
             room = cur.fetchone()
-            if not room: return {"success": False}
+            if not room: return {"success": False, "msg": "Room not found"}
 
             game_data = room['game_data']
 
@@ -621,7 +650,8 @@ async def online_action(data: dict):
             elif action == "submit_question":
                 # Check if red carded
                 cur.execute("SELECT red_card FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
-                if cur.fetchone()['red_card']: return {"success": False, "msg": "أنت مستبعد (كرت أحمر)"}
+                res = cur.fetchone()
+                if res and res['red_card']: return {"success": False, "msg": "أنت مستبعد (كرت أحمر)"}
 
                 q_idx = game_data.get('q_idx', 0)
                 if q_idx < len(game_data['q_seq']):
@@ -636,7 +666,8 @@ async def online_action(data: dict):
             elif action == "submit_answer":
                 # Check if red carded
                 cur.execute("SELECT red_card FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
-                if cur.fetchone()['red_card']: return {"success": False, "msg": "أنت مستبعد (كرت أحمر)"}
+                res = cur.fetchone()
+                if res and res['red_card']: return {"success": False, "msg": "أنت مستبعد (كرت أحمر)"}
 
                 q_idx = game_data.get('q_idx', 0)
                 if q_idx < len(game_data['q_seq']):
@@ -657,7 +688,8 @@ async def online_action(data: dict):
             elif action == "vote":
                 # Check if red carded
                 cur.execute("SELECT red_card FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
-                if cur.fetchone()['red_card']: return {"success": False, "msg": "أنت مستبعد (كرت أحمر)"}
+                res = cur.fetchone()
+                if res and res['red_card']: return {"success": False, "msg": "أنت مستبعد (كرت أحمر)"}
 
                 target_id = int(data['target_id'])
                 if 'votes' not in game_data: game_data['votes'] = {}
@@ -711,17 +743,24 @@ async def online_action(data: dict):
                     await prepare_round(room_code)
 
         return {"success": True}
-    finally: conn.close()
+    except Exception as e:
+        print(f"Error in online_action: {e}")
+        return {"success": False, "msg": str(e)}
+    finally:
+        if conn: conn.close()
 
 @app.post("/api/admin/add_word")
 async def add_word(data: dict):
     conn = get_db_conn()
-    if not conn: return {"success": False}
+    if not conn: return {"success": False, "msg": "Database connection failed"}
     try:
         with conn.cursor() as cur:
             cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (data['category'], data['word']))
             conn.commit()
         return {"success": True}
+    except Exception as e:
+        print(f"Error in add_word: {e}")
+        return {"success": False, "msg": str(e)}
     finally: conn.close()
 
 @app.get("/api/admin/words")
@@ -732,6 +771,9 @@ async def get_words():
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT * FROM words ORDER BY category, word")
             return cur.fetchall()
+    except Exception as e:
+        print(f"Error in get_words: {e}")
+        return []
     finally: conn.close()
 
 # --- Admin Dashboard APIs ---
@@ -744,6 +786,9 @@ async def get_online_rankings():
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT player_name, online_points FROM users WHERE online_points > 0 ORDER BY online_points DESC LIMIT 50")
             return cur.fetchall()
+    except Exception as e:
+        print(f"Error in get_online_rankings: {e}")
+        return []
     finally: conn.close()
 
 @app.get("/api/admin/players")
@@ -754,6 +799,9 @@ async def admin_get_players():
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT user_id, username_key, player_name, total_wins FROM users ORDER BY total_wins DESC")
             return cur.fetchall()
+    except Exception as e:
+        print(f"Error in admin_get_players: {e}")
+        return []
     finally: conn.close()
 
 @app.get("/api/categories")
@@ -786,17 +834,22 @@ async def get_categories():
 @app.post("/api/admin/category/add")
 async def add_category(data: dict):
     conn = get_db_conn()
+    if not conn: return {"success": False, "msg": "Database connection failed"}
     try:
         with conn.cursor() as cur:
             cur.execute("INSERT INTO categories (name, image_url, display_order) VALUES (%s, %s, %s)",
                         (data['name'], data.get('image_url'), data.get('display_order', 0)))
             conn.commit()
         return {"success": True}
+    except Exception as e:
+        print(f"Error in add_category: {e}")
+        return {"success": False, "msg": str(e)}
     finally: conn.close()
 
 @app.post("/api/admin/category/update")
 async def update_category(data: dict):
     conn = get_db_conn()
+    if not conn: return {"success": False, "msg": "Database connection failed"}
     try:
         with conn.cursor() as cur:
             # تحديث اسم الفئة في جدول الكلمات أولاً إذا تغير الاسم
@@ -807,54 +860,73 @@ async def update_category(data: dict):
                         (data['name'], data.get('image_url'), data.get('display_order', 0), data['id']))
             conn.commit()
         return {"success": True}
+    except Exception as e:
+        print(f"Error in update_category: {e}")
+        return {"success": False, "msg": str(e)}
     finally: conn.close()
 
 @app.post("/api/admin/category/delete")
 async def delete_category(data: dict):
     conn = get_db_conn()
+    if not conn: return {"success": False, "msg": "Database connection failed"}
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM categories WHERE id = %s", (data['id'],))
             conn.commit()
         return {"success": True}
+    except Exception as e:
+        print(f"Error in delete_category: {e}")
+        return {"success": False, "msg": str(e)}
     finally: conn.close()
 
 @app.post("/api/admin/word/update")
 async def update_word(data: dict):
     conn = get_db_conn()
+    if not conn: return {"success": False, "msg": "Database connection failed"}
     try:
         with conn.cursor() as cur:
             cur.execute("UPDATE words SET word = %s WHERE id = %s", (data['word'], data['id']))
             conn.commit()
         return {"success": True}
+    except Exception as e:
+        print(f"Error in update_word: {e}")
+        return {"success": False, "msg": str(e)}
     finally: conn.close()
 
 @app.post("/api/admin/word/delete")
 async def delete_word(data: dict):
     conn = get_db_conn()
+    if not conn: return {"success": False, "msg": "Database connection failed"}
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM words WHERE id = %s", (data['id'],))
             conn.commit()
         return {"success": True}
+    except Exception as e:
+        print(f"Error in delete_word: {e}")
+        return {"success": False, "msg": str(e)}
     finally: conn.close()
 
 @app.post("/api/user/save_players")
 async def save_players(data: dict):
     conn = get_db_conn()
-    if not conn: return {"success": False}
+    if not conn: return {"success": False, "msg": "Database connection failed"}
     try:
+        user_id = int(data['user_id'])
         with conn.cursor() as cur:
             cur.execute("UPDATE users SET saved_players = %s WHERE user_id = %s",
-                        (json.dumps(data['players']), data['user_id']))
+                        (json.dumps(data['players']), user_id))
             conn.commit()
         return {"success": True}
+    except Exception as e:
+        print(f"Error in save_players: {e}")
+        return {"success": False, "msg": str(e)}
     finally: conn.close()
 
 @app.post("/api/game/report_winner")
 async def report_winner(data: dict):
     conn = get_db_conn()
-    if not conn: return {"success": False}
+    if not conn: return {"success": False, "msg": "Database connection failed"}
     try:
         with conn.cursor() as cur:
             # تحديث اللاعب في جدول المستخدمين الرئيسي (إذا كان مسجلاً)
@@ -862,7 +934,8 @@ async def report_winner(data: dict):
 
             # تحديث قائمة اللاعبين المحليين للمستخدم الحالي (Host)
             if 'user_id' in data:
-                cur.execute("SELECT saved_players FROM users WHERE user_id = %s", (data['user_id'],))
+                user_id = int(data['user_id'])
+                cur.execute("SELECT saved_players FROM users WHERE user_id = %s", (user_id,))
                 row = cur.fetchone()
                 if row:
                     players = row[0] if row[0] is not None else []
@@ -877,9 +950,12 @@ async def report_winner(data: dict):
                             updated = True
                             break
                     if updated:
-                        cur.execute("UPDATE users SET saved_players = %s WHERE user_id = %s", (json.dumps(players), data['user_id']))
+                        cur.execute("UPDATE users SET saved_players = %s WHERE user_id = %s", (json.dumps(players), user_id))
             conn.commit()
         return {"success": True}
+    except Exception as e:
+        print(f"Error in report_winner: {e}")
+        return {"success": False, "msg": str(e)}
     finally: conn.close()
 
 HTML_TEMPLATE = """
@@ -1116,16 +1192,42 @@ HTML_TEMPLATE = """
         }
 
         async function login() {
-            const res = await fetch('/api/auth/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u_name.value, password: u_pass.value})});
-            const d = await res.json();
-            if(d.success) { localStorage.setItem('user', JSON.stringify(d.user)); currentUser = d.user; init(); } else alert(d.msg);
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username: u_name.value, password: u_pass.value})
+                });
+                if (!res.ok) throw new Error("Server error " + res.status);
+                const d = await res.json();
+                if(d.success) {
+                    localStorage.setItem('user', JSON.stringify(d.user));
+                    currentUser = d.user;
+                    init();
+                } else {
+                    alert(d.msg);
+                }
+            } catch(e) {
+                console.error("Login failed", e);
+                alert("فشل تسجيل الدخول. تأكد من اتصالك بالإنترنت.");
+            }
         }
 
         async function register() {
             if(!u_name.value || !u_pass.value || !r_nick.value) return alert("املأ كل الحقول!");
-            const res = await fetch('/api/auth/register', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u_name.value, password: u_pass.value, name: r_nick.value})});
-            const d = await res.json();
-            d.success ? alert("تم التسجيل! ادخل الآن") : alert(d.msg);
+            try {
+                const res = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username: u_name.value, password: u_pass.value, name: r_nick.value})
+                });
+                if (!res.ok) throw new Error("Server error " + res.status);
+                const d = await res.json();
+                d.success ? alert("تم التسجيل! ادخل الآن") : alert(d.msg);
+            } catch(e) {
+                console.error("Register failed", e);
+                alert("فشل التسجيل. حاول مرة أخرى لاحقاً.");
+            }
         }
 
         function showMenu(push = true) {
@@ -1205,15 +1307,24 @@ HTML_TEMPLATE = """
         }
 
         async function joinRoom() {
-            const code = document.getElementById('join_code').value.trim().toUpperCase();
+            const codeInput = document.getElementById('join_code');
+            const code = codeInput.value.trim().toUpperCase();
             if(!code) return;
-            const res = await fetch('/api/online/join', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({room_code: code, user_id: currentUser.user_id, player_name: currentUser.player_name})
-            });
-            const d = await res.json();
-            if(d.success) enterRoom(code); else alert(d.msg);
+
+            try {
+                const res = await fetch('/api/online/join', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room_code: code, user_id: currentUser.user_id, player_name: currentUser.player_name})
+                });
+
+                if (!res.ok) throw new Error("Server error " + res.status);
+                const d = await res.json();
+                if(d.success) enterRoom(code); else alert(d.msg);
+            } catch(e) {
+                console.error("Join room failed", e);
+                alert("فشل الدخول للغرفة. تأكد من الرمز ومن اتصالك.");
+            }
         }
 
         async function enterRoom(code) {
@@ -1232,6 +1343,13 @@ HTML_TEMPLATE = """
             if(!currentRoom) return;
             try {
                 const res = await fetch(`/api/online/room/${currentRoom}`);
+                if (!res.ok) {
+                    if (res.status === 404) {
+                        alert("تم إغلاق الغرفة");
+                        location.reload();
+                    }
+                    throw new Error("Room fetch failed");
+                }
                 const d = await res.json();
                 if(d.success) {
                     window.roomData = d;
@@ -1306,11 +1424,19 @@ HTML_TEMPLATE = """
         }
 
         async function sendVote(type, value) {
-            await fetch('/api/online/submit_vote', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id, type: type, value: value})
-            });
+            try {
+                const res = await fetch('/api/online/submit_vote', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id, type: type, value: value})
+                });
+                if (!res.ok) throw new Error('Network response was not ok');
+                const d = await res.json();
+                if(!d.success) alert(d.msg || "تعذر إرسال التصويت");
+            } catch (e) {
+                console.error(e);
+                alert("حدث خطأ في الاتصال بالسيرفر");
+            }
             updateRoomState();
         }
 
@@ -1358,13 +1484,19 @@ HTML_TEMPLATE = """
 
         async function startOnlineGame() {
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'block';
-            const res = await fetch('/api/online/start', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
-            });
-            const d = await res.json();
-            if(!d.success) alert(d.msg || "تعذر بدء اللعبة");
+            try {
+                const res = await fetch('/api/online/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
+                });
+                if (!res.ok) throw new Error('Network response was not ok');
+                const d = await res.json();
+                if(!d.success) alert(d.msg || "تعذر بدء اللعبة");
+            } catch (e) {
+                console.error(e);
+                alert("حدث خطأ في الاتصال بالسيرفر");
+            }
         }
 
         function renderOnlineRoles() {
@@ -1388,13 +1520,19 @@ HTML_TEMPLATE = """
         }
 
         async function onlineAction(action, extra = {}) {
-            const res = await fetch('/api/online/action', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id, action, ...extra})
-            });
-            const d = await res.json();
-            if(!d.success && d.msg) alert(d.msg);
+            try {
+                const res = await fetch('/api/online/action', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id, action, ...extra})
+                });
+                if (!res.ok) throw new Error('Network response was not ok');
+                const d = await res.json();
+                if(!d.success && d.msg) alert(d.msg);
+            } catch (e) {
+                console.error(e);
+                alert("حدث خطأ أثناء تنفيذ الإجراء");
+            }
             updateRoomState();
         }
 
@@ -2348,7 +2486,7 @@ HTML_TEMPLATE = """
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({player_name: winnerName, user_id: currentUser.user_id})
-                });
+                }).catch(e => console.error("Report winner failed", e));
 
                 let podiumHtml = "";
                 const medals = ["🥇 المركز الأول", "🥈 المركز الثاني", "🥉 المركز الثالث"];
