@@ -350,21 +350,18 @@ async def create_room(data: dict):
 
             for _ in range(5):
                 candidate = ''.join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=5))
-                try:
-                    cur.execute("""
-                        INSERT INTO rooms (room_code, host_id, status, category, win_limit)
-                        VALUES (%s, %s, 'waiting', 'أكلات', 10)
-                    """, (candidate, user_id))
+                cur.execute("SELECT 1 FROM rooms WHERE room_code = %s", (candidate,))
+                if not cur.fetchone():
                     room_code = candidate
                     break
-                except Exception as e:
-                    conn.rollback()
-                    if 'unique' in str(e).lower() or 'duplicate' in str(e).lower():
-                        continue
-                    raise
 
             if not room_code:
                 raise Exception("تعذر إنشاء رمز غرفة فريد. حاول مرة أخرى.")
+
+            cur.execute("""
+                INSERT INTO rooms (room_code, host_id, status, category, win_limit)
+                VALUES (%s, %s, 'waiting', 'أكلات', 10)
+            """, (room_code, user_id))
 
             cur.execute("""
                 INSERT INTO room_players (room_code, user_id, player_name, is_ready, join_order, score)
@@ -1327,7 +1324,7 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>اللعب أونلاين</h1>
-                    <button style="background:var(--success)" onclick="createRoom(event)">إنشاء غرفة جديدة</button>
+                    <button id="btn-create-room" style="background:var(--success)" onclick="createRoom()">إنشاء غرفة جديدة</button>
                     <div style="margin:20px 0;">
                         <input id="join_code" placeholder="رمز الغرفة (مثال: ABCD)" style="text-transform:uppercase">
                         <button onclick="joinRoom()">دخول غرفة</button>
@@ -1337,21 +1334,17 @@ HTML_TEMPLATE = """
         }
 
         let isCreatingRoom = false;
-        async function createRoom(e) {
-            console.log('createRoom called', { currentUser, eventType: e?.type });
+        async function createRoom() {
+            console.log('createRoom called', { currentUser });
             if (isCreatingRoom) return;
             if (!currentUser || !currentUser.user_id) {
                 alert("بيانات المستخدم غير مكتملة. يرجى تسجيل الخروج والدخول مرة أخرى.");
                 return;
             }
 
-            let btn = null;
-            if (e && e.target) {
-                btn = (e.target instanceof Element) ? (e.target.closest('button') || e.target) : null;
-            }
-
+            const btn = document.getElementById('btn-create-room');
             let originalText = "";
-            if (btn && btn.tagName === 'BUTTON') {
+            if (btn) {
                 originalText = btn.innerText;
                 btn.disabled = true;
                 btn.innerText = "جاري الإنشاء...";
@@ -1380,7 +1373,7 @@ HTML_TEMPLATE = """
                     await enterRoom(d.room_code);
                 } else {
                     alert(d.msg || "فشل إنشاء الغرفة");
-                    if (btn && btn.tagName === 'BUTTON') {
+                    if (btn) {
                         btn.disabled = false;
                         btn.innerText = originalText;
                     }
@@ -1388,7 +1381,7 @@ HTML_TEMPLATE = """
             } catch (err) {
                 console.error("Create Room Error:", err);
                 alert("حدث خطأ في الاتصال بالسيرفر. يرجى المحاولة لاحقاً.");
-                if (btn && btn.tagName === 'BUTTON') {
+                if (btn) {
                     btn.disabled = false;
                     btn.innerText = originalText;
                 }
@@ -1577,8 +1570,12 @@ HTML_TEMPLATE = """
 
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
-                    <h2>غرفة: <span style="color:var(--accent)">${room.room_code}</span></h2>
-                    <button style="background:var(--primary); margin-bottom:10px; font-size:14px;" onclick="copyInviteLink()">🔗 نسخ رابط الدعوة</button>
+                    <h2>رمز الغرفة</h2>
+                    <span style="color:var(--accent); font-size:38px; font-weight:900; letter-spacing:2px; display:block; margin:10px 0;">${room.room_code}</span>
+                    <div style="display:flex; gap:10px; justify-content:center; margin-bottom:20px;">
+                        <button style="background:var(--accent); color:var(--card); font-size:14px; padding:10px 15px; margin:0;" onclick="copyRoomCode()">📋 نسخ الرمز</button>
+                        <button style="background:var(--primary); font-size:14px; padding:10px 15px; margin:0;" onclick="copyInviteLink()">🔗 نسخ الرابط</button>
+                    </div>
                     <div style="margin:10px 0; text-align:right;">${pList}</div>
                     ${room.host_id == currentUser.user_id ? `
                         <button onclick="startOnlineGame()">بدء اللعبة</button>` :
@@ -1591,6 +1588,22 @@ HTML_TEMPLATE = """
             const url = window.location.origin + '?join=' + currentRoom;
             navigator.clipboard.writeText(url).then(() => {
                 alert("تم نسخ رابط الدعوة! أرسله لأصدقائك.");
+            });
+        }
+
+        function copyRoomCode() {
+            if (!currentRoom) return;
+            navigator.clipboard.writeText(currentRoom).then(() => {
+                alert("تم نسخ رمز الغرفة: " + currentRoom);
+            }).catch(err => {
+                console.error("Failed to copy code: ", err);
+                const tempInput = document.createElement("input");
+                tempInput.value = currentRoom;
+                document.body.appendChild(tempInput);
+                tempInput.select();
+                document.execCommand("copy");
+                document.body.removeChild(tempInput);
+                alert("تم نسخ رمز الغرفة: " + currentRoom);
             });
         }
 
