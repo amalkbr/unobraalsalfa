@@ -325,47 +325,61 @@ async def start_game(data: dict):
 @app.post("/api/online/create")
 async def create_room(data: dict):
     conn = get_db_conn()
-    if not conn: return {"success": False, "msg": "فشل الاتصال بقاعدة البيانات"}
+    if not conn:
+        return {"success": False, "msg": "فشل الاتصال بقاعدة البيانات"}
+
+    uid_raw = data.get('user_id')
+    if uid_raw is None:
+        return {"success": False, "msg": "معرف المستخدم مفقود. يرجى إعادة تسجيل الدخول."}
+
     try:
-        uid_raw = data.get('user_id')
-        if uid_raw is None:
-            return {"success": False, "msg": "معرف المستخدم مفقود. يرجى إعادة تسجيل الدخول."}
-
         user_id = int(uid_raw)
-        player_name = str(data.get('player_name', 'لاعب'))
-        room_code = ''.join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=5))
+    except Exception:
+        return {"success": False, "msg": "معرف المستخدم غير صالح. يرجى إعادة تسجيل الدخول."}
 
+    player_name = str(data.get('player_name', 'لاعب'))[:100]
+    room_code = None
+
+    try:
         with conn.cursor() as cur:
-            # 1. ضمان وجود المستخدم وتحديث اسمه إذا تغير
             cur.execute("""
                 INSERT INTO users (user_id, player_name, is_registered)
                 VALUES (%s, %s, TRUE)
                 ON CONFLICT (user_id) DO UPDATE SET player_name = EXCLUDED.player_name
             """, (user_id, player_name))
 
-            # 2. إنشاء الغرفة (نستخدم الأعمدة المزدوجة لضمان التوافق)
-            # نحدد الفئة والحد الأدنى للفوز كقيم افتراضية
-            cur.execute("""
-                INSERT INTO rooms (room_code, room_id, host_id, creator_id, status, category, win_limit)
-                VALUES (%s, %s, %s, %s, 'waiting', 'أكلات', 10)
-            """, (room_code, room_code, user_id, user_id))
+            for _ in range(5):
+                candidate = ''.join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=5))
+                try:
+                    cur.execute("""
+                        INSERT INTO rooms (room_code, host_id, status, category, win_limit)
+                        VALUES (%s, %s, 'waiting', 'أكلات', 10)
+                    """, (candidate, user_id))
+                    room_code = candidate
+                    break
+                except Exception as e:
+                    conn.rollback()
+                    if 'unique' in str(e).lower() or 'duplicate' in str(e).lower():
+                        continue
+                    raise
 
-            # 3. إضافة منشئ الغرفة كلاعب أول
+            if not room_code:
+                raise Exception("تعذر إنشاء رمز غرفة فريد. حاول مرة أخرى.")
+
             cur.execute("""
-                INSERT INTO room_players (room_code, room_id, user_id, player_name, is_ready, join_order, score)
-                VALUES (%s, %s, %s, %s, TRUE, 1, 0)
+                INSERT INTO room_players (room_code, user_id, player_name, is_ready, join_order, score)
+                VALUES (%s, %s, %s, TRUE, 1, 0)
                 ON CONFLICT (room_code, user_id) DO UPDATE
-                SET is_ready = TRUE, join_order = 1, room_id = EXCLUDED.room_id, player_name = EXCLUDED.player_name
-            """, (room_code, room_code, user_id, player_name))
+                SET is_ready = TRUE, join_order = 1, player_name = EXCLUDED.player_name
+            """, (room_code, user_id, player_name))
 
             conn.commit()
         return {"success": True, "room_code": room_code}
     except Exception as e:
         if conn: conn.rollback()
-        # تسجيل الخطأ بالتفصيل في سجلات النظام (Vercel Logs)
         import sys
         print(f"!!! DATABASE ERROR IN create_room: {e}", file=sys.stderr)
-        return {"success": False, "msg": f"خطأ تقني في قاعدة البيانات: {str(e)}"}
+        return {"success": False, "msg": f"خطأ تقني في إنشاء الغرفة: {str(e)}"}
     finally:
         if conn: conn.close()
 
