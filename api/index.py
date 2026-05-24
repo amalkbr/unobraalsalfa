@@ -91,10 +91,10 @@ def init_db():
                 INSERT INTO settings (key, value) VALUES ('question_timeout', '30') ON CONFLICT DO NOTHING;
                 INSERT INTO settings (key, value) VALUES ('vote_timeout', '10') ON CONFLICT DO NOTHING;
                 INSERT INTO settings (key, value) VALUES ('spy_guess_timeout', '15') ON CONFLICT DO NOTHING;
-                INSERT INTO settings (key, value) VALUES ('sound_click', 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/click.mp3') ON CONFLICT DO NOTHING;
-                INSERT INTO settings (key, value) VALUES ('sound_reveal', 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/level-up.mp3') ON CONFLICT DO NOTHING;
-                INSERT INTO settings (key, value) VALUES ('sound_win', 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/success.mp3') ON CONFLICT DO NOTHING;
-                INSERT INTO settings (key, value) VALUES ('sound_fail', 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/wrong.mp3') ON CONFLICT DO NOTHING;
+                INSERT INTO settings (key, value) VALUES ('sound_click', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
+                INSERT INTO settings (key, value) VALUES ('sound_reveal', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
+                INSERT INTO settings (key, value) VALUES ('sound_win', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
+                INSERT INTO settings (key, value) VALUES ('sound_fail', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
                 -- تحديث جدول المستخدمين ليشمل إحصائيات
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS total_wins INTEGER DEFAULT 0;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS saved_players JSONB DEFAULT '[]';
@@ -139,10 +139,10 @@ async def get_settings():
         "question_timeout": 30,
         "vote_timeout": 10,
         "spy_guess_timeout": 15,
-        "sound_click": "https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/click.mp3",
-        "sound_reveal": "https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/level-up.mp3",
-        "sound_win": "https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/success.mp3",
-        "sound_fail": "https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/wrong.mp3"
+        "sound_click": "",
+        "sound_reveal": "",
+        "sound_win": "",
+        "sound_fail": ""
     }
     if not conn: return defaults
     try:
@@ -748,10 +748,10 @@ HTML_TEMPLATE = """
         let questionTimeout = 30;
         let voteTimeout = 10;
         let spyGuessTimeout = 15;
-        let soundClickUrl = 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/click.mp3';
-        let soundRevealUrl = 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/level-up.mp3';
-        let soundWinUrl = 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/success.mp3';
-        let soundFailUrl = 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/wrong.mp3';
+        let soundClickUrl = '';
+        let soundRevealUrl = '';
+        let soundWinUrl = '';
+        let soundFailUrl = '';
         let timerInterval = null;
         const DEFAULT_CATEGORIES = [
             'أكلات', 'حيوانات', 'ملابس', 'كورة', 'سيارات', 'شركات', 'كواكب', 'أجهزة', 'تطبيقات', 'فواكه وخضار', 'شخصيات', 'كارتون', 'مشروبات', 'حلويات', 'مسلسلات', 'انمي', 'كيبوب', 'قيمرز', 'مهن'
@@ -764,16 +764,23 @@ HTML_TEMPLATE = """
                 questionTimeout = parseInt(d.question_timeout) || 30;
                 voteTimeout = parseInt(d.vote_timeout) || 10;
                 spyGuessTimeout = parseInt(d.spy_guess_timeout) || 15;
-                if(d.sound_click) soundClickUrl = d.sound_click;
-                if(d.sound_reveal) soundRevealUrl = d.sound_reveal;
-                if(d.sound_win) soundWinUrl = d.sound_win;
-                if(d.sound_fail) soundFailUrl = d.sound_fail;
 
-                // تحديث الكائنات الصوتية بالروابط الجديدة
-                sounds.click = new Audio(soundClickUrl);
-                sounds.reveal = new Audio(soundRevealUrl);
-                sounds.win = new Audio(soundWinUrl);
-                sounds.fail = new Audio(soundFailUrl);
+                if(d.sound_click && d.sound_click.startsWith('http')) {
+                    soundClickUrl = d.sound_click;
+                    sounds.click = new Audio(soundClickUrl);
+                }
+                if(d.sound_reveal && d.sound_reveal.startsWith('http')) {
+                    soundRevealUrl = d.sound_reveal;
+                    sounds.reveal = new Audio(soundRevealUrl);
+                }
+                if(d.sound_win && d.sound_win.startsWith('http')) {
+                    soundWinUrl = d.sound_win;
+                    sounds.win = new Audio(soundWinUrl);
+                }
+                if(d.sound_fail && d.sound_fail.startsWith('http')) {
+                    soundFailUrl = d.sound_fail;
+                    sounds.fail = new Audio(soundFailUrl);
+                }
             } catch(e) { console.error("Settings fetch failed", e); }
         }
 
@@ -2385,12 +2392,17 @@ HTML_TEMPLATE = """
         function logout() { localStorage.clear(); location.href = "/"; }
 
         const sounds = {
-            click: new Audio('https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/click.mp3'),
-            reveal: new Audio('https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/level-up.mp3'),
-            win: new Audio('https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/success.mp3'),
-            fail: new Audio('https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/wrong.mp3')
+            click: null,
+            reveal: null,
+            win: null,
+            fail: null
         };
-        function playSound(name) { sounds[name].currentTime = 0; sounds[name].play().catch(()=>null); }
+        function playSound(name) {
+            if(sounds[name]) {
+                sounds[name].currentTime = 0;
+                sounds[name].play().catch(()=>null);
+            }
+        }
 
         // PWA Registration and Install Prompt
         let deferredPrompt;
