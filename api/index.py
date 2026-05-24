@@ -258,7 +258,16 @@ async def register(data: dict):
             cur.execute("INSERT INTO users (user_id, username_key, password_key, player_name, is_registered) VALUES (%s, %s, %s, %s, %s)",
                         (uid, data['username'], data['password'], data['name'], True))
             conn.commit()
-        return {"success": True}
+        return {
+            "success": True, 
+            "user": {
+                "user_id": uid,
+                "username_key": data['username'],
+                "player_name": data['name'],
+                "password_key": data['password'],
+                "saved_players": []
+            }
+        }
     except: return {"success": False, "msg": "اليوزر نيم مستخدم مسبقاً"}
     finally: conn.close()
 
@@ -1303,7 +1312,10 @@ HTML_TEMPLATE = """
         }
 
         async function register() {
-            if(!u_name.value || !u_pass.value || !r_nick.value) return alert("املأ كل الحقول!");
+            if(!u_name.value || !u_pass.value || !r_nick.value) {
+                showError("الرجاء تعبئة جميع الحقول المطلوبة لإنشاء حساب.", "بيانات التسجيل ناقصة");
+                return;
+            }
             try {
                 const res = await fetch('/api/auth/register', {
                     method: 'POST',
@@ -1312,10 +1324,16 @@ HTML_TEMPLATE = """
                 });
                 if (!res.ok) throw new Error("Server error " + res.status);
                 const d = await res.json();
-                d.success ? alert("تم التسجيل! ادخل الآن") : alert(d.msg);
+                if(d.success) {
+                    localStorage.setItem('user', JSON.stringify(d.user));
+                    currentUser = d.user;
+                    init();
+                } else {
+                    showError(d.msg || "اسم المستخدم غير متاح. الرجاء اختيار اسم مستخدم آخر.", "فشل التسجيل");
+                }
             } catch(e) {
                 console.error("Register failed", e);
-                alert("فشل التسجيل. حاول مرة أخرى لاحقاً.");
+                showError("فشل التسجيل. يرجى التحقق من اتصالك بالإنترنت والمحاولة مرة أخرى لاحقاً.", "خطأ في الاتصال");
             }
         }
 
