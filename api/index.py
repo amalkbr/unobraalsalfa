@@ -621,6 +621,7 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>برا السالفة | المجلس</title>
+    <link rel="icon" href="data:,">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#6c5ce7">
     <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/8030/8030198.png">

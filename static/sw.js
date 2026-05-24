@@ -1,5 +1,5 @@
-const CACHE_NAME = 'alsalfa-v2';
-const DYNAMIC_CACHE = 'alsalfa-dynamic-v2';
+const CACHE_NAME = 'alsalfa-v3';
+const DYNAMIC_CACHE = 'alsalfa-dynamic-v3';
 const ASSETS = [
   '/',
   '/manifest.json',
@@ -34,9 +34,13 @@ self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'GET') return;
 
+  // Skip favicon errors
+  if (request.url.includes('favicon.ico')) {
+    return;
+  }
+
   const url = new URL(request.url);
 
-  // 1. Static Assets: Cache First
   if (ASSETS.some(asset => request.url.endsWith(asset))) {
     event.respondWith(
       caches.match(request).then(cached => cached || fetch(request))
@@ -44,7 +48,6 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 2. Images: Network First, then Cache (to ensure they show up immediately)
   if (request.destination === 'image') {
     event.respondWith(
       fetch(request)
@@ -60,7 +63,6 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 3. API & Others: Network with Cache Fallback
   event.respondWith(
     fetch(request)
       .then(networkResponse => {
