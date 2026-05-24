@@ -1611,15 +1611,25 @@ HTML_TEMPLATE = """
                 return `<div class="score-item"><span>${p.player_name}${cards}</span> ${p.is_ready ? '✅' : '⏳'}</div>`;
             }).join('');
 
+            // التحقق مما إذا كانت بطاقة الانتظار معروضة بالفعل لتحديث قائمة اللاعبين فقط وتفادي النبض/الرمش
+            const lobbyCard = document.getElementById('lobby-card');
+            if (lobbyCard && document.getElementById('lobby-room-code')?.innerText === room.room_code) {
+                const pListContainer = document.getElementById('lobby-players-list');
+                if (pListContainer && pListContainer.innerHTML !== pList) {
+                    pListContainer.innerHTML = pList;
+                }
+                return;
+            }
+
             document.getElementById('main-ui').innerHTML = `
-                <div class="card">
+                <div class="card" id="lobby-card">
                     <h2>رمز الغرفة</h2>
-                    <span style="color:var(--accent); font-size:38px; font-weight:900; letter-spacing:2px; display:block; margin:10px 0;">${room.room_code}</span>
+                    <span id="lobby-room-code" style="color:var(--accent); font-size:38px; font-weight:900; letter-spacing:2px; display:block; margin:10px 0;">${room.room_code}</span>
                     <div style="display:flex; gap:10px; justify-content:center; margin-bottom:20px;">
                         <button style="background:var(--accent); color:var(--card); font-size:14px; padding:10px 15px; margin:0;" onclick="copyRoomCode()">📋 نسخ الرمز</button>
                         <button style="background:var(--primary); font-size:14px; padding:10px 15px; margin:0;" onclick="copyInviteLink()">🔗 نسخ الرابط</button>
                     </div>
-                    <div style="margin:10px 0; text-align:right;">${pList}</div>
+                    <div id="lobby-players-list" style="margin:10px 0; text-align:right;">${pList}</div>
                     ${room.host_id == currentUser.user_id ? `
                         <button onclick="startOnlineGame()">بدء اللعبة</button>` :
                         '<p>بانتظار المضيف لبدء اللعبة...</p>'}
