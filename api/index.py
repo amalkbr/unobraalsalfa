@@ -781,6 +781,10 @@ HTML_TEMPLATE = """
     </div>
     <div class="flex-center"><div class="container" id="main-ui"></div></div>
     <script>
+        // ثوابت النظام
+        const THUMB_DB_NAME = 'alsalfa-thumbnails-v1';
+        const THUMB_STORE_NAME = 'thumbnails';
+
         let currentUser = null;
         try {
             const savedUser = localStorage.getItem('user');
@@ -789,14 +793,16 @@ HTML_TEMPLATE = """
             console.error("User session error", e);
             localStorage.removeItem('user');
         }
+
         let game = null;
         let p_votes = {};
-        let totalScores = {}; // نقاط الجلسة
+        let totalScores = {};
         let winLimit = 1000;
         let questionTimeout = 30;
         let voteTimeout = 10;
         let spyGuessTimeout = 15;
         let timerInterval = null;
+
         const DEFAULT_CATEGORIES = [
             'أكلات', 'حيوانات', 'ملابس', 'كورة', 'سيارات', 'شركات', 'كواكب', 'أجهزة', 'تطبيقات', 'فواكه وخضار', 'شخصيات', 'كارتون', 'مشروبات', 'حلويات', 'مسلسلات', 'انمي', 'كيبوب', 'قيمرز', 'مهن'
         ];
@@ -835,62 +841,47 @@ HTML_TEMPLATE = """
         };
 
         function init() {
-            console.log("Initializing App...");
-            // رندرة الواجهة فوراً بناءً على حالة المستخدم
-            if (currentUser) {
-                showMenu(false);
-            } else {
-                showAuth();
-            }
+            console.log("App Initializing...");
+            try {
+                const mainUi = document.getElementById('main-ui');
+                if(!mainUi) return;
 
-            // تنفيذ العمليات الجانبية بعد الرندرة لضمان عدم التعليق
-            setTimeout(() => {
-                fetchSettings();
-                updateSidebar();
-                prefetchCategories();
-
-                const urlParams = new URLSearchParams(window.location.search);
-                const joinCode = urlParams.get('join') || localStorage.getItem('pendingJoin');
-                if (joinCode && currentUser) {
-                    localStorage.removeItem('pendingJoin');
-                    joinRoomByCode(joinCode);
+                // رندرة سريعة جداً للواجهة
+                if (currentUser) {
+                    mainUi.innerHTML = `
+                        <div class="card">
+                            <h1>ابدأ اللعب</h1>
+                            <button onclick="navigateTo('online_menu')">🌐 أونلاين</button>
+                            <button onclick="navigateTo('setup', {step: 2})" style="background:#e056fd">🏠 أوفلاين (مجلس)</button>
+                        </div>`;
+                } else {
+                    showAuth();
                 }
-            }, 100);
-        }
 
-        function showAuth() {
-            document.getElementById('main-ui').innerHTML = `
-                <div class="card">
-                    <h1>🕵️ برا السالفة</h1>
-                    <input id="u_name" placeholder="اليوزر نيم">
-                    <input id="u_pass" type="password" placeholder="الباسوورد">
-                    <button onclick="login()">دخول</button>
-                    <hr style="border:0; border-top:1px solid #3c339e; margin:20px 0;">
-                    <input id="r_nick" placeholder="الاسم المستعار (يظهر للجميع)">
-                    <button style="background:#4834d4" onclick="register()">إنشاء حساب</button>
-                </div>`;
-        }
+                // تنفيذ باقي العمليات في الخلفية
+                setTimeout(() => {
+                    updateSidebar();
+                    fetchSettings().catch(e => console.warn("Settings failed", e));
+                    if(typeof prefetchCategories === 'function') prefetchCategories();
+                }, 100);
 
-        async function login() {
-            const res = await fetch('/api/auth/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u_name.value, password: u_pass.value})});
-            const d = await res.json();
-            if(d.success) { localStorage.setItem('user', JSON.stringify(d.user)); currentUser = d.user; init(); } else alert(d.msg);
-        }
-
-        async function register() {
-            if(!u_name.value || !u_pass.value || !r_nick.value) return alert("املأ كل الحقول!");
-            const res = await fetch('/api/auth/register', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u_name.value, password: u_pass.value, name: r_nick.value})});
-            const d = await res.json();
-            d.success ? alert("تم التسجيل! ادخل الآن") : alert(d.msg);
+            } catch (err) {
+                console.error("Init Critical Error:", err);
+                document.getElementById('main-ui').innerHTML = '<div class="card"><h1>حدث خطأ</h1><button onclick="location.reload()">إعادة تحميل</button></div>';
+            }
         }
 
         function showMenu(push = true) {
+            console.log("Showing Menu...");
             if(timerInterval) clearInterval(timerInterval);
             if(push) history.pushState({screen: 'menu'}, "");
+
             const exitBtn = document.getElementById('global-exit-btn');
             if(exitBtn) exitBtn.style.display = 'none';
+
             game = null;
             totalScores = {};
+
             const mainUi = document.getElementById('main-ui');
             if(!mainUi) return;
 
@@ -898,8 +889,65 @@ HTML_TEMPLATE = """
                 <div class="card">
                     <h1>ابدأ اللعب</h1>
                     <button onclick="navigateTo('online_menu')">🌐 أونلاين</button>
-                    <button style="background:#e056fd" onclick="navigateTo('setup', {step: 2})">🏠 أوفلاين (مجلس)</button>
+                    <button onclick="navigateTo('setup', {step: 2})" style="background:#e056fd">🏠 أوفلاين (مجلس)</button>
                 </div>`;
+        }
+
+        function showAuth() {
+            console.log("Showing Auth...");
+            const mainUi = document.getElementById('main-ui');
+            if(!mainUi) return;
+
+            mainUi.innerHTML = `
+                <div class="card">
+                    <h1>🕵️ برا السالفة</h1>
+                    <div style="margin-bottom:20px">
+                        <input id="u_name" placeholder="اليوزر نيم" autocomplete="username">
+                        <input id="u_pass" type="password" placeholder="الباسوورد" autocomplete="current-password">
+                        <button onclick="login()">دخول</button>
+                    </div>
+                    <hr style="border:0; border-top:1px solid #3c339e; margin:20px 0;">
+                    <div>
+                        <input id="r_nick" placeholder="الاسم المستعار (يظهر للجميع)">
+                        <button style="background:#4834d4" onclick="register()">إنشاء حساب</button>
+                    </div>
+                </div>`;
+        }
+
+        async function login() {
+            const u = document.getElementById('u_name').value;
+            const p = document.getElementById('u_pass').value;
+            if(!u || !p) return alert("أدخل اليوزر والباسوورد");
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username: u, password: p})
+                });
+                const d = await res.json();
+                if(d.success) {
+                    localStorage.setItem('user', JSON.stringify(d.user));
+                    currentUser = d.user;
+                    init();
+                } else alert(d.msg);
+            } catch(e) { alert("خطأ في الاتصال"); }
+        }
+
+        async function register() {
+            const u = document.getElementById('u_name').value;
+            const p = document.getElementById('u_pass').value;
+            const n = document.getElementById('r_nick').value;
+            if(!u || !p || !n) return alert("املأ كل الحقول!");
+            try {
+                const res = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username: u, password: p, name: n})
+                });
+                const d = await res.json();
+                if(d.success) alert("تم التسجيل! ادخل الآن");
+                else alert(d.msg);
+            } catch(e) { alert("خطأ في الاتصال"); }
         }
 
         // --- Online Logic ---
@@ -1385,8 +1433,6 @@ HTML_TEMPLATE = """
             document.getElementById('selected_cat').value = name;
         }
 
-        const THUMB_DB_NAME = 'alsalfa-thumbnails-v1';
-        const THUMB_STORE_NAME = 'thumbnails';
 
         function getCachedCategories() {
             try {
@@ -2583,7 +2629,8 @@ HTML_TEMPLATE = """
             if (banner) banner.remove();
         }
 
-        init();
+        // بدء التشغيل
+        window.onload = init;
     </script>
 </body>
 </html>
