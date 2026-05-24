@@ -1319,6 +1319,17 @@ HTML_TEMPLATE = """
         let currentRoom = null;
         let pollInterval = null;
 
+        function showError(message, title = "حدث خطأ ⚠️") {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card" style="border-color:var(--error); box-shadow: 0 0 20px rgba(235, 77, 75, 0.4); animation: pop 0.3s ease;">
+                    <h2 style="color:var(--error); margin-bottom:15px;">${title}</h2>
+                    <div style="background:rgba(235, 77, 75, 0.1); padding:15px; border-radius:15px; margin-bottom:20px; font-weight:bold; word-break:break-all; text-align:right; direction:rtl; line-height:1.6;">
+                        ${message}
+                    </div>
+                    <button style="background:var(--primary);" onclick="showOnlineMenu()">العودة للأونلاين</button>
+                </div>`;
+        }
+
         function showOnlineMenu(push = true) {
             if(push) history.pushState({screen: 'online_menu'}, "");
             document.getElementById('main-ui').innerHTML = `
@@ -1338,7 +1349,7 @@ HTML_TEMPLATE = """
             console.log('createRoom called', { currentUser });
             if (isCreatingRoom) return;
             if (!currentUser || !currentUser.user_id) {
-                alert("بيانات المستخدم غير مكتملة. يرجى تسجيل الخروج والدخول مرة أخرى.");
+                showError("بيانات المستخدم غير مكتملة. يرجى تسجيل الخروج والدخول مرة أخرى.", "خطأ في بيانات الحساب");
                 return;
             }
 
@@ -1349,6 +1360,14 @@ HTML_TEMPLATE = """
                 btn.disabled = true;
                 btn.innerText = "جاري الإنشاء...";
             }
+
+            // عرض حالة تحميل بصرية جميلة فوراً حتى يعلم اللاعب ببدء العملية
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>جاري إنشاء الغرفة...</h2>
+                    <p>يرجى الانتظار، نقوم بإعداد جلسة اللعب وسيرفر الغرفة حالياً.</p>
+                    <div class="loading-spinner" style="margin: 20px auto;"></div>
+                </div>`;
 
             isCreatingRoom = true;
             try {
@@ -1364,7 +1383,7 @@ HTML_TEMPLATE = """
                 if (!res.ok) {
                     const text = await res.text();
                     console.error("Create Room failed HTTP response:", res.status, text);
-                    throw new Error(`Server Error: ${res.status}`);
+                    throw new Error(`خطأ من الخادم (HTTP ${res.status}): ${text || 'تعذر الاتصال'}`);
                 }
 
                 const d = await res.json();
@@ -1372,19 +1391,11 @@ HTML_TEMPLATE = """
                 if (d.success && d.room_code) {
                     await enterRoom(d.room_code);
                 } else {
-                    alert(d.msg || "فشل إنشاء الغرفة");
-                    if (btn) {
-                        btn.disabled = false;
-                        btn.innerText = originalText;
-                    }
+                    showError(d.msg || "فشل السيرفر في توليد الغرفة.", "فشل إنشاء الغرفة");
                 }
             } catch (err) {
                 console.error("Create Room Error:", err);
-                alert("حدث خطأ في الاتصال بالسيرفر. يرجى المحاولة لاحقاً.");
-                if (btn) {
-                    btn.disabled = false;
-                    btn.innerText = originalText;
-                }
+                showError(err.message || "فشل الاتصال بالسيرفر. يرجى التحقق من الشبكة ومحاولة تسجيل الدخول مرة أخرى.", "خطأ تقني");
             } finally {
                 isCreatingRoom = false;
             }
@@ -1395,6 +1406,18 @@ HTML_TEMPLATE = """
             const code = codeInput.value.trim().toUpperCase();
             if(!code) return;
 
+            if (!currentUser || !currentUser.user_id) {
+                showError("بيانات المستخدم غير مكتملة. يرجى تسجيل الخروج والدخول مرة أخرى.", "خطأ في بيانات الحساب");
+                return;
+            }
+
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>جاري الانضمام للغرفة...</h2>
+                    <p>يرجى الانتظار، نتأكد من الرمز ${code}...</p>
+                    <div class="loading-spinner" style="margin: 20px auto;"></div>
+                </div>`;
+
             try {
                 const res = await fetch('/api/online/join', {
                     method: 'POST',
@@ -1402,40 +1425,42 @@ HTML_TEMPLATE = """
                     body: JSON.stringify({room_code: code, user_id: currentUser.user_id, player_name: currentUser.player_name})
                 });
 
-                if (!res.ok) throw new Error("Server error " + res.status);
+                if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(`خطأ من الخادم (HTTP ${res.status}): ${text || 'تعذر الاتصال'}`);
+                }
                 const d = await res.json();
-                if(d.success) enterRoom(code); else alert(d.msg);
+                if(d.success) {
+                    await enterRoom(code);
+                } else {
+                    showError(d.msg || "تعذر الانضمام للغرفة. تأكد من صحة الرمز.", "فشل الانضمام");
+                }
             } catch(e) {
                 console.error("Join room failed", e);
-                alert("فشل الدخول للغرفة. تأكد من الرمز ومن اتصالك.");
+                showError(e.message || "حدث خطأ غير متوقع أثناء الاتصال بالخادم. يرجى مراجعة اتصالك بالإنترنت.", "خطأ تقني");
             }
         }
 
         async function enterRoom(code) {
             console.log('enterRoom called', code);
             currentRoom = code;
-            document.getElementById('main-ui').innerHTML = `<div class="card"><h2>جاري دخول الغرفة...</h2><p>رمز الغرفة: <b style="color:var(--accent)">${code}</b></p></div>`;
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>جاري دخول الغرفة...</h2>
+                    <p>رمز الغرفة: <b style="color:var(--accent)">${code}</b></p>
+                    <div class="loading-spinner" style="margin: 20px auto;"></div>
+                </div>`;
             try {
                 const success = await updateRoomState();
                 console.log('enterRoom updateRoomState result', success);
                 if (success) {
                     startPolling();
                 } else {
-                    document.getElementById('main-ui').innerHTML = `
-                        <div class="card">
-                            <h2 style="color:var(--error)">عذراً، لم نجد الغرفة</h2>
-                            <p>تأكد من الرمز: ${code}</p>
-                            <button onclick="showOnlineMenu()">العودة للأونلاين</button>
-                        </div>`;
+                    showError(`عذراً، لم نجد الغرفة المطلوبة. يرجى التأكد من أن الرمز (${code}) صحيح ولم يتم إغلاق الغرفة.`, "لم يتم العثور على الغرفة");
                 }
             } catch (e) {
                 console.error("Initial room entry failed:", e);
-                document.getElementById('main-ui').innerHTML = `
-                    <div class="card">
-                        <h2 style="color:var(--error)">فشل الاتصال بالغرفة</h2>
-                        <button onclick="enterRoom('${code}')">إعادة المحاولة</button>
-                        <button style="background:#636e72" onclick="showOnlineMenu()">رجوع</button>
-                    </div>`;
+                showError(e.message || "فشل الاتصال الفوري بالسيرفر للدخول للغرفة. يرجى المحاولة لاحقاً.", "خطأ في الاتصال");
             }
         }
 
