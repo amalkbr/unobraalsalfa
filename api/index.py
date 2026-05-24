@@ -359,16 +359,16 @@ async def create_room(data: dict):
                 raise Exception("تعذر إنشاء رمز غرفة فريد. حاول مرة أخرى.")
 
             cur.execute("""
-                INSERT INTO rooms (room_code, host_id, status, category, win_limit)
-                VALUES (%s, %s, 'waiting', 'أكلات', 10)
-            """, (room_code, user_id))
+                INSERT INTO rooms (room_code, room_id, host_id, creator_id, status, category, win_limit)
+                VALUES (%s, %s, %s, %s, 'waiting', 'أكلات', 10)
+            """, (room_code, room_code, user_id, user_id))
 
             cur.execute("""
-                INSERT INTO room_players (room_code, user_id, player_name, is_ready, join_order, score)
-                VALUES (%s, %s, %s, TRUE, 1, 0)
+                INSERT INTO room_players (room_code, room_id, user_id, player_name, is_ready, join_order, score)
+                VALUES (%s, %s, %s, %s, TRUE, 1, 0)
                 ON CONFLICT (room_code, user_id) DO UPDATE
                 SET is_ready = TRUE, join_order = 1, player_name = EXCLUDED.player_name
-            """, (room_code, user_id, player_name))
+            """, (room_code, room_code, user_id, player_name))
 
             conn.commit()
         return {"success": True, "room_code": room_code}
