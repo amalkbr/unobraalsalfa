@@ -835,48 +835,27 @@ HTML_TEMPLATE = """
         };
 
         function init() {
-            try {
-                fetchSettings();
-                // Check for /join/CODE path
-                const pathParts = window.location.pathname.split('/');
-                let joinCode = null;
-                if (pathParts[1] === 'join' && pathParts[2]) {
-                    joinCode = pathParts[2];
-                    window.history.replaceState({}, document.title, "/");
-                }
-
-                // Also check for ?join=CODE param
-                const urlParams = new URLSearchParams(window.location.search);
-                if (!joinCode) joinCode = urlParams.get('join');
-
-                if (joinCode) {
-                    if (!urlParams.get('join')) window.history.replaceState({}, document.title, window.location.pathname);
-                    localStorage.setItem('pendingJoin', joinCode);
-                }
-
-                if (currentUser) {
-                    showMenu(false);
-                    history.replaceState({ screen: 'menu' }, "");
-                } else {
-                    showAuth();
-                }
-
-                updateSidebar();
-                // Run prefetch in background
-                setTimeout(prefetchCategories, 500);
-
-                if (currentUser && localStorage.getItem('pendingJoin')) {
-                    const code = localStorage.getItem('pendingJoin');
-                    localStorage.removeItem('pendingJoin');
-                    joinRoomByCode(code);
-                }
-            } catch (err) {
-                console.error("Initialization error:", err);
-                // Fallback if something fails
-                if (document.getElementById('main-ui')) {
-                    showAuth();
-                }
+            console.log("Initializing App...");
+            // رندرة الواجهة فوراً بناءً على حالة المستخدم
+            if (currentUser) {
+                showMenu(false);
+            } else {
+                showAuth();
             }
+
+            // تنفيذ العمليات الجانبية بعد الرندرة لضمان عدم التعليق
+            setTimeout(() => {
+                fetchSettings();
+                updateSidebar();
+                prefetchCategories();
+
+                const urlParams = new URLSearchParams(window.location.search);
+                const joinCode = urlParams.get('join') || localStorage.getItem('pendingJoin');
+                if (joinCode && currentUser) {
+                    localStorage.removeItem('pendingJoin');
+                    joinRoomByCode(joinCode);
+                }
+            }, 100);
         }
 
         function showAuth() {
@@ -908,10 +887,14 @@ HTML_TEMPLATE = """
         function showMenu(push = true) {
             if(timerInterval) clearInterval(timerInterval);
             if(push) history.pushState({screen: 'menu'}, "");
-            if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'none';
+            const exitBtn = document.getElementById('global-exit-btn');
+            if(exitBtn) exitBtn.style.display = 'none';
             game = null;
-            totalScores = {}; // ريست للنقاط عند العودة للقائمة
-            document.getElementById('main-ui').innerHTML = `
+            totalScores = {};
+            const mainUi = document.getElementById('main-ui');
+            if(!mainUi) return;
+
+            mainUi.innerHTML = `
                 <div class="card">
                     <h1>ابدأ اللعب</h1>
                     <button onclick="navigateTo('online_menu')">🌐 أونلاين</button>
