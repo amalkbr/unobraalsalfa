@@ -2330,10 +2330,10 @@ HTML_TEMPLATE = """
         function logout() { localStorage.clear(); location.href = "/"; }
 
         const sounds = {
-            click: new Audio('https://www.soundjay.com/buttons/sounds/button-16.mp3'),
-            reveal: new Audio('https://www.soundjay.com/buttons/sounds/button-3.mp3'),
-            win: new Audio('https://www.soundjay.com/misc/sounds/bell-ringing-05.mp3'),
-            fail: new Audio('https://www.soundjay.com/misc/sounds/fail-trombone-01.mp3')
+            click: new Audio('https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/click.mp3'),
+            reveal: new Audio('https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/level-up.mp3'),
+            win: new Audio('https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/success.mp3'),
+            fail: new Audio('https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/wrong.mp3')
         };
         function playSound(name) { sounds[name].currentTime = 0; sounds[name].play().catch(()=>null); }
 
