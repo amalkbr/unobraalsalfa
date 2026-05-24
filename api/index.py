@@ -1458,22 +1458,18 @@ HTML_TEMPLATE = """
             if (!Array.isArray(cats)) return;
             getCachedCategoryThumbnails().then(thumbs => {
                 cats.forEach(cat => {
-                    if (!cat.image_url || thumbs[cat.name]) return;
+                    if (!cat.image_url || (thumbs && thumbs[cat.name])) return;
                     const img = new Image();
-                    img.crossOrigin = 'Anonymous';
+                    // Removed Anonymous to prevent CORS issues
                     img.src = cat.image_url;
                     img.onload = () => createThumbnailFromImage(img, cat.name);
-                    img.onerror = () => { /* ignore */ };
                 });
             }).catch(() => {
-                // fallback: still attempt to generate thumbnails without cache check
                 cats.forEach(cat => {
                     if (!cat.image_url) return;
                     const img = new Image();
-                    img.crossOrigin = 'Anonymous';
                     img.src = cat.image_url;
                     img.onload = () => createThumbnailFromImage(img, cat.name);
-                    img.onerror = () => { /* ignore */ };
                 });
             });
         }
@@ -1545,7 +1541,7 @@ HTML_TEMPLATE = """
                     ${c.image_url ? `
                         <div class="cat-image-wrapper">
                             <div class="image-placeholder">⌛</div>
-                            <img src="${thumbnail || c.image_url}" alt="${c.name}" loading="lazy" ${thumbnail ? '' : 'crossorigin="anonymous"'}>
+                            <img src="${thumbnail || c.image_url}" alt="${c.name}">
                         </div>` : '<div class="no-img">؟</div>'}
                     <span>${c.name}</span>
                 </div>`;
@@ -1587,21 +1583,16 @@ HTML_TEMPLATE = """
             }
         }
 
-        async function loadCategoryImages() {
-            const thumbs = await getCachedCategoryThumbnails();
+        function loadCategoryImages() {
             document.querySelectorAll('.cat-image-wrapper img').forEach(img => {
                 const wrapper = img.closest('.cat-image-wrapper');
-                img.onload = () => {
-                    img.style.opacity = '1';
-                    if (wrapper) {
-                        const placeholder = wrapper.querySelector('.image-placeholder');
-                        if (placeholder) placeholder.remove();
-                    }
-                    const name = img.closest('.cat-card')?.dataset.catName;
-                    if (name && !thumbs[name] && img.src && !img.src.startsWith('data:')) {
-                        createThumbnailFromImage(img, name);
-                    }
-                };
+
+                if (img.complete) {
+                    showImg(img, wrapper);
+                } else {
+                    img.onload = () => showImg(img, wrapper);
+                }
+
                 img.onerror = () => {
                     if (wrapper) {
                         const placeholder = wrapper.querySelector('.image-placeholder');
@@ -1609,6 +1600,23 @@ HTML_TEMPLATE = """
                     }
                 };
             });
+        }
+
+        function showImg(img, wrapper) {
+            img.style.opacity = '1';
+            if (wrapper) {
+                const placeholder = wrapper.querySelector('.image-placeholder');
+                if (placeholder) placeholder.remove();
+            }
+            const name = img.closest('.cat-card')?.dataset.catName;
+            if (name && img.src && !img.src.startsWith('data:')) {
+                // جلب الكاش بشكل غير متزامن دون تعطيل العرض
+                getCachedCategoryThumbnails().then(thumbs => {
+                    if (thumbs && !thumbs[name]) {
+                        createThumbnailFromImage(img, name);
+                    }
+                }).catch(() => null);
+            }
         }
 
         function startGameFinal(btn) {

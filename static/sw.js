@@ -1,5 +1,5 @@
-const CACHE_NAME = 'alsalfa-v1';
-const DYNAMIC_CACHE = 'alsalfa-dynamic-v1';
+const CACHE_NAME = 'alsalfa-v2';
+const DYNAMIC_CACHE = 'alsalfa-dynamic-v2';
 const ASSETS = [
   '/',
   '/manifest.json',
@@ -10,12 +10,12 @@ const ASSETS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      // Use individual additions to prevent one failure from blocking everything
       return Promise.allSettled(
-        ASSETS.map(asset => cache.add(asset).catch(err => console.warn(`Failed to cache asset: ${asset}`, err)))
+        ASSETS.map(asset => cache.add(asset).catch(() => null))
       );
     })
   );
+  self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
@@ -27,6 +27,7 @@ self.addEventListener('activate', (event) => {
       );
     })
   );
+  self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {
@@ -35,7 +36,7 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
 
-  // Static Assets Cache First
+  // 1. Static Assets: Cache First
   if (ASSETS.some(asset => request.url.endsWith(asset))) {
     event.respondWith(
       caches.match(request).then(cached => cached || fetch(request))
@@ -43,32 +44,32 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  const shouldCacheImages = request.destination === 'image';
-  const shouldCacheApi = url.origin === self.location.origin && (
-    url.pathname === '/api/categories' ||
-    url.pathname.startsWith('/api/')
-  );
-
-  const shouldCacheDynamically = shouldCacheImages || shouldCacheApi;
-
-  if (shouldCacheDynamically) {
+  // 2. Images: Network First, then Cache (to ensure they show up immediately)
+  if (request.destination === 'image') {
     event.respondWith(
-      caches.match(request).then((cachedResponse) => {
-        const networkFetch = fetch(request).then((networkResponse) => {
+      fetch(request)
+        .then(networkResponse => {
           if (networkResponse && networkResponse.status === 200) {
-            const responseClone = networkResponse.clone();
-            caches.open(DYNAMIC_CACHE).then((cache) => cache.put(request, responseClone));
+            const cacheCopy = networkResponse.clone();
+            caches.open(DYNAMIC_CACHE).then(cache => cache.put(request, cacheCopy));
           }
           return networkResponse;
-        }).catch(() => null);
-
-        return cachedResponse || networkFetch;
-      })
+        })
+        .catch(() => caches.match(request))
     );
     return;
   }
 
+  // 3. API & Others: Network with Cache Fallback
   event.respondWith(
-    caches.match(request).then((response) => response || fetch(request))
+    fetch(request)
+      .then(networkResponse => {
+        if (networkResponse && networkResponse.status === 200 && url.pathname.startsWith('/api/')) {
+          const cacheCopy = networkResponse.clone();
+          caches.open(DYNAMIC_CACHE).then(cache => cache.put(request, cacheCopy));
+        }
+        return networkResponse;
+      })
+      .catch(() => caches.match(request))
   );
 });
