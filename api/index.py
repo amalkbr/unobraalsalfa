@@ -612,31 +612,24 @@ async def prepare_round(room_code):
             if len(active_players) < 3:
                  active_players = players
 
-            q_seq = []
-            n = len(active_players)
-            for i in range(n):
-                asker = active_players[i]
-                answerer = active_players[(i+1)%n]
-                q_seq.append({"asker_id": asker['user_id'], "asker_name": asker['player_name'],
-                              "ans_id": answerer['user_id'], "ans_name": answerer['player_name'],
-                              "status": "pending"})
-
-            other = [w for w in words if w != correct]
-            guesses = random.sample(other, min(len(other), 6)) + [correct]
-            random.shuffle(guesses)
+            # Initial asker is the first active player
+            current_asker = active_players[0]
 
             game_data = {
                 "word": correct,
                 "spy_id": spy_id,
-                "q_seq": q_seq,
-                "q_idx": 0,
+                "q_seq": [], # Will store history of questions
+                "current_asker_id": current_asker['user_id'],
+                "current_asker_name": current_asker['player_name'],
+                "ready_to_vote": [], # List of user_ids who clicked "Vote"
+                "current_q": None, # Ongoing question {ans_id, ans_name, question, answer, status}
                 "guesses": guesses,
                 "messages": [],
                 "phase_start": time.time(),
                 "phase_timeout": 0
             }
 
-            cur.execute("UPDATE rooms SET status = 'playing_roles', secret_word = %s, spy_id = %s, game_data = %s WHERE room_code = %s",
+            cur.execute("UPDATE rooms SET status = 'playing_questions', secret_word = %s, spy_id = %s, game_data = %s WHERE room_code = %s",
                         (correct, spy_id, json.dumps(game_data), room_code))
             conn.commit()
     finally: conn.close()
@@ -941,20 +934,61 @@ async def online_action(data: dict):
                     cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
                 conn.commit()
 
+            elif action == "choose_target":
+                target_id = int(data['target_id'])
+                target_name = data['target_name']
+                if game_data.get('current_asker_id') == user_id and not game_data.get('current_q'):
+                    game_data['current_q'] = {
+                        "asker_id": user_id, "asker_name": game_data['current_asker_name'],
+                        "ans_id": target_id, "ans_name": target_name,
+                        "status": "asking", "question": "", "answer": ""
+                    }
+                    game_data['phase_start'] = time.time()
+                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                conn.commit()
+
+            elif action == "toggle_vote_ready":
+                if 'ready_to_vote' not in game_data: game_data['ready_to_vote'] = []
+                if user_id not in game_data['ready_to_vote']:
+                    game_data['ready_to_vote'].append(user_id)
+
+                # Check if everyone is ready to vote
+                cur.execute("SELECT user_id FROM room_players WHERE room_code = %s AND red_card = FALSE", (room_code,))
+                active_ids = [p['user_id'] for p in cur.fetchall()]
+
+                all_ready = True
+                for aid in active_ids:
+                    if aid not in game_data['ready_to_vote']:
+                        all_ready = False; break
+
+                if all_ready:
+                    game_data['phase_start'] = time.time()
+                    cur.execute("UPDATE rooms SET status = 'voting_spy', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                else:
+                    # If it was my turn to ask, pass it randomly
+                    if game_data.get('current_asker_id') == user_id and not game_data.get('current_q'):
+                        others = [aid for aid in active_ids if aid not in game_data['ready_to_vote']]
+                        if others:
+                            new_asker_id = random.choice(others)
+                            cur.execute("SELECT player_name FROM room_players WHERE user_id = %s", (new_asker_id,))
+                            game_data['current_asker_id'] = new_asker_id
+                            game_data['current_asker_name'] = cur.fetchone()['player_name']
+
+                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                conn.commit()
+
             elif action == "submit_question":
                 # Check if red carded
                 cur.execute("SELECT red_card FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
                 res = cur.fetchone()
                 if res and res['red_card']: return {"success": False, "msg": "أنت مستبعد (كرت أحمر)"}
 
-                q_idx = game_data.get('q_idx', 0)
-                if q_idx < len(game_data['q_seq']):
-                    curr_q = game_data['q_seq'][q_idx]
-                    if curr_q['asker_id'] == user_id and curr_q['status'] in ['pending', 'asking']:
-                        curr_q['question'] = data['text']
-                        curr_q['status'] = 'answering'
-                        game_data['phase_start'] = time.time()
-                        cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                curr_q = game_data.get('current_q')
+                if curr_q and curr_q['asker_id'] == user_id and curr_q['status'] == 'asking':
+                    curr_q['question'] = data['text']
+                    curr_q['status'] = 'answering'
+                    game_data['phase_start'] = time.time()
+                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
                 conn.commit()
 
             elif action == "submit_answer":
@@ -963,21 +997,40 @@ async def online_action(data: dict):
                 res = cur.fetchone()
                 if res and res['red_card']: return {"success": False, "msg": "أنت مستبعد (كرت أحمر)"}
 
-                q_idx = game_data.get('q_idx', 0)
-                if q_idx < len(game_data['q_seq']):
-                    curr_q = game_data['q_seq'][q_idx]
-                    if curr_q['ans_id'] == user_id and curr_q['status'] == 'answering':
-                        curr_q['answer'] = data['text']
-                        curr_q['status'] = 'done'
-                        game_data['q_idx'] += 1
-                        game_data['phase_start'] = time.time()
+                curr_q = game_data.get('current_q')
+                if curr_q and curr_q['ans_id'] == user_id and curr_q['status'] == 'answering':
+                    curr_q['answer'] = data['text']
+                    curr_q['status'] = 'done'
 
-                        if game_data['q_idx'] >= len(game_data['q_seq']):
+                    # Add to history
+                    if 'q_seq' not in game_data: game_data['q_seq'] = []
+                    game_data['q_seq'].append(curr_q)
+
+                    # Next asker is the one who just answered
+                    next_asker_id = curr_q['ans_id']
+                    next_asker_name = curr_q['ans_name']
+                    game_data['current_q'] = None
+
+                    # If the next asker already opted to vote, pick a random person who hasn't
+                    if next_asker_id in game_data.get('ready_to_vote', []):
+                        cur.execute("SELECT user_id, player_name FROM room_players WHERE room_code = %s AND red_card = FALSE", (room_code,))
+                        active_players = cur.fetchall()
+                        others = [p for p in active_players if p['user_id'] not in game_data['ready_to_vote']]
+                        if others:
+                            chosen = random.choice(others)
+                            next_asker_id = chosen['user_id']
+                            next_asker_name = chosen['player_name']
+                        else:
+                            # Everyone wants to vote
                             game_data['phase_start'] = time.time()
-                            cur.execute("UPDATE rooms SET status = 'voting_spy' WHERE room_code = %s", (room_code,))
-                            cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
+                            cur.execute("UPDATE rooms SET status = 'voting_spy', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                            conn.commit()
+                            return {"success": True}
 
-                        cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                    game_data['current_asker_id'] = next_asker_id
+                    game_data['current_asker_name'] = next_asker_name
+                    game_data['phase_start'] = time.time()
+                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
                 conn.commit()
 
             elif action == "vote":
@@ -2374,146 +2427,129 @@ HTML_TEMPLATE = """
             if(!window.roomData || !window.roomData.room.game_data) return;
             const {room, players} = window.roomData;
             const gameData = room.game_data;
-            const q_idx = gameData.q_idx || 0;
-            const q_seq = gameData.q_seq || [];
-            if(q_idx >= q_seq.length) return;
-            const q = q_seq[q_idx];
-
-            const isAsker = q.asker_id == currentUser.user_id;
-            const isAnswerer = q.ans_id == currentUser.user_id;
+            const currentQ = gameData.current_q;
+            const isMyTurn = gameData.current_asker_id == currentUser.user_id && !currentQ;
+            const isAsker = currentQ && currentQ.asker_id == currentUser.user_id;
+            const isAnswerer = currentQ && currentQ.ans_id == currentUser.user_id;
+            const readyToVote = gameData.ready_to_vote || [];
+            const hasOptedToVote = readyToVote.includes(currentUser.user_id);
+            const timeLeft = room.time_left ?? 0;
             const me = players.find(p => p.user_id == currentUser.user_id);
 
-            const timeLeft = room.time_left ?? 0;
-            const stateKey = `${q_idx}_${q.status}_${me.red_card ? 'red' : 'active'}`;
-
-            // Check if we need to full-render or just partial update
+            const stateKey = `${gameData.current_asker_id}_${currentQ ? currentQ.status : 'idle'}_${readyToVote.length}_${me.red_card?'red':'ok'}`;
             const questionsCard = document.getElementById('questions-card');
 
-            // Build chat bubbles HTML
+            // Build chat history
             let chatHtml = "";
-            q_seq.forEach((item, idx) => {
-                if (item.status === 'done') {
+            (gameData.q_seq || []).forEach(item => {
+                chatHtml += `
+                    <div class="chat-message-group">
+                        <div class="chat-bubble bubble-asker">
+                            <div class="bubble-sender">🙋‍♂️ ${item.asker_name}:</div>
+                            <div class="bubble-content">${escapeHtml(item.question)}</div>
+                        </div>
+                        <div class="chat-bubble bubble-answerer">
+                            <div class="bubble-sender">💬 ${item.ans_name}:</div>
+                            <div class="bubble-content">${escapeHtml(item.answer)}</div>
+                        </div>
+                    </div>`;
+            });
+            if (currentQ) {
+                if (currentQ.status === 'asking') {
+                    chatHtml += `<div class="chat-message-group"><div class="chat-bubble bubble-typing"><div class="bubble-sender">🙋‍♂️ ${currentQ.asker_name}:</div><div class="bubble-content">جاري كتابة السؤال... <span class="typing-dots"></span></div></div></div>`;
+                } else if (currentQ.status === 'answering') {
                     chatHtml += `
                         <div class="chat-message-group">
-                            <div class="chat-bubble bubble-asker">
-                                <div class="bubble-sender">🙋‍♂️ ${item.asker_name}:</div>
-                                <div class="bubble-content">${escapeHtml(item.question)}</div>
-                            </div>
-                            <div class="chat-bubble bubble-answerer">
-                                <div class="bubble-sender">💬 ${item.ans_name}:</div>
-                                <div class="bubble-content">${escapeHtml(item.answer)}</div>
-                            </div>
+                            <div class="chat-bubble bubble-asker"><div class="bubble-sender">🙋‍♂️ ${currentQ.asker_name}:</div><div class="bubble-content">${escapeHtml(currentQ.question)}</div></div>
+                            <div class="chat-bubble bubble-typing"><div class="bubble-sender">💬 ${currentQ.ans_name}:</div><div class="bubble-content">جاري كتابة الإجابة... <span class="typing-dots"></span></div></div>
                         </div>`;
-                } else if (idx === q_idx) {
-                    if (item.status === 'answering') {
-                        chatHtml += `
-                            <div class="chat-message-group">
-                                <div class="chat-bubble bubble-asker">
-                                    <div class="bubble-sender">🙋‍♂️ ${item.asker_name}:</div>
-                                    <div class="bubble-content">${escapeHtml(item.question)}</div>
-                                </div>
-                                <div class="chat-bubble bubble-typing">
-                                    <div class="bubble-sender">💬 ${item.ans_name}:</div>
-                                    <div class="bubble-content">جاري كتابة الإجابة... <span class="typing-dots"></span></div>
-                                </div>
-                            </div>`;
-                    } else if (item.status === 'pending' || item.status === 'asking') {
-                        chatHtml += `
-                            <div class="chat-message-group">
-                                <div class="chat-bubble bubble-typing">
-                                    <div class="bubble-sender">🙋‍♂️ ${item.asker_name}:</div>
-                                    <div class="bubble-content">جاري كتابة السؤال... <span class="typing-dots"></span></div>
-                                </div>
-                            </div>`;
-                    }
                 }
-            });
+            }
 
             if (questionsCard && questionsCard.getAttribute('data-state-key') === stateKey) {
-                // PARTIAL UPDATE: Just update the chat scroll area if content changed
                 const scrollArea = document.getElementById('qa-chat-scroll');
                 if (scrollArea && scrollArea.getAttribute('data-content-hash') !== chatHtml.length.toString()) {
-                    scrollArea.innerHTML = chatHtml || '<p style="text-align:center; color:#9aa0b4; margin-top:20px;">لا توجد أسئلة سابقة بعد. الجولة تبدأ الآن!</p>';
+                    scrollArea.innerHTML = chatHtml || '<p style="text-align:center; color:#9aa0b4; margin-top:20px;">الكل بانتظار السؤال الأول!</p>';
                     scrollArea.setAttribute('data-content-hash', chatHtml.length.toString());
                     scrollArea.scrollTop = scrollArea.scrollHeight;
                 }
-                // Update timer
                 const timerElem = document.getElementById('questions-timer');
-                if (timerElem) {
-                   // We trust the local countdown but sync with server if drift is large
-                   const localVal = parseInt(timerElem.getAttribute('data-val') || "0");
-                   if (Math.abs(localVal - timeLeft) > 2) {
-                       startOnlineCountdown(timeLeft, 'questions-timer', (t) => `⏱️ الوقت المتبقي: ${t} ثانية`);
-                   }
+                if (timerElem && Math.abs(parseInt(timerElem.getAttribute('data-val') || "0") - timeLeft) > 2) {
+                    startOnlineCountdown(timeLeft, 'questions-timer', (t) => `⏱️ ${t} ثانية`);
                 }
                 return;
             }
 
-            // FULL RENDER (State changed)
             let inputHtml = "";
             if (me.red_card) {
-                inputHtml = `<div class="qa-typing-status" style="color:var(--error); font-weight:bold;">❌ أنت مستبعد من هذه الجولة (كرت أحمر)</div>`;
-            } else if (q.status === 'pending' || q.status === 'asking') {
-                if (isAsker) {
-                    inputHtml = `
-                        <div style="display: flex; gap: 8px;">
-                            <input id="online_q_input" placeholder="اكتب سؤالك لـ ${q.ans_name}..." style="margin: 0; flex-grow: 1;">
-                            <button onclick="submitOnlineQuestion()" style="margin: 0; width: auto; padding: 12px 20px;">إرسال 🚀</button>
-                        </div>`;
-                } else {
-                    inputHtml = `<div class="qa-typing-status">⏳ بانتظار <b style="color:var(--accent)">${q.asker_name}</b> ليكتب السؤال...</div>`;
-                }
-            } else if (q.status === 'answering') {
-                if (isAnswerer) {
-                    inputHtml = `
-                        <div style="display: flex; gap: 8px;">
-                            <input id="online_a_input" placeholder="اكتب إجابتك هنا..." style="margin: 0; flex-grow: 1;">
-                            <button onclick="submitOnlineAnswer()" style="margin: 0; width: auto; padding: 12px 20px;">إرسال 🚀</button>
-                        </div>`;
-                } else {
-                    inputHtml = `<div class="qa-typing-status">⏳ بانتظار <b style="color:var(--accent)">${q.ans_name}</b> ليرد على السؤال...</div>`;
-                }
+                inputHtml = `<div class="qa-typing-status" style="color:var(--error); font-weight:bold;">❌ أنت مستبعد من هذه الجولة</div>`;
+            } else if (isMyTurn) {
+                inputHtml = `
+                    <div style="background:rgba(0,0,0,0.2); padding:10px; border-radius:15px; width:100%;">
+                        <p style="margin:0 0 10px 0; font-size:14px; text-align:center;">إنه دورك! اختر من تسأل:</p>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+                            ${players.filter(p => p.user_id != currentUser.user_id && !p.red_card).map(p => `
+                                <button class="vote-item" style="margin:0; padding:8px; font-size:12px;" onclick="onlineAction('choose_target', {target_id: ${p.user_id}, target_name: '${p.player_name.replace(/'/g, "\\'")}'})">
+                                    ${p.player_name}
+                                </button>
+                            `).join('')}
+                        </div>
+                    </div>`;
+            } else if (isAsker && currentQ.status === 'asking') {
+                inputHtml = `
+                    <div style="display: flex; gap: 8px; width:100%;">
+                        <input id="online_q_input" placeholder="اكتب سؤالك لـ ${currentQ.ans_name}..." style="margin: 0; flex-grow: 1;">
+                        <button onclick="submitOnlineQuestion()" style="margin: 0; width: auto; padding: 12px 20px;">إرسال 🚀</button>
+                    </div>`;
+            } else if (isAnswerer && currentQ.status === 'answering') {
+                inputHtml = `
+                    <div style="display: flex; gap: 8px; width:100%;">
+                        <input id="online_a_input" placeholder="اكتب إجابتك هنا..." style="margin: 0; flex-grow: 1;">
+                        <button onclick="submitOnlineAnswer()" style="margin: 0; width: auto; padding: 12px 20px;">إرسال 🚀</button>
+                    </div>`;
+            } else {
+                const waiter = currentQ ? (currentQ.status === 'asking' ? currentQ.asker_name : currentQ.ans_name) : gameData.current_asker_name;
+                inputHtml = `<div class="qa-typing-status">⏳ بانتظار <b style="color:var(--accent)">${waiter}</b>...</div>`;
             }
+
+            const activeCount = players.filter(p=>!p.red_card).length;
+            const voteButtonHtml = hasOptedToVote ?
+                `<button disabled style="background:#3c339e; opacity:0.6; padding:15px;">✅ طلبت التصويت (${readyToVote.length}/${activeCount})</button>` :
+                `<button onclick="onlineAction('toggle_vote_ready')" style="background:var(--accent); padding:15px;">🗳️ إنهاء الأسئلة وبدء التصويت</button>`;
 
             let fullHtml = `
                 <div class="qa-chat-layout">
-                    <!-- Header -->
                     <div class="qa-chat-header-main">
-                        <h2>💬 مرحلة الأسئلة والدردشة</h2>
-                        <div class="qa-current-turn">
-                            <span style="color: var(--primary); font-weight: bold;">${q.asker_name}</span> 
-                            👈 
-                            <span style="color: var(--error); font-weight: bold;">${q.ans_name}</span>
-                        </div>
+                        <h2>💬 جولة الأسئلة الحرة</h2>
+                        ${currentQ ? `
+                            <div class="qa-current-turn">
+                                <span style="color: var(--primary); font-weight: bold;">${currentQ.asker_name}</span>
+                                👈
+                                <span style="color: var(--error); font-weight: bold;">${currentQ.ans_name}</span>
+                            </div>` : `<p style="font-size:13px; color:#9aa0b4;">بانتظار ${gameData.current_asker_name} ليختار هدفاً</p>`
+                        }
                     </div>
-                    
-                    <!-- Chat Scroll -->
                     <div class="qa-chat-scroll-area" id="qa-chat-scroll" data-content-hash="${chatHtml.length}">
-                        ${chatHtml || '<p style="text-align:center; color:#9aa0b4; margin-top:20px;">لا توجد أسئلة سابقة بعد. الجولة تبدأ الآن!</p>'}
+                        ${chatHtml || '<p style="text-align:center; color:#9aa0b4; margin-top:20px;">ابدأوا الأسئلة! كشف الجاسوس يبدأ من هنا.</p>'}
                     </div>
-                    
-                    <!-- Footer Input Area -->
                     <div class="qa-chat-footer-input">
-                        <div id="questions-timer" class="qa-timer-badge">⏱️ الوقت المتبقي: ${timeLeft} ثانية</div>
-                        <div class="qa-input-box-wrapper">
+                        <div id="questions-timer" class="qa-timer-badge">⏱️ ${timeLeft} ثانية</div>
+                        <div class="qa-input-box-wrapper" style="flex-direction:column; gap:10px;">
                             ${inputHtml}
+                            <div style="width:100%; border-top:1px solid rgba(255,255,255,0.05); padding-top:10px;">
+                                ${voteButtonHtml}
+                            </div>
                         </div>
                     </div>
                 </div>
             `;
 
             updateMainUI(`<div class="card" id="questions-card" data-state-key="${stateKey}" style="padding: 15px; border-radius: 20px;">${fullHtml}</div>`);
-            
-            // Auto scroll to bottom
             setTimeout(() => {
                 const scrollArea = document.getElementById('qa-chat-scroll');
-                if (scrollArea) {
-                    scrollArea.scrollTop = scrollArea.scrollHeight;
-                }
+                if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight;
             }, 50);
-
-            // Start countdown
-            startOnlineCountdown(timeLeft, 'questions-timer', (t) => `⏱️ الوقت المتبقي: ${t} ثانية`);
+            startOnlineCountdown(timeLeft, 'questions-timer', (t) => `⏱️ ${t} ثانية`);
         }
 
         async function submitOnlineQuestion() {
