@@ -77,24 +77,13 @@ def init_db():
                     id SERIAL PRIMARY KEY,
                     name TEXT UNIQUE,
                     image_url TEXT,
-                    display_order INTEGER DEFAULT 0,
-                    added_by TEXT
+                    display_order INTEGER DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS words (
                     id SERIAL PRIMARY KEY,
                     category TEXT REFERENCES categories(name) ON DELETE CASCADE,
                     word TEXT
                 );
-                CREATE TABLE IF NOT EXISTS category_suggestions (
-                    id SERIAL PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    image_url TEXT,
-                    words TEXT NOT NULL,
-                    user_name TEXT,
-                    status TEXT DEFAULT 'pending',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                ALTER TABLE categories ADD COLUMN IF NOT EXISTS added_by TEXT;
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
                     value TEXT
@@ -464,73 +453,7 @@ async def add_word(data: dict):
     if not conn: return {"success": False}
     try:
         with conn.cursor() as cur:
-            words_raw = data['word']
-            # دعم الإضافة الجماعية عبر تقسيم النص بأسطر
-            words_list = [w.strip() for w in words_raw.split('\n') if w.strip()]
-            for word in words_list:
-                cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (data['category'], word))
-            conn.commit()
-        return {"success": True}
-    finally: conn.close()
-
-@app.get("/api/admin/suggestions")
-async def get_suggestions():
-    conn = get_db_conn()
-    if not conn: return []
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM category_suggestions WHERE status = 'pending' ORDER BY created_at DESC")
-            return cur.fetchall()
-    finally: conn.close()
-
-@app.post("/api/admin/suggestion/approve")
-async def approve_suggestion(data: dict):
-    conn = get_db_conn()
-    try:
-        with conn.cursor() as cur:
-            # جلب بيانات الاقتراح
-            cur.execute("SELECT * FROM category_suggestions WHERE id = %s", (data['id'],))
-            sug = cur.fetchone()
-            if not sug: return {"success": False, "error": "Suggestion not found"}
-
-            # إضافة الفئة
-            cur.execute("INSERT INTO categories (name, image_url, added_by) VALUES (%s, %s, %s) ON CONFLICT (name) DO UPDATE SET image_url = EXCLUDED.image_url, added_by = EXCLUDED.added_by RETURNING name",
-                        (sug[1], sug[2], sug[4]))
-            cat_name = cur.fetchone()[0]
-
-            # إضافة الكلمات
-            words_list = [w.strip() for w in sug[3].split('\n') if w.strip()]
-            for word in words_list:
-                cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (cat_name, word))
-
-            # تحديث حالة الاقتراح
-            cur.execute("UPDATE category_suggestions SET status = 'approved' WHERE id = %s", (data['id'],))
-            conn.commit()
-        return {"success": True}
-    finally: conn.close()
-
-@app.post("/api/admin/suggestion/reject")
-async def reject_suggestion(data: dict):
-    conn = get_db_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE category_suggestions SET status = 'rejected' WHERE id = %s", (data['id'],))
-            conn.commit()
-        return {"success": True}
-    finally: conn.close()
-
-@app.post("/api/user/suggest_category")
-async def suggest_category(data: dict):
-    conn = get_db_conn()
-    try:
-        with conn.cursor() as cur:
-            # التأكد من عدم وجود الفئة مسبقاً
-            cur.execute("SELECT name FROM categories WHERE LOWER(name) = LOWER(%s)", (data['name'].strip(),))
-            if cur.fetchone():
-                return {"success": False, "error": "هذه الفئة موجودة بالفعل في اللعبة!"}
-
-            cur.execute("INSERT INTO category_suggestions (name, image_url, words, user_name) VALUES (%s, %s, %s, %s)",
-                        (data['name'], data.get('image_url'), data['words'], data.get('user_name')))
+            cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (data['category'], data['word']))
             conn.commit()
         return {"success": True}
     finally: conn.close()
@@ -698,19 +621,14 @@ HTML_TEMPLATE = """
         :root { --primary: #6c5ce7; --bg: #0f0c29; --card: #1b1464; --accent: #f9ca24; --error: #eb4d4b; --success: #2ecc71; }
         body { font-family: 'Cairo', sans-serif; background: var(--bg); color: white; margin: 0; min-height: 100vh; }
         .flex-center { display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction: column; }
-        .container { width: 100%; max-width: 600px; text-align: center; padding: 15px; box-sizing: border-box; }
-        .card { background: var(--card); padding: 30px; border-radius: 30px; box-shadow: 0 15px 35px rgba(0,0,0,0.6); border: 2px solid #3c339e; animation: fadeIn 0.3s ease; width: 100%; box-sizing: border-box; }
-        @media (max-width: 500px) {
-            .card { background: transparent; border: none; box-shadow: none; padding: 15px; }
-            .container { padding: 5px; }
-            .cat-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 15px !important; }
-        }
+        .container { width: 95%; max-width: 500px; text-align: center; padding: 20px; box-sizing: border-box; }
+        .card { background: var(--card); padding: 30px; border-radius: 30px; box-shadow: 0 15px 35px rgba(0,0,0,0.6); border: 2px solid #3c339e; animation: fadeIn 0.3s ease; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         .reveal-text { animation: pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
         @keyframes pop { 0% { transform: scale(0.5); } 100% { transform: scale(1); } }
         h1 { font-weight: 900; color: #a29bfe; margin-bottom: 25px; font-size: 32px; }
-        input, select { width: 100%; padding: 15px; margin: 10px 0; border-radius: 15px; border: 2px solid #2f278c; background: #130f40; color: white; font-size: 16px; box-sizing: border-box; outline: none; }
+        input, select { width: 100%; padding: 15px; margin: 10px 0; border-radius: 15px; border: 2px solid #2f278c; background: #0f0c29; color: white; font-size: 16px; box-sizing: border-box; outline: none; }
         button { width: 100%; padding: 16px; margin: 12px 0; border-radius: 18px; border: none; background: linear-gradient(45deg, #6c5ce7, #a29bfe); color: white; font-weight: bold; cursor: pointer; font-size: 18px; transition: 0.3s; }
         button:hover { transform: translateY(-3px); }
         button:disabled { opacity: 0.6; cursor: not-allowed; transform: none !important; }
@@ -727,11 +645,11 @@ HTML_TEMPLATE = """
         .q-badge { background: var(--error); padding: 4px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 15px; display: inline-block; }
         .shuffling { animation: rotate 1s infinite linear; font-size: 50px; margin: 20px; display:inline-block; }
         .score-item { display: flex; justify-content: space-between; background: #0f0c29; padding: 10px 20px; border-radius: 10px; margin: 5px 0; border: 1px solid #3c339e; }
-        .cat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin: 20px 0; max-height: 450px; overflow-y: auto; padding: 10px; }
-        .cat-card { background: #130f40; border-radius: 20px; padding: 12px; cursor: pointer; border: 2px solid transparent; transition: 0.3s; display: flex; flex-direction: column; align-items: center; min-height: 200px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
+        .cat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 20px 0; max-height: 340px; overflow-y: auto; padding: 10px; }
+        .cat-card { background: #130f40; border-radius: 15px; padding: 10px; cursor: pointer; border: 2px solid transparent; transition: 0.3s; display: flex; flex-direction: column; align-items: center; min-height: 170px; }
         .cat-card.placeholder { opacity: 0.7; filter: blur(0.5px); }
-        .cat-card img { width: 100%; height: 150px; object-fit: cover; border-radius: 15px; margin-bottom: 10px; opacity: 0; transition: opacity 0.25s ease-in-out; }
-        .cat-card.selected { border-color: var(--accent); background: #1b1464; box-shadow: 0 0 20px var(--accent); }
+        .cat-card img { width: 100%; height: 120px; object-fit: cover; border-radius: 12px; margin-bottom: 8px; opacity: 0; transition: opacity 0.25s ease-in-out; }
+        .cat-card.selected { border-color: var(--accent); background: #1b1464; box-shadow: 0 0 15px var(--accent); }
         .cat-image-wrapper { position: relative; width: 100%; }
         .image-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #1a1538; border-radius: 12px; color: #9aa0b4; font-size: 18px; pointer-events: none; }
         .win-opt {
@@ -781,28 +699,15 @@ HTML_TEMPLATE = """
     </div>
     <div class="flex-center"><div class="container" id="main-ui"></div></div>
     <script>
-        // ثوابت النظام
-        const THUMB_DB_NAME = 'alsalfa-thumbnails-v1';
-        const THUMB_STORE_NAME = 'thumbnails';
-
-        let currentUser = null;
-        try {
-            const savedUser = localStorage.getItem('user');
-            if (savedUser && savedUser !== "undefined") currentUser = JSON.parse(savedUser);
-        } catch (e) {
-            console.error("User session error", e);
-            localStorage.removeItem('user');
-        }
-
+        let currentUser = JSON.parse(localStorage.getItem('user')) || null;
         let game = null;
         let p_votes = {};
-        let totalScores = {};
+        let totalScores = {}; // نقاط الجلسة
         let winLimit = 1000;
         let questionTimeout = 30;
         let voteTimeout = 10;
         let spyGuessTimeout = 15;
         let timerInterval = null;
-
         const DEFAULT_CATEGORIES = [
             'أكلات', 'حيوانات', 'ملابس', 'كورة', 'سيارات', 'شركات', 'كواكب', 'أجهزة', 'تطبيقات', 'فواكه وخضار', 'شخصيات', 'كارتون', 'مشروبات', 'حلويات', 'مسلسلات', 'انمي', 'كيبوب', 'قيمرز', 'مهن'
         ];
@@ -841,113 +746,78 @@ HTML_TEMPLATE = """
         };
 
         function init() {
-            console.log("App Initializing...");
-            try {
-                const mainUi = document.getElementById('main-ui');
-                if(!mainUi) return;
+            fetchSettings();
+            // Check for /join/CODE path
+            const pathParts = window.location.pathname.split('/');
+            let joinCode = null;
+            if (pathParts[1] === 'join' && pathParts[2]) {
+                joinCode = pathParts[2];
+                window.history.replaceState({}, document.title, "/");
+            }
 
-                // رندرة سريعة جداً للواجهة
-                if (currentUser) {
-                    mainUi.innerHTML = `
-                        <div class="card">
-                            <h1>ابدأ اللعب</h1>
-                            <button onclick="navigateTo('online_menu')">🌐 أونلاين</button>
-                            <button onclick="navigateTo('setup', {step: 2})" style="background:#e056fd">🏠 أوفلاين (مجلس)</button>
-                        </div>`;
-                } else {
-                    showAuth();
-                }
+            // Also check for ?join=CODE param
+            const urlParams = new URLSearchParams(window.location.search);
+            if (!joinCode) joinCode = urlParams.get('join');
 
-                // تنفيذ باقي العمليات في الخلفية
-                setTimeout(() => {
-                    updateSidebar();
-                    fetchSettings().catch(e => console.warn("Settings failed", e));
-                    if(typeof prefetchCategories === 'function') prefetchCategories();
-                }, 100);
+            if (joinCode) {
+                if (!urlParams.get('join')) window.history.replaceState({}, document.title, window.location.pathname);
+                localStorage.setItem('pendingJoin', joinCode);
+            }
 
-            } catch (err) {
-                console.error("Init Critical Error:", err);
-                document.getElementById('main-ui').innerHTML = '<div class="card"><h1>حدث خطأ</h1><button onclick="location.reload()">إعادة تحميل</button></div>';
+            if (currentUser) {
+                showMenu(false);
+                history.replaceState({ screen: 'menu' }, "");
+            } else {
+                showAuth();
+            }
+
+            updateSidebar();
+            prefetchCategories();
+            if (currentUser && localStorage.getItem('pendingJoin')) {
+                const code = localStorage.getItem('pendingJoin');
+                localStorage.removeItem('pendingJoin');
+                joinRoomByCode(code);
             }
         }
 
-        function showMenu(push = true) {
-            console.log("Showing Menu...");
-            if(timerInterval) clearInterval(timerInterval);
-            if(push) history.pushState({screen: 'menu'}, "");
-
-            const exitBtn = document.getElementById('global-exit-btn');
-            if(exitBtn) exitBtn.style.display = 'none';
-
-            game = null;
-            totalScores = {};
-
-            const mainUi = document.getElementById('main-ui');
-            if(!mainUi) return;
-
-            mainUi.innerHTML = `
-                <div class="card">
-                    <h1>ابدأ اللعب</h1>
-                    <button onclick="navigateTo('online_menu')">🌐 أونلاين</button>
-                    <button onclick="navigateTo('setup', {step: 2})" style="background:#e056fd">🏠 أوفلاين (مجلس)</button>
-                </div>`;
-        }
-
         function showAuth() {
-            console.log("Showing Auth...");
-            const mainUi = document.getElementById('main-ui');
-            if(!mainUi) return;
-
-            mainUi.innerHTML = `
+            document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>🕵️ برا السالفة</h1>
-                    <div style="margin-bottom:20px">
-                        <input id="u_name" placeholder="اليوزر نيم" autocomplete="username">
-                        <input id="u_pass" type="password" placeholder="الباسوورد" autocomplete="current-password">
-                        <button onclick="login()">دخول</button>
-                    </div>
+                    <input id="u_name" placeholder="اليوزر نيم">
+                    <input id="u_pass" type="password" placeholder="الباسوورد">
+                    <button onclick="login()">دخول</button>
                     <hr style="border:0; border-top:1px solid #3c339e; margin:20px 0;">
-                    <div>
-                        <input id="r_nick" placeholder="الاسم المستعار (يظهر للجميع)">
-                        <button style="background:#4834d4" onclick="register()">إنشاء حساب</button>
-                    </div>
+                    <input id="r_nick" placeholder="الاسم المستعار (يظهر للجميع)">
+                    <button style="background:#4834d4" onclick="register()">إنشاء حساب</button>
                 </div>`;
         }
 
         async function login() {
-            const u = document.getElementById('u_name').value;
-            const p = document.getElementById('u_pass').value;
-            if(!u || !p) return alert("أدخل اليوزر والباسوورد");
-            try {
-                const res = await fetch('/api/auth/login', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({username: u, password: p})
-                });
-                const d = await res.json();
-                if(d.success) {
-                    localStorage.setItem('user', JSON.stringify(d.user));
-                    currentUser = d.user;
-                    init();
-                } else alert(d.msg);
-            } catch(e) { alert("خطأ في الاتصال"); }
+            const res = await fetch('/api/auth/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u_name.value, password: u_pass.value})});
+            const d = await res.json();
+            if(d.success) { localStorage.setItem('user', JSON.stringify(d.user)); currentUser = d.user; init(); } else alert(d.msg);
         }
 
         async function register() {
-            const u = document.getElementById('u_name').value;
-            const p = document.getElementById('u_pass').value;
-            const n = document.getElementById('r_nick').value;
-            if(!u || !p || !n) return alert("املأ كل الحقول!");
-            try {
-                const res = await fetch('/api/auth/register', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({username: u, password: p, name: n})
-                });
-                const d = await res.json();
-                if(d.success) alert("تم التسجيل! ادخل الآن");
-                else alert(d.msg);
-            } catch(e) { alert("خطأ في الاتصال"); }
+            if(!u_name.value || !u_pass.value || !r_nick.value) return alert("املأ كل الحقول!");
+            const res = await fetch('/api/auth/register', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({username: u_name.value, password: u_pass.value, name: r_nick.value})});
+            const d = await res.json();
+            d.success ? alert("تم التسجيل! ادخل الآن") : alert(d.msg);
+        }
+
+        function showMenu(push = true) {
+            if(timerInterval) clearInterval(timerInterval);
+            if(push) history.pushState({screen: 'menu'}, "");
+            if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'none';
+            game = null;
+            totalScores = {}; // ريست للنقاط عند العودة للقائمة
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h1>ابدأ اللعب</h1>
+                    <button onclick="navigateTo('online_menu')">🌐 أونلاين</button>
+                    <button style="background:#e056fd" onclick="navigateTo('setup', {step: 1})">🏠 أوفلاين (مجلس)</button>
+                </div>`;
         }
 
         // --- Online Logic ---
@@ -1339,7 +1209,20 @@ HTML_TEMPLATE = """
 
         async function showSetup(step, push = true) {
             if(push) history.pushState({screen: 'setup', step}, "");
-            if(step === 2) {
+            if(step === 1) {
+                let savedCount = localStorage.getItem('pCount') || 3;
+                document.getElementById('main-ui').innerHTML = `
+                    <div class="card">
+                        <h2>عدد اللاعبين</h2>
+                        <div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin: 20px 0;">
+                            <button onclick="changePCount(-1)" style="width: 60px; margin:0; background:var(--error); font-size: 24px;">-</button>
+                            <input type="number" id="p_count" value="${savedCount}" min="3" style="text-align: center; width: 100px; margin:0; font-size: 24px; font-weight: bold;">
+                            <button onclick="changePCount(1)" style="width: 60px; margin:0; background:var(--success); font-size: 24px;">+</button>
+                        </div>
+                        <button class="btn-yellow" onclick="saveAndNext(this)">التالي</button>
+                        <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
+                    </div>`;
+            } else if(step === 2) {
                 const targetN = Math.max(3, parseInt(localStorage.getItem('pCount') || 3));
                 let savedPlayers = currentUser.saved_players || [];
 
@@ -1433,6 +1316,8 @@ HTML_TEMPLATE = """
             document.getElementById('selected_cat').value = name;
         }
 
+        const THUMB_DB_NAME = 'alsalfa-thumbnails-v1';
+        const THUMB_STORE_NAME = 'thumbnails';
 
         function getCachedCategories() {
             try {
@@ -1456,46 +1341,68 @@ HTML_TEMPLATE = """
                 const request = indexedDB.open(THUMB_DB_NAME, 1);
                 request.onupgradeneeded = () => {
                     const db = request.result;
-                    if (!db.objectStoreNames.contains(THUMB_STORE_NAME)) db.createObjectStore(THUMB_STORE_NAME);
+                    if (!db.objectStoreNames.contains(THUMB_STORE_NAME)) {
+                        db.createObjectStore(THUMB_STORE_NAME);
+                    }
                 };
                 request.onsuccess = () => resolve(request.result);
                 request.onerror = () => reject(request.error);
             });
         }
 
-        async function getCachedCategoryThumbnails() {
-            if (!('indexedDB' in window)) return JSON.parse(localStorage.getItem('cachedCategoryThumbnails') || '{}');
-            try {
-                const db = await openThumbnailDB();
-                return new Promise((resolve, reject) => {
-                    const tx = db.transaction(THUMB_STORE_NAME, 'readonly');
-                    const store = tx.objectStore(THUMB_STORE_NAME);
-                    const request = store.openCursor();
-                    const result = {};
-                    request.onsuccess = (e) => {
-                        const cursor = e.target.result;
-                        if (cursor) { result[cursor.key] = cursor.value; cursor.continue(); }
-                        else resolve(result);
-                    };
-                    request.onerror = () => reject(request.error);
-                });
-            } catch (err) { return {}; }
+        function getCachedCategoryThumbnails() {
+            if (!('indexedDB' in window)) {
+                try {
+                    return Promise.resolve(JSON.parse(localStorage.getItem('cachedCategoryThumbnails') || '{}'));
+                } catch (err) {
+                    return Promise.resolve({});
+                }
+            }
+            return openThumbnailDB().then(db => new Promise((resolve, reject) => {
+                const tx = db.transaction(THUMB_STORE_NAME, 'readonly');
+                const store = tx.objectStore(THUMB_STORE_NAME);
+                const request = store.openCursor();
+                const result = {};
+                request.onsuccess = (event) => {
+                    const cursor = event.target.result;
+                    if (cursor) {
+                        result[cursor.key] = cursor.value;
+                        cursor.continue();
+                    } else {
+                        resolve(result);
+                    }
+                };
+                request.onerror = () => reject(request.error);
+            })).catch(() => {
+                try {
+                    return JSON.parse(localStorage.getItem('cachedCategoryThumbnails') || '{}');
+                } catch (err) {
+                    return {};
+                }
+            });
         }
 
-        async function saveCachedCategoryThumbnail(name, dataUrl) {
+        function saveCachedCategoryThumbnail(name, dataUrl) {
             if (!name || !dataUrl) return;
             if (!('indexedDB' in window)) {
-                const thumbs = JSON.parse(localStorage.getItem('cachedCategoryThumbnails') || '{}');
-                thumbs[name] = dataUrl;
-                localStorage.setItem('cachedCategoryThumbnails', JSON.stringify(thumbs));
+                try {
+                    const thumbs = JSON.parse(localStorage.getItem('cachedCategoryThumbnails') || '{}');
+                    thumbs[name] = dataUrl;
+                    localStorage.setItem('cachedCategoryThumbnails', JSON.stringify(thumbs));
+                } catch (err) {
+                    console.warn('Unable to save category thumbnail', err);
+                }
                 return;
             }
-            try {
-                const db = await openThumbnailDB();
+            openThumbnailDB().then(db => {
                 const tx = db.transaction(THUMB_STORE_NAME, 'readwrite');
-                tx.objectStore(THUMB_STORE_NAME).put(dataUrl, name);
+                const store = tx.objectStore(THUMB_STORE_NAME);
+                store.put(dataUrl, name);
                 tx.oncomplete = () => db.close();
-            } catch (err) { console.warn('Thumbnail save failed', err); }
+                tx.onerror = () => db.close();
+            }).catch(err => {
+                console.warn('Unable to save category thumbnail to IndexedDB', err);
+            });
         }
 
         function prefetchCategories() {
@@ -1608,11 +1515,7 @@ HTML_TEMPLATE = """
         }
 
         async function renderCategorySelection(cats, fromCache = false, isFallback = false) {
-            let thumbs = {};
-            try {
-                thumbs = await getCachedCategoryThumbnails();
-            } catch (e) { console.warn("Thumbnails not available", e); }
-
+            const thumbs = await getCachedCategoryThumbnails();
             const catsHtml = cats.map(c => {
                 const thumbnail = thumbs[c.name];
                 return `
@@ -1648,24 +1551,21 @@ HTML_TEMPLATE = """
                 card.addEventListener('click', () => selectCat(card, card.dataset.catName));
             });
 
-            loadCategoryImages(thumbs);
-            const cardEl = document.getElementById('main-ui').querySelector('.card');
-            if (cardEl) {
-                if (fromCache) {
-                    const notice = document.createElement('div');
-                    notice.style = 'margin-top:14px; color:#a9a9a9; font-size:14px;';
-                    notice.textContent = 'تم عرض الفئات من الكاش المحلي، ويتم تحميل الصور تدريجياً.';
-                    cardEl.appendChild(notice);
-                } else if (isFallback) {
-                    const notice = document.createElement('div');
-                    notice.style = 'margin-top:14px; color:#a9a0c2; font-size:14px;';
-                    notice.textContent = 'يتم عرض الفئات الأساسية أولاً، والصور تُحمّل في الخلفية.';
-                    cardEl.appendChild(notice);
-                }
+            loadCategoryImages();
+            if (fromCache) {
+                const notice = document.createElement('div');
+                notice.style = 'margin-top:14px; color:#a9a9a9; font-size:14px;';
+                notice.textContent = 'تم عرض الفئات من الكاش المحلي، ويتم تحميل الصور تدريجياً.';
+                document.querySelector('.card').appendChild(notice);
+            } else if (isFallback) {
+                const notice = document.createElement('div');
+                notice.style = 'margin-top:14px; color:#a9a0c2; font-size:14px;';
+                notice.textContent = 'يتم عرض الفئات الأساسية أولاً، والصور تُحمّل في الخلفية.';
+                document.querySelector('.card').appendChild(notice);
             }
         }
 
-        function loadCategoryImages(thumbs = {}) {
+        function loadCategoryImages() {
             document.querySelectorAll('.cat-image-wrapper img').forEach(img => {
                 const wrapper = img.closest('.cat-image-wrapper');
                 img.onload = () => {
@@ -1685,7 +1585,6 @@ HTML_TEMPLATE = """
                         if (placeholder) placeholder.textContent = '؟';
                     }
                 };
-                if (img.complete) img.onload();
             });
         }
 
@@ -2000,63 +1899,20 @@ HTML_TEMPLATE = """
                     </div>
                 </div>`;
         }
-        function updateSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            const userDisplay = document.getElementById('user-display');
-            if(!sidebar || !userDisplay) return;
-
-            if(currentUser) {
-                userDisplay.innerText = currentUser.player_name;
-
-                // إضافة خيار اقتراح فئة لكل المستخدمين
-                if(!document.getElementById('suggest-cat-btn')) {
+        function updateSidebar() { if(currentUser) {
+            document.getElementById('user-display').innerText = currentUser.player_name;
+            if(currentUser.username_key === 'admin') {
+                if(!document.getElementById('admin-btn')) {
                     let btn = document.createElement('button');
-                    btn.id = 'suggest-cat-btn';
-                    btn.innerText = "💡 اقتراح فئة جديدة";
-                    btn.style.background = "var(--success)";
-                    btn.style.marginTop = "10px";
-                    btn.style.fontSize = "14px";
-                    btn.onclick = () => showSuggestCategoryForm();
-                    sidebar.appendChild(btn);
+                    btn.id = 'admin-btn';
+                    btn.innerText = "🛠️ لوحة الإدارة";
+                    btn.style.background = "var(--accent)";
+                    btn.style.color = "black";
+                    btn.onclick = () => navigateTo('admin');
+                    document.getElementById('sidebar').appendChild(btn);
                 }
-
-                if(currentUser.username_key === 'admin') {
-                    if(!document.getElementById('admin-btn')) {
-                        let btn = document.createElement('button');
-                        btn.id = 'admin-btn';
-                        btn.innerText = "🛠️ لوحة الإدارة";
-                        btn.style.background = "var(--accent)";
-                        btn.style.color = "black";
-                        btn.style.position = "relative";
-                        btn.style.fontSize = "14px";
-                        btn.onclick = () => navigateTo('admin');
-                        sidebar.appendChild(btn);
-
-                        // فحص وجود اقتراحات جديدة
-                        checkNewSuggestions();
-                    }
-                }
-            } else {
-                userDisplay.innerText = "زائر";
             }
-        }
-
-        async function checkNewSuggestions() {
-            try {
-                const res = await fetch('/api/admin/suggestions');
-                const sug = await res.json();
-                const btn = document.getElementById('admin-btn');
-                if(btn && sug.length > 0) {
-                    let dot = document.getElementById('admin-notif-dot');
-                    if(!dot) {
-                        dot = document.createElement('span');
-                        dot.id = 'admin-notif-dot';
-                        dot.style = "position:absolute; top:-5px; right:-5px; width:12px; height:12px; background:red; border-radius:50%; border:2px solid white;";
-                        btn.appendChild(dot);
-                    }
-                }
-            } catch(e){}
-        }
+        }}
 
         async function showAdminDashboard(push = true) {
             if(push) {
@@ -2068,19 +1924,9 @@ HTML_TEMPLATE = """
                     <h2>لوحة التحكم الإدارية</h2>
                     <button onclick="adminManagePlayers()">👥 إدارة اللاعبين</button>
                     <button onclick="adminManageCategories()">📂 إدارة الفئات والكلمات</button>
-                    <button onclick="adminManageSuggestions()" style="position:relative;">📋 اقتراحات الفئات <span id="sug-count-badge" style="display:none; background:red; padding:2px 6px; border-radius:10px; font-size:12px;">0</span></button>
                     <button onclick="adminManageTimeouts()">⏱️ إعدادات المهل الزمنية</button>
                     <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
                 </div>`;
-
-            // تحديث عدد الاقتراحات في اللوحة
-            fetch('/api/admin/suggestions').then(r => r.json()).then(s => {
-                if(s.length > 0) {
-                    const badge = document.getElementById('sug-count-badge');
-                    badge.innerText = s.length;
-                    badge.style.display = "inline";
-                }
-            });
         }
 
         function adminManageTimeouts() {
@@ -2305,10 +2151,9 @@ HTML_TEMPLATE = """
             const words = allWords.filter(w => (w.category || "").trim() === cleanCatName);
 
             let h = `<h2>كلمات قسم: ${catName}</h2>
-                <div id="word-form-container" style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin-bottom:20px; text-align:right;">
-                    <label>أضف كلمات (كلمة في كل سطر لإضافة جماعية):</label>
+                <div id="word-form-container" style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin-bottom:20px;">
                     <input id="word_id" type="hidden">
-                    <textarea id="new_word_val" placeholder="اكتب الكلمة أو الصق قائمة كلمات هنا..." style="width:100%; height:100px; margin-top:10px; border-radius:10px; padding:10px; background:#0f0c29; color:white; border:1px solid var(--accent);"></textarea>
+                    <input id="new_word_val" placeholder="الكلمة">
                     <div style="display:flex; gap:10px; margin-top:10px;">
                         <button id="word-save-btn" onclick="addWordToCat(${JSON.stringify(catName)})">إضافة للقسم</button>
                         <button id="word-cancel-btn" style="background:#636e72; display:none;" onclick="resetWordForm(${JSON.stringify(catName)})">إلغاء</button>
@@ -2387,119 +2232,6 @@ HTML_TEMPLATE = """
         async function deleteWord(id, cat) {
             await fetch('/api/admin/word/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id})});
             manageWords(cat);
-        }
-
-        function showSuggestCategoryForm() {
-            toggleSidebar();
-            document.getElementById('main-ui').innerHTML = `
-                <div class="card" style="text-align:right;">
-                    <h2>💡 اقتراح فئة جديدة</h2>
-                    <p style="font-size:14px; color:#aaa;">اقترح فئة جديدة ليتم إضافتها للعبة. بعد مراجعة الإدارة ستظهر للجميع مع اسمك!</p>
-
-                    <label>اسم الفئة:</label>
-                    <input id="sug_cat_name" placeholder="مثلاً: أفلام مارفل">
-
-                    <label>صورة تعبيرية للفئة (اختياري):</label>
-                    <input type="file" id="sug_cat_file" accept="image/*" style="padding:10px; background:#0f0c29; width:100%; border-radius:10px; margin:10px 0;">
-
-                    <label>الكلمات (اكتب كل كلمة في سطر):</label>
-                    <textarea id="sug_cat_words" placeholder="الرجل الحديدي\nسبايدرمان\nثور..." style="width:100%; height:150px; border-radius:10px; padding:10px; background:#0f0c29; color:white; border:1px solid var(--accent); margin-top:5px;"></textarea>
-
-                    <button onclick="submitCategorySuggestion()" style="background:var(--success); margin-top:20px;">إرسال الاقتراح</button>
-                    <button style="background:#636e72" onclick="navigateTo('menu')">إلغاء</button>
-                </div>`;
-        }
-
-        async function submitCategorySuggestion() {
-            const name = document.getElementById('sug_cat_name').value.trim();
-            const words = document.getElementById('sug_cat_words').value.trim();
-            const fileInput = document.getElementById('sug_cat_file');
-
-            if(!name || !words) return alert("الرجاء إدخال اسم الفئة وقائمة الكلمات");
-
-            let imageUrl = null;
-            if (fileInput.files.length > 0) {
-                imageUrl = await compressImageFile(fileInput.files[0], 0.05, 400, 400);
-            }
-
-            showLoading();
-            const res = await fetch('/api/user/suggest_category', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    name, words, image_url: imageUrl,
-                    user_name: currentUser.player_name
-                })
-            });
-            const d = await res.json();
-            if(d.success) {
-                alert("شكراً لك! تم إرسال اقتراحك للإدارة للمراجعة.");
-                navigateTo('menu');
-            } else {
-                alert(d.error || "فشل إرسال الاقتراح");
-                hideLoading();
-            }
-        }
-
-        async function adminManageSuggestions() {
-            showLoading();
-            const res = await fetch('/api/admin/suggestions');
-            const suggestions = await res.json();
-
-            let h = `<h2>📋 اقتراحات الفئات الجديدة</h2>
-                <div style="max-height:500px; overflow-y:auto; text-align:right;">`;
-
-            if(suggestions.length === 0) {
-                h += `<p style="text-align:center; padding:20px;">لا توجد اقتراحات جديدة حالياً.</p>`;
-            }
-
-            suggestions.forEach(s => {
-                h += `<div class="score-item" style="flex-direction:column; align-items:flex-start; gap:10px; padding:15px;">
-                    <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
-                        <div style="display:flex; align-items:center;">
-                            ${s.image_url ? `<img src="${s.image_url}" style="width:50px; height:50px; border-radius:10px; margin-left:10px;">` : ''}
-                            <div>
-                                <b style="font-size:18px;">${s.name}</b><br>
-                                <small>بواسطة: ${s.user_name || 'مجهول'}</small>
-                            </div>
-                        </div>
-                        <div style="display:flex; gap:5px;">
-                            <button style="width:auto; padding:5px 10px; background:var(--success)" onclick="approveSuggestion(${s.id})">موافقة</button>
-                            <button style="width:auto; padding:5px 10px; background:var(--error)" onclick="rejectSuggestion(${s.id})">رفض</button>
-                        </div>
-                    </div>
-                    <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:10px; width:100%; font-size:13px; color:#ccc; max-height:80px; overflow-y:auto;">
-                        <b>الكلمات:</b><br>${s.words.replace(/\n/g, ' ، ')}
-                    </div>
-                </div>`;
-            });
-
-            h += `</div><button onclick="showAdminDashboard()">رجوع</button>`;
-            document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
-        }
-
-        async function approveSuggestion(id) {
-            if(!confirm("عند الموافقة، سيتم إضافة الفئة وكلماتها فوراً للعبة. استمرار؟")) return;
-            showLoading();
-            const res = await fetch('/api/admin/suggestion/approve', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id})
-            });
-            if((await res.json()).success) {
-                alert("تمت الموافقة وإضافة الفئة بنجاح!");
-                adminManageSuggestions();
-            }
-        }
-
-        async function rejectSuggestion(id) {
-            if(!confirm("هل أنت متأكد من رفض هذا الاقتراح؟")) return;
-            await fetch('/api/admin/suggestion/reject', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id})
-            });
-            adminManageSuggestions();
         }
 
         async function showReports(push = true) {
@@ -2629,8 +2361,7 @@ HTML_TEMPLATE = """
             if (banner) banner.remove();
         }
 
-        // بدء التشغيل
-        window.onload = init;
+        init();
     </script>
 </body>
 </html>
