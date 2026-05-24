@@ -343,6 +343,14 @@ async def start_game(data: dict):
 
 # --- Online Mode API ---
 
+def cleanup_stale_rooms(cur):
+    try:
+        # Delete stale players and rooms inactive for more than 30 minutes
+        cur.execute("DELETE FROM room_players WHERE room_code IN (SELECT room_code FROM rooms WHERE updated_at < NOW() - INTERVAL '30 minutes')")
+        cur.execute("DELETE FROM rooms WHERE updated_at < NOW() - INTERVAL '30 minutes'")
+    except Exception as e:
+        print(f"Cleanup stale rooms error: {e}")
+
 @app.post("/api/online/create")
 async def create_room(data: dict):
     conn = get_db_conn()
@@ -363,6 +371,9 @@ async def create_room(data: dict):
 
     try:
         with conn.cursor() as cur:
+            # Clean up stale inactive rooms first to save space/limit queries
+            cleanup_stale_rooms(cur)
+
             cur.execute("""
                 INSERT INTO users (user_id, player_name, is_registered)
                 VALUES (%s, %s, TRUE)
@@ -407,17 +418,20 @@ async def join_room(data: dict):
     if not conn: return {"success": False, "msg": "DB Error"}
     try:
         room_code = data['room_code'].upper()
-        user_id = data['user_id']
+        user_id = int(data['user_id'])
         player_name = data['player_name']
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT status FROM rooms WHERE room_code = %s", (room_code,))
             room = cur.fetchone()
             if not room: return {"success": False, "msg": "الغرفة غير موجودة"}
-            if room['status'] != 'waiting': return {"success": False, "msg": "اللعبة بدأت بالفعل"}
 
-            # التحقق من وجود اللاعب مسبقاً للحفاظ على ترتيبه
+            # التحقق من وجود اللاعب مسبقاً للحفاظ على ترتيبه والسماح بإعادة الانضمام
             cur.execute("SELECT join_order FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
             row = cur.fetchone()
+
+            if not row and room['status'] != 'waiting':
+                return {"success": False, "msg": "اللعبة بدأت بالفعل ولا يمكنك الانضمام كلاعب جديد"}
+
             if row:
                 cur.execute("UPDATE room_players SET player_name = %s WHERE room_code = %s AND user_id = %s",
                             (player_name, room_code, user_id))
@@ -433,6 +447,38 @@ async def join_room(data: dict):
     except Exception as e:
         print(f"Error in join_room: {e}")
         return {"success": False, "msg": f"خطأ: {str(e)}"}
+    finally:
+        if conn: conn.close()
+
+@app.post("/api/online/leave")
+async def leave_online_room(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False, "msg": "Database connection failed"}
+    try:
+        room_code = data['room_code'].upper()
+        user_id = int(data['user_id'])
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT 1 FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
+            if not cur.fetchone():
+                return {"success": True}
+            
+            cur.execute("DELETE FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
+            
+            cur.execute("SELECT user_id FROM room_players WHERE room_code = %s ORDER BY join_order ASC", (room_code,))
+            remaining = cur.fetchall()
+            if not remaining:
+                cur.execute("DELETE FROM rooms WHERE room_code = %s", (room_code,))
+            else:
+                cur.execute("SELECT host_id FROM rooms WHERE room_code = %s", (room_code,))
+                host_row = cur.fetchone()
+                if host_row and host_row['host_id'] == user_id:
+                    new_host_id = remaining[0]['user_id']
+                    cur.execute("UPDATE rooms SET host_id = %s WHERE room_code = %s", (new_host_id, room_code))
+            conn.commit()
+        return {"success": True}
+    except Exception as e:
+        print(f"Error in leave_room: {e}")
+        return {"success": False, "msg": str(e)}
     finally:
         if conn: conn.close()
 
@@ -472,7 +518,8 @@ async def start_online_game(data: dict):
             if cur.fetchone()[0] < 3: return {"success": False, "msg": "يجب وجود 3 لاعبين على الأقل"}
 
             # الانتقال لمرحلة التصويت على النقاط
-            cur.execute("UPDATE rooms SET status = 'voting_limit' WHERE room_code = %s", (room_code,))
+            game_data = {"phase_start": time.time()}
+            cur.execute("UPDATE rooms SET status = 'voting_limit', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
             conn.commit()
         return {"success": True}
     except Exception as e:
@@ -506,7 +553,11 @@ async def submit_vote(data: dict):
                 winner = cur.fetchone()[0]
 
                 if vote_type == 'limit':
-                    cur.execute("UPDATE rooms SET win_limit = %s, status = 'voting_cat' WHERE room_code = %s", (winner, room_code))
+                    cur.execute("SELECT game_data FROM rooms WHERE room_code = %s", (room_code,))
+                    g_row = cur.fetchone()
+                    g_data = g_row[0] if g_row and g_row[0] else {}
+                    g_data['phase_start'] = time.time()
+                    cur.execute("UPDATE rooms SET win_limit = %s, status = 'voting_cat', game_data = %s WHERE room_code = %s", (winner, json.dumps(g_data), room_code))
                 else:
                     cur.execute("UPDATE rooms SET category = %s, status = 'roles_prep' WHERE room_code = %s", (winner, room_code))
                     should_prepare = True
@@ -661,17 +712,84 @@ async def get_room(room_code: str):
     if not conn: return {"success": False, "msg": "No DB connection"}
     try:
         room_code = room_code.upper()
+        should_prepare = False
+        should_calculate_results = False
+        changed = False
+
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # 1. Update updated_at keepalive timestamp
+            cur.execute("UPDATE rooms SET updated_at = CURRENT_TIMESTAMP WHERE room_code = %s", (room_code,))
+            conn.commit()
+            
+            # 2. Fetch the room
             cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
             room = cur.fetchone()
             if not room: return {"success": False, "msg": "Room not found"}
 
-            # --- Penalty Logic & Timeout Check ---
             status = room['status']
-            game_data = room['game_data']
-            changed = False
+            game_data = room['game_data'] or {}
 
-            if status == 'playing_questions':
+            # --- Timeout and Auto-Transitions Checks ---
+            if status == 'voting_limit':
+                phase_start = game_data.get('phase_start')
+                if phase_start and (time.time() - phase_start > 10):
+                    cur.execute("SELECT user_id FROM room_players WHERE room_code = %s AND vote_limit IS NULL", (room_code,))
+                    missing_voters = cur.fetchall()
+                    for p in missing_voters:
+                        random_limit = random.choice([5, 10, 15, 20])
+                        cur.execute("UPDATE room_players SET vote_limit = %s WHERE room_code = %s AND user_id = %s", (random_limit, room_code, p['user_id']))
+                    
+                    cur.execute("SELECT vote_limit, COUNT(*) as c FROM room_players WHERE room_code = %s GROUP BY vote_limit ORDER BY c DESC LIMIT 1", (room_code,))
+                    winner_row = cur.fetchone()
+                    winner = winner_row['vote_limit'] if winner_row else 10
+                    
+                    game_data['phase_start'] = time.time()
+                    cur.execute("UPDATE rooms SET win_limit = %s, status = 'voting_cat', game_data = %s WHERE room_code = %s", (winner, json.dumps(game_data), room_code))
+                    changed = True
+
+            elif status == 'voting_cat':
+                phase_start = game_data.get('phase_start')
+                if phase_start and (time.time() - phase_start > 10):
+                    cur.execute("SELECT user_id FROM room_players WHERE room_code = %s AND vote_cat IS NULL", (room_code,))
+                    missing_voters = cur.fetchall()
+                    available_cats = ["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"]
+                    for p in missing_voters:
+                        random_cat = random.choice(available_cats)
+                        cur.execute("UPDATE room_players SET vote_cat = %s WHERE room_code = %s AND user_id = %s", (random_cat, room_code, p['user_id']))
+                    
+                    cur.execute("SELECT vote_cat, COUNT(*) as c FROM room_players WHERE room_code = %s GROUP BY vote_cat ORDER BY c DESC LIMIT 1", (room_code,))
+                    winner_row = cur.fetchone()
+                    winner = winner_row['vote_cat'] if winner_row else "أكلات"
+                    
+                    cur.execute("UPDATE rooms SET category = %s, status = 'roles_prep' WHERE room_code = %s", (winner, room_code))
+                    changed = True
+                    should_prepare = True
+
+            elif status == 'voting_spy':
+                phase_start = game_data.get('phase_start')
+                if phase_start and (time.time() - phase_start > 10):
+                    cur.execute("SELECT user_id FROM room_players WHERE room_code = %s AND is_ready = FALSE AND red_card = FALSE", (room_code,))
+                    missing_voters = cur.fetchall()
+                    
+                    cur.execute("SELECT user_id FROM room_players WHERE room_code = %s", (room_code,))
+                    all_players = [p['user_id'] for p in cur.fetchall()]
+                    
+                    if 'votes' not in game_data: game_data['votes'] = {}
+                    for p in missing_voters:
+                        voter_id = p['user_id']
+                        possible_targets = [pid for pid in all_players if pid != voter_id]
+                        if possible_targets:
+                            random_target = random.choice(possible_targets)
+                            game_data['votes'][str(voter_id)] = random_target
+                            cur.execute("UPDATE room_players SET is_ready = TRUE WHERE room_code = %s AND user_id = %s", (room_code, voter_id))
+                    
+                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                    cur.execute("SELECT COUNT(*) FROM room_players WHERE room_code = %s AND is_ready = FALSE AND red_card = FALSE", (room_code,))
+                    if cur.fetchone()['count'] == 0:
+                        should_calculate_results = True
+                    changed = True
+
+            elif status == 'playing_questions':
                 q_idx = game_data.get('q_idx', 0)
                 q_seq = game_data.get('q_seq', [])
                 if q_idx < len(q_seq):
@@ -682,24 +800,22 @@ async def get_room(room_code: str):
                     timeout = 15 if curr_q['status'] in ['pending', 'asking'] else 20
 
                     if elapsed > timeout:
-                        # Timeout occurred!
                         target_user_id = curr_q['asker_id'] if curr_q['status'] in ['pending', 'asking'] else curr_q['ans_id']
 
-                        # Apply Penalty
                         cur.execute("UPDATE room_players SET yellow_cards = yellow_cards + 1 WHERE room_code = %s AND user_id = %s", (room_code, target_user_id))
                         cur.execute("SELECT yellow_cards FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, target_user_id))
                         y_cards_row = cur.fetchone()
                         if y_cards_row and y_cards_row['yellow_cards'] >= 2:
                             cur.execute("UPDATE room_players SET red_card = TRUE WHERE room_code = %s AND user_id = %s", (room_code, target_user_id))
 
-                        # Move to next question
                         curr_q['status'] = 'timeout'
                         game_data['q_idx'] += 1
                         game_data['phase_start'] = time.time()
 
                         if game_data['q_idx'] >= len(q_seq):
                             room['status'] = 'voting_spy'
-                            cur.execute("UPDATE rooms SET status = 'voting_spy' WHERE room_code = %s", (room_code,))
+                            game_data['phase_start'] = time.time()
+                            cur.execute("UPDATE rooms SET status = 'voting_spy', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
                             cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
 
                         changed = True
@@ -713,7 +829,38 @@ async def get_room(room_code: str):
 
             cur.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
             players = cur.fetchall()
-            return {"success": True, "room": room, "players": players}
+
+        # Commit and close connection first to prevent nested deadlocks!
+        if conn:
+            conn.commit()
+            conn.close()
+            conn = None
+
+        if should_prepare:
+            await prepare_round(room_code)
+            conn_new = get_db_conn()
+            try:
+                with conn_new.cursor(cursor_factory=RealDictCursor) as cur_new:
+                    cur_new.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
+                    room = cur_new.fetchone()
+                    cur_new.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
+                    players = cur_new.fetchall()
+            finally:
+                conn_new.close()
+
+        if should_calculate_results:
+            await calculate_online_results(room_code)
+            conn_new = get_db_conn()
+            try:
+                with conn_new.cursor(cursor_factory=RealDictCursor) as cur_new:
+                    cur_new.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
+                    room = cur_new.fetchone()
+                    cur_new.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
+                    players = cur_new.fetchall()
+            finally:
+                conn_new.close()
+
+        return {"success": True, "room": room, "players": players}
     except Exception as e:
         print(f"Error in get_room: {e}")
         return {"success": False, "msg": str(e)}
@@ -783,6 +930,7 @@ async def online_action(data: dict):
                         game_data['phase_start'] = time.time()
 
                         if game_data['q_idx'] >= len(game_data['q_seq']):
+                            game_data['phase_start'] = time.time()
                             cur.execute("UPDATE rooms SET status = 'voting_spy' WHERE room_code = %s", (room_code,))
                             cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
 
@@ -1172,6 +1320,87 @@ HTML_TEMPLATE = """
         @keyframes spin { to { transform: rotate(360deg); } }
         .modal { display: none; position: fixed; z-index: 3000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); }
         .modal-content { background: var(--card); margin: 15% auto; padding: 25px; border: 2px solid var(--primary); width: 85%; max-width: 400px; border-radius: 25px; animation: pop 0.3s ease; text-align: center; }
+        
+        /* Premium Scrollable Q&A Chat History styling */
+        .qa-chat-container {
+            margin-top: 25px;
+            background: rgba(15, 12, 41, 0.6);
+            border: 2px solid #2f278c;
+            border-radius: 20px;
+            text-align: right;
+            direction: rtl;
+            overflow: hidden;
+            box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
+        }
+        .qa-chat-header {
+            background: #1b1464;
+            padding: 10px 15px;
+            font-size: 14px;
+            font-weight: bold;
+            color: var(--accent);
+            border-bottom: 1px solid #2f278c;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .qa-chat-body {
+            max-height: 180px;
+            overflow-y: auto;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .qa-chat-body::-webkit-scrollbar {
+            width: 6px;
+        }
+        .qa-chat-body::-webkit-scrollbar-thumb {
+            background: #2f278c;
+            border-radius: 10px;
+        }
+        .qa-chat-item {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            padding: 10px 12px;
+            border: 1px solid rgba(255,255,255,0.05);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .qa-chat-q, .qa-chat-a {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .qa-chat-badge {
+            font-weight: bold;
+            white-space: nowrap;
+        }
+        .qa-chat-badge.asker {
+            color: #a29bfe;
+        }
+        .qa-chat-badge.answerer {
+            color: #2ecc71;
+        }
+        .qa-chat-text {
+            color: #e2e2e2;
+            word-break: break-word;
+        }
+
+        /* Responsive styling for larger screen devices */
+        @media (min-width: 600px) {
+            .container { max-width: 700px; width: 90%; }
+            .card { padding: 45px 35px; border-radius: 40px; }
+            button { font-size: 22px; padding: 20px; border-radius: 22px; }
+            input, select { font-size: 20px; padding: 20px; border-radius: 20px; }
+            h1 { font-size: 42px; }
+            h2 { font-size: 34px; }
+            h3 { font-size: 28px; }
+            .vote-item { font-size: 20px; padding: 22px; }
+            .qa-chat-body { max-height: 250px; }
+        }
     </style>
 </head>
 <body>
@@ -1667,8 +1896,13 @@ HTML_TEMPLATE = """
         }
 
         function renderVotingLimit() {
-            const myVote = window.roomData.players.find(p => p.user_id == currentUser.user_id)?.vote_limit;
+            const {room, players} = window.roomData;
+            const myVote = players.find(p => p.user_id == currentUser.user_id)?.vote_limit;
             
+            const gameData = room.game_data || {};
+            const elapsed = Math.floor(Date.now()/1000 - (gameData.phase_start || 0));
+            const timeLeft = Math.max(0, 10 - elapsed);
+
             const limitCard = document.getElementById('voting-limit-card');
             if (limitCard) {
                 const buttons = limitCard.querySelectorAll('button');
@@ -1678,6 +1912,10 @@ HTML_TEMPLATE = """
                     btn.style.background = isSelected ? 'var(--success)' : '';
                     btn.innerHTML = `${val} نقطة ${isSelected ? '✅' : ''}`;
                 });
+                const timerElem = document.getElementById('voting-limit-timer');
+                if (timerElem) {
+                    timerElem.innerText = `⏱️ الوقت المتبقي للتصويت: ${timeLeft} ثانية`;
+                }
                 return;
             }
 
@@ -1690,13 +1928,20 @@ HTML_TEMPLATE = """
                         ${val} نقطة ${isSelected ? '✅' : ''}
                       </button>`;
             });
-            h += `</div><p>بانتظار بقية اللاعبين...</p>`;
+            h += `</div>
+                  <div id="voting-limit-timer" style="margin-top:20px; color:var(--error); font-weight:bold; font-size:18px;">⏱️ الوقت المتبقي للتصويت: ${timeLeft} ثانية</div>
+                  <p>بانتظار بقية اللاعبين...</p>`;
             updateMainUI(`<div class="card" id="voting-limit-card">${h}</div>`);
         }
 
         function renderVotingCat() {
-            const myVote = window.roomData.players.find(p => p.user_id == currentUser.user_id)?.vote_cat;
+            const {room, players} = window.roomData;
+            const myVote = players.find(p => p.user_id == currentUser.user_id)?.vote_cat;
             
+            const gameData = room.game_data || {};
+            const elapsed = Math.floor(Date.now()/1000 - (gameData.phase_start || 0));
+            const timeLeft = Math.max(0, 10 - elapsed);
+
             const catCard = document.getElementById('voting-cat-card');
             if (catCard) {
                 const buttons = catCard.querySelectorAll('button');
@@ -1706,6 +1951,10 @@ HTML_TEMPLATE = """
                     btn.style.background = isSelected ? 'var(--success)' : '';
                     btn.innerHTML = `${cat} ${isSelected ? '✅' : ''}`;
                 });
+                const timerElem = document.getElementById('voting-cat-timer');
+                if (timerElem) {
+                    timerElem.innerText = `⏱️ الوقت المتبقي للتصويت: ${timeLeft} ثانية`;
+                }
                 return;
             }
 
@@ -1717,7 +1966,9 @@ HTML_TEMPLATE = """
                         ${cat} ${isSelected ? '✅' : ''}
                       </button>`;
             });
-            h += `</div><p>سيتم اختيار الفئة الأكثر تصويتاً</p>`;
+            h += `</div>
+                  <div id="voting-cat-timer" style="margin-top:20px; color:var(--error); font-weight:bold; font-size:18px;">⏱️ الوقت المتبقي للتصويت: ${timeLeft} ثانية</div>
+                  <p>سيتم اختيار الفئة الأكثر تصويتاً</p>`;
             updateMainUI(`<div class="card" id="voting-cat-card">${h}</div>`);
         }
 
@@ -1876,6 +2127,44 @@ HTML_TEMPLATE = """
             updateRoomState();
         }
 
+        function escapeHtml(text) {
+            if (!text) return "";
+            return text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function buildQAChatHistory() {
+            if (!window.roomData || !window.roomData.room || !window.roomData.room.game_data) return "";
+            const q_seq = window.roomData.room.game_data.q_seq || [];
+            const completed = q_seq.filter(q => q.status === 'done');
+            if (completed.length === 0) return "";
+
+            let chatHtml = `<div class="qa-chat-container">
+                <div class="qa-chat-header">💬 سجل الأسئلة والأجوبة السابقة</div>
+                <div class="qa-chat-body">`;
+            
+            completed.forEach(q => {
+                chatHtml += `
+                    <div class="qa-chat-item">
+                        <div class="qa-chat-q">
+                            <span class="qa-chat-badge asker">🙋‍♂️ ${q.asker_name}:</span>
+                            <span class="qa-chat-text">${escapeHtml(q.question)}</span>
+                        </div>
+                        <div class="qa-chat-a">
+                            <span class="qa-chat-badge answerer">💬 ${q.ans_name}:</span>
+                            <span class="qa-chat-text">${escapeHtml(q.answer)}</span>
+                        </div>
+                    </div>`;
+            });
+            
+            chatHtml += `</div></div>`;
+            return chatHtml;
+        }
+
         function renderOnlineQuestions() {
             if(!window.roomData || !window.roomData.room.game_data) return;
             const {room, players} = window.roomData;
@@ -1939,6 +2228,7 @@ HTML_TEMPLATE = """
             }
 
             h += `<div id="questions-timer" style="margin-top:20px; color:var(--error); font-weight:bold;">⏱️ الوقت المتبقي: ${timeLeft} ثانية</div>`;
+            h += buildQAChatHistory();
 
             updateMainUI(`<div class="card" id="questions-card" data-state-key="${stateKey}">${h}</div>`);
         }
@@ -1958,6 +2248,10 @@ HTML_TEMPLATE = """
             const {room, players} = window.roomData;
             const me = players.find(p => p.user_id == currentUser.user_id);
 
+            const gameData = room.game_data || {};
+            const elapsed = Math.floor(Date.now()/1000 - (gameData.phase_start || 0));
+            const timeLeft = Math.max(0, 10 - elapsed);
+
             if(me.red_card) {
                 updateMainUI(`<div class="card"><h3>أنت مستبعد من التصويت (كرت أحمر)</h3><p>بانتظار بقية اللاعبين...</p><div class="shuffling">⏳</div></div>`);
                 return;
@@ -1965,6 +2259,15 @@ HTML_TEMPLATE = """
 
             if(me.is_ready) {
                 updateMainUI(`<div class="card"><h3>تم إرسال صوتك...</h3><p>بانتظار بقية اللاعبين...</p><div class="shuffling">⏳</div></div>`);
+                return;
+            }
+
+            const votingCard = document.getElementById('online-voting-card');
+            if (votingCard) {
+                const timerElem = document.getElementById('online-voting-timer');
+                if (timerElem) {
+                    timerElem.innerText = `⏱️ الوقت المتبقي للتصويت: ${timeLeft} ثانية`;
+                }
                 return;
             }
 
@@ -1977,8 +2280,10 @@ HTML_TEMPLATE = """
                           </button>`;
                 }
             });
-            h += `</div>`;
-            updateMainUI(`<div class="card">${h}</div>`);
+            h += `</div>
+                  <div id="online-voting-timer" style="margin-top:20px; color:var(--error); font-weight:bold; font-size:18px;">⏱️ الوقت المتبقي للتصويت: ${timeLeft} ثانية</div>`;
+            h += buildQAChatHistory();
+            updateMainUI(`<div class="card" id="online-voting-card">${h}</div>`);
         }
 
         function renderOnlineReveal() {
@@ -1991,15 +2296,16 @@ HTML_TEMPLATE = """
                 room.game_data.guesses.forEach(g => {
                     h += `<div class="vote-item" onclick="onlineAction('spy_guess', {guess: '${g.replace(/'/g, "\\'")}'})">${g}</div>`;
                 });
+                h += buildQAChatHistory();
                 updateMainUI(`<div class="card">${h}</div>`);
             } else {
-                updateMainUI(`
-                    <div class="card">
+                let h = `
                         <h1>اللي برة السالفة هو:</h1>
                         <h2 style="color:var(--error); font-size:40px;">${spy.player_name}</h2>
                         <p>بانتظار تخمين الجاسوس...</p>
-                        <div class="shuffling">🌀</div>
-                    </div>`);
+                        <div class="shuffling">🌀</div>`;
+                h += buildQAChatHistory();
+                updateMainUI(`<div class="card">${h}</div>`);
             }
         }
 
@@ -2035,9 +2341,20 @@ HTML_TEMPLATE = """
                 </div>`);
         }
 
-        function leaveRoom() {
+        async function leaveRoom() {
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'none';
             stopPolling();
+            if (currentRoom && currentUser) {
+                try {
+                    await fetch('/api/online/leave', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
+                    });
+                } catch(e) {
+                    console.error("Failed to leave room endpoint:", e);
+                }
+            }
             currentRoom = null;
             showMenu();
         }
