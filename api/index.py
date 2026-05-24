@@ -1587,7 +1587,8 @@ HTML_TEMPLATE = """
             }
         }
 
-        function loadCategoryImages() {
+        async function loadCategoryImages() {
+            const thumbs = await getCachedCategoryThumbnails();
             document.querySelectorAll('.cat-image-wrapper img').forEach(img => {
                 const wrapper = img.closest('.cat-image-wrapper');
                 img.onload = () => {
