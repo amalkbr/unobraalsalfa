@@ -52,6 +52,7 @@ def init_db():
     if not conn: return
     try:
         with conn.cursor() as cur:
+            # 1. الأساسيات: جداول المستخدمين والغرف واللاعبين
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -66,18 +67,18 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS rooms (
                     room_code TEXT PRIMARY KEY,
                     host_id BIGINT,
-                    status TEXT DEFAULT 'waiting', -- waiting, voting_limit, voting_cat, playing, voting_spy, result
+                    status TEXT DEFAULT 'waiting',
                     category TEXT,
                     win_limit INTEGER DEFAULT 5,
                     current_turn_asker BIGINT,
                     current_turn_answerer BIGINT,
                     secret_word TEXT,
                     spy_id BIGINT,
-                    game_data JSONB DEFAULT '{}', -- {messages: [], cards: {}, votes: {}}
+                    game_data JSONB DEFAULT '{}',
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 CREATE TABLE IF NOT EXISTS room_players (
-                    room_code TEXT REFERENCES rooms(room_code) ON DELETE CASCADE,
+                    room_code TEXT,
                     user_id BIGINT,
                     player_name TEXT,
                     score INTEGER DEFAULT 0,
@@ -86,7 +87,7 @@ def init_db():
                     red_card BOOLEAN DEFAULT FALSE,
                     vote_limit INTEGER,
                     vote_cat TEXT,
-                    join_order SERIAL,
+                    join_order INTEGER DEFAULT 0,
                     PRIMARY KEY (room_code, user_id)
                 );
                 CREATE TABLE IF NOT EXISTS categories (
@@ -97,27 +98,63 @@ def init_db():
                 );
                 CREATE TABLE IF NOT EXISTS words (
                     id SERIAL PRIMARY KEY,
-                    category TEXT REFERENCES categories(name) ON DELETE CASCADE,
+                    category TEXT,
                     word TEXT
                 );
                 CREATE TABLE IF NOT EXISTS settings (
                     key TEXT PRIMARY KEY,
                     value TEXT
                 );
-                INSERT INTO settings (key, value) VALUES ('question_timeout', '30') ON CONFLICT DO NOTHING;
-                INSERT INTO settings (key, value) VALUES ('vote_timeout', '10') ON CONFLICT DO NOTHING;
-                INSERT INTO settings (key, value) VALUES ('spy_guess_timeout', '15') ON CONFLICT DO NOTHING;
-                INSERT INTO settings (key, value) VALUES ('sound_click', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
-                INSERT INTO settings (key, value) VALUES ('sound_reveal', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
-                INSERT INTO settings (key, value) VALUES ('sound_win', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
-                INSERT INTO settings (key, value) VALUES ('sound_fail', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
+            """)
 
-                -- Ensure columns exist for older schemas (Migrations)
+            # 2. هجرة البيانات وتوافق الأعمدة (Migrations)
+            cur.execute("""
+                -- إضافة الأعمدة المفقودة لجدول المستخدمين
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS total_wins INTEGER DEFAULT 0;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS online_points INTEGER DEFAULT 0;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS saved_players JSONB DEFAULT '[]';
-                ALTER TABLE categories ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0;
+
+                -- تحويل أعمدة الربط إلى نصوص لضمان التوافق (Bridging)
+                ALTER TABLE rooms ADD COLUMN IF NOT EXISTS room_code TEXT;
+                ALTER TABLE rooms ADD COLUMN IF NOT EXISTS room_id TEXT;
+                ALTER TABLE rooms ADD COLUMN IF NOT EXISTS host_id BIGINT;
+                ALTER TABLE rooms ADD COLUMN IF NOT EXISTS creator_id BIGINT;
+
+                -- محاولة تغيير النوع لدعم التداخل بين البوت والـ API
+                DO $$
+                BEGIN
+                    ALTER TABLE rooms ALTER COLUMN room_id TYPE TEXT;
+                    ALTER TABLE rooms ALTER COLUMN room_code TYPE TEXT;
+                    ALTER TABLE room_players ALTER COLUMN room_id TYPE TEXT;
+                    ALTER TABLE room_players ALTER COLUMN room_code TYPE TEXT;
+                EXCEPTION WHEN OTHERS THEN
+                    RAISE NOTICE 'Could not alter column types, might be already correct or restricted.';
+                END $$;
+
+                ALTER TABLE room_players ADD COLUMN IF NOT EXISTS room_code TEXT;
+                ALTER TABLE room_players ADD COLUMN IF NOT EXISTS room_id TEXT;
                 ALTER TABLE room_players ADD COLUMN IF NOT EXISTS join_order INTEGER DEFAULT 0;
+
+                -- مزامنة البيانات بين الأعمدة المتقابلة (API vs Bot)
+                UPDATE rooms SET room_code = room_id WHERE room_code IS NULL AND room_id IS NOT NULL;
+                UPDATE rooms SET room_id = room_code WHERE room_id IS NULL AND room_code IS NOT NULL;
+                UPDATE rooms SET host_id = creator_id WHERE host_id IS NULL AND creator_id IS NOT NULL;
+                UPDATE rooms SET creator_id = host_id WHERE creator_id IS NULL AND host_id IS NOT NULL;
+
+                UPDATE room_players SET room_code = room_id WHERE room_code IS NULL AND room_id IS NOT NULL;
+                UPDATE room_players SET room_id = room_code WHERE room_id IS NULL AND room_code IS NOT NULL;
+
+                -- ضمان وجود فهارس فريدة لعمليات ON CONFLICT
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_room_code ON rooms(room_code);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_room_players_code_user ON room_players(room_code, user_id);
+            """)
+
+            # 3. إعدادات افتراضية
+            cur.execute("""
+                INSERT INTO settings (key, value) VALUES ('question_timeout', '30') ON CONFLICT DO NOTHING;
+                INSERT INTO settings (key, value) VALUES ('vote_timeout', '10') ON CONFLICT DO NOTHING;
+                INSERT INTO settings (key, value) VALUES ('spy_guess_timeout', '15') ON CONFLICT DO NOTHING;
+                INSERT INTO settings (key, value) VALUES ('sound_click', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%';
             """)
 
             # --- Seeding Data ---
@@ -310,16 +347,18 @@ async def create_room(data: dict):
                 ON CONFLICT (user_id) DO UPDATE SET player_name = EXCLUDED.player_name
             """, (user_id, player_name))
 
-            # 2. إنشاء الغرفة
-            cur.execute("INSERT INTO rooms (room_code, host_id, status) VALUES (%s, %s, 'waiting')",
-                        (room_code, user_id))
-
-            # 3. إضافة المنشئ كلاعب أول
+            # 2. إنشاء الغرفة مع دعم الأعمدة البديلة (room_id, creator_id) للتوافق مع البوت
             cur.execute("""
-                INSERT INTO room_players (room_code, user_id, player_name, is_ready)
-                VALUES (%s, %s, %s, TRUE)
-                ON CONFLICT (room_code, user_id) DO UPDATE SET is_ready = TRUE
-            """, (room_code, user_id, player_name))
+                INSERT INTO rooms (room_code, room_id, host_id, creator_id, status)
+                VALUES (%s, %s, %s, %s, 'waiting')
+            """, (room_code, room_code, user_id, user_id))
+
+            # 3. إضافة المنشئ كلاعب أول مع تحديد ترتيب الانضمام (join_order = 1) ودعم room_id
+            cur.execute("""
+                INSERT INTO room_players (room_code, room_id, user_id, player_name, is_ready, join_order)
+                VALUES (%s, %s, %s, %s, TRUE, 1)
+                ON CONFLICT (room_code, user_id) DO UPDATE SET is_ready = TRUE, join_order = 1, room_id = EXCLUDED.room_id
+            """, (room_code, room_code, user_id, player_name))
 
             conn.commit()
         return {"success": True, "room_code": room_code}
@@ -353,8 +392,10 @@ async def join_room(data: dict):
             else:
                 cur.execute("SELECT COALESCE(MAX(join_order), 0) + 1 as next_order FROM room_players WHERE room_code = %s", (room_code,))
                 next_order = cur.fetchone()['next_order']
-                cur.execute("INSERT INTO room_players (room_code, user_id, player_name, join_order) VALUES (%s, %s, %s, %s)",
-                            (room_code, user_id, player_name, next_order))
+                cur.execute("""
+                    INSERT INTO room_players (room_code, room_id, user_id, player_name, join_order)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (room_code, room_code, user_id, player_name, next_order))
             conn.commit()
         return {"success": True}
     except Exception as e:
@@ -1355,17 +1396,27 @@ HTML_TEMPLATE = """
 
         async function enterRoom(code) {
             currentRoom = code;
-            document.getElementById('main-ui').innerHTML = `<div class="card"><h2>جاري دخول الغرفة...</h2><p>رمز الغرفة: ${code}</p></div>`;
+            document.getElementById('main-ui').innerHTML = `<div class="card"><h2>جاري دخول الغرفة...</h2><p>رمز الغرفة: <b style="color:var(--accent)">${code}</b></p></div>`;
             try {
-                await updateRoomState();
-                startPolling();
+                const success = await updateRoomState();
+                if (success) {
+                    startPolling();
+                } else {
+                    document.getElementById('main-ui').innerHTML = `
+                        <div class="card">
+                            <h2 style="color:var(--error)">عذراً، لم نجد الغرفة</h2>
+                            <p>تأكد من الرمز: ${code}</p>
+                            <button onclick="showOnlineMenu()">العودة للأونلاين</button>
+                        </div>`;
+                }
             } catch (e) {
                 console.error("Initial room entry failed:", e);
-                // محاولة إعادة المحاولة بعد ثانية إذا فشل أول تحديث
-                setTimeout(() => {
-                    updateRoomState();
-                    startPolling();
-                }, 1000);
+                document.getElementById('main-ui').innerHTML = `
+                    <div class="card">
+                        <h2 style="color:var(--error)">فشل الاتصال بالغرفة</h2>
+                        <button onclick="enterRoom('${code}')">إعادة المحاولة</button>
+                        <button style="background:#636e72" onclick="showOnlineMenu()">رجوع</button>
+                    </div>`;
             }
         }
 
@@ -1375,13 +1426,14 @@ HTML_TEMPLATE = """
         }
 
         async function updateRoomState() {
-            if(!currentRoom) return;
+            if(!currentRoom) return false;
             try {
                 const res = await fetch(`/api/online/room/${currentRoom}`);
                 if (!res.ok) {
                     if (res.status === 404) {
-                        alert("تم إغلاق الغرفة");
-                        location.reload();
+                        alert("تم إغلاق الغرفة أو الرمز غير صحيح");
+                        leaveRoom();
+                        return false;
                     }
                     throw new Error("Room fetch failed");
                 }
@@ -1389,43 +1441,49 @@ HTML_TEMPLATE = """
                 if(d.success) {
                     window.roomData = d;
                     const status = d.room.status;
-                    // ... (بقية الكود)
 
-                // --- Audio Feedback Logic ---
-                if (status !== lastKnownStatus) {
-                    if (status === 'playing_questions') AUDIO.tick.play().catch(()=>{});
-                    if (status === 'result') {
-                         if (d.room.game_data.game_over) AUDIO.success.play().catch(()=>{});
+                    // التحديث البصري للحالة
+                    if(status === 'waiting') {
+                        renderRoom();
+                    } else if(status === 'voting_limit') {
+                        renderVotingLimit();
+                    } else if(status === 'voting_cat') {
+                        renderVotingCat();
+                    } else if(status === 'playing_roles') {
+                        renderOnlineRoles();
+                    } else if(status === 'playing_questions') {
+                        renderOnlineQuestions();
+                    } else if(status === 'voting_spy') {
+                        renderOnlineVoting();
+                    } else if(status === 'spy_reveal') {
+                        renderOnlineReveal();
+                    } else if(status === 'result') {
+                        renderOnlineResult();
                     }
-                    lastKnownStatus = status;
-                }
 
-                // Check for new penalties
-                d.players.forEach(p => {
-                    const oldCards = lastKnownCards[p.user_id] || {yellow: 0, red: false};
-                    if (p.yellow_cards > oldCards.yellow || (p.red_card && !oldCards.red)) {
-                        AUDIO.penalty.play().catch(()=>{});
+                    // التنبيهات الصوتية
+                    if (status !== lastKnownStatus) {
+                        if (status === 'playing_questions') AUDIO.tick.play().catch(()=>{});
+                        if (status === 'result' && d.room.game_data.game_over) AUDIO.success.play().catch(()=>{});
+                        lastKnownStatus = status;
                     }
-                    lastKnownCards[p.user_id] = {yellow: p.yellow_cards, red: p.red_card};
-                });
 
-                if(status === 'waiting') {
-                    renderRoom();
-                } else if(status === 'voting_limit') {
-                    renderVotingLimit();
-                } else if(status === 'voting_cat') {
-                    renderVotingCat();
-                } else if(status === 'playing_roles') {
-                    renderOnlineRoles();
-                } else if(status === 'playing_questions') {
-                    renderOnlineQuestions();
-                } else if(status === 'voting_spy') {
-                    renderOnlineVoting();
-                } else if(status === 'spy_reveal') {
-                    renderOnlineReveal();
-                } else if(status === 'result') {
-                    renderOnlineResult();
+                    // الكروت والعقوبات
+                    d.players.forEach(p => {
+                        const oldCards = lastKnownCards[p.user_id] || {yellow: 0, red: false};
+                        if (p.yellow_cards > oldCards.yellow || (p.red_card && !oldCards.red)) {
+                            AUDIO.penalty.play().catch(()=>{});
+                        }
+                        lastKnownCards[p.user_id] = {yellow: p.yellow_cards, red: p.red_card};
+                    });
+
+                    return true;
+                } else {
+                    return false;
                 }
+            } catch (err) {
+                console.error("Update room state error:", err);
+                return false;
             }
         }
 
