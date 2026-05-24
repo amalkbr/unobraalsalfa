@@ -491,6 +491,7 @@ async def submit_vote(data: dict):
         vote_type = data['type'] # 'limit' or 'cat'
         val = data['value']
 
+        should_prepare = False
         with conn.cursor() as cur:
             if vote_type == 'limit':
                 cur.execute("UPDATE room_players SET vote_limit = %s WHERE room_code = %s AND user_id = %s", (int(val), room_code, user_id))
@@ -508,15 +509,23 @@ async def submit_vote(data: dict):
                     cur.execute("UPDATE rooms SET win_limit = %s, status = 'voting_cat' WHERE room_code = %s", (winner, room_code))
                 else:
                     cur.execute("UPDATE rooms SET category = %s, status = 'roles_prep' WHERE room_code = %s", (winner, room_code))
-                    # هنا نبدأ بتحضير الأدوار والكلمة السرية
-                    await prepare_round(room_code)
+                    should_prepare = True
 
             conn.commit()
+
+        # Commit and close first before calling prepare_round to prevent deadlocks and connection leaks!
+        conn.close()
+        conn = None
+
+        if should_prepare:
+            await prepare_round(room_code)
+
         return {"success": True}
     except Exception as e:
         print(f"Error in submit_vote: {e}")
         return {"success": False, "msg": str(e)}
-    finally: conn.close()
+    finally:
+        if conn: conn.close()
 
 async def prepare_round(room_code):
     conn = get_db_conn()
@@ -720,6 +729,9 @@ async def online_action(data: dict):
         user_id = data['user_id']
         action = data['action']
 
+        should_calculate_results = False
+        should_prepare_round = False
+
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
             room = cur.fetchone()
@@ -795,11 +807,10 @@ async def online_action(data: dict):
                     # Calculate results
                     cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
                     conn.commit() # Save votes first
-                    await calculate_online_results(room_code)
-                    return {"success": True}
-
-                cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                conn.commit()
+                    should_calculate_results = True
+                else:
+                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                    conn.commit()
 
             elif action == "spy_guess":
                 guess = data['guess']
@@ -832,7 +843,16 @@ async def online_action(data: dict):
 
             elif action == "new_round":
                 if room['host_id'] == user_id:
-                    await prepare_round(room_code)
+                    should_prepare_round = True
+
+        # Commit and close connection first to prevent nested deadlocks!
+        if should_calculate_results or should_prepare_round:
+            conn.close()
+            conn = None
+            if should_calculate_results:
+                await calculate_online_results(room_code)
+            elif should_prepare_round:
+                await prepare_round(room_code)
 
         return {"success": True}
     except Exception as e:
@@ -1068,7 +1088,7 @@ HTML_TEMPLATE = """
         .flex-center { display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction: column; }
         .container { width: 95%; max-width: 500px; text-align: center; padding: 20px; box-sizing: border-box; }
         .card { background: var(--card); padding: 30px; border-radius: 30px; box-shadow: 0 15px 35px rgba(0,0,0,0.6); border: 2px solid #3c339e; animation: fadeIn 0.3s ease; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         .reveal-text { animation: pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
         @keyframes pop { 0% { transform: scale(0.5); } 100% { transform: scale(1); } }
@@ -1087,6 +1107,30 @@ HTML_TEMPLATE = """
         .vote-item { background: #2f278c; padding: 18px; margin: 10px 0; border-radius: 20px; cursor: pointer; transition: 0.2s; font-weight: bold; }
         .vote-item:hover { background: var(--primary); transform: scale(1.02); }
         .hidden { display: none !important; }
+        .toast {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(46, 204, 113, 0.95);
+            color: white;
+            padding: 12px 25px;
+            border-radius: 50px;
+            font-size: 16px;
+            font-weight: bold;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            z-index: 10000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+            direction: rtl;
+            text-align: center;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translate(-50%, -10px);
+        }
         .q-badge { background: var(--error); padding: 4px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 15px; display: inline-block; }
         .shuffling { animation: rotate 1s infinite linear; font-size: 50px; margin: 20px; display:inline-block; }
         .score-item { display: flex; justify-content: space-between; background: #0f0c29; padding: 10px 20px; border-radius: 10px; margin: 5px 0; border: 1px solid #3c339e; }
@@ -1209,6 +1253,7 @@ HTML_TEMPLATE = """
         }
 
         function navigateTo(screen, data = {}, push = true) {
+            lastRenderedHTML = "";
             if (push) {
                 history.pushState({ screen, ...data }, "");
             }
@@ -1353,9 +1398,34 @@ HTML_TEMPLATE = """
 
         // --- Online Logic ---
         let currentRoom = null;
-        let pollInterval = null;
+        let isPolling = false;
+        let pollTimeout = null;
+        let lastRenderedHTML = "";
+
+        function updateMainUI(html) {
+            if (lastRenderedHTML === html) return;
+            lastRenderedHTML = html;
+            document.getElementById('main-ui').innerHTML = html;
+        }
+
+        function showToast(message, isSuccess = true) {
+            let t = document.getElementById('app-toast');
+            if(!t) {
+                t = document.createElement('div');
+                t.id = 'app-toast';
+                t.className = 'toast';
+                document.body.appendChild(t);
+            }
+            t.innerText = message;
+            t.style.background = isSuccess ? 'rgba(46, 204, 113, 0.95)' : 'rgba(235, 77, 75, 0.95)';
+            t.classList.add('show');
+            setTimeout(() => {
+                t.classList.remove('show');
+            }, 2500);
+        }
 
         function showError(message, title = "حدث خطأ ⚠️") {
+            lastRenderedHTML = ""; // ريست للكاش عند عرض الأخطاء
             document.getElementById('main-ui').innerHTML = `
                 <div class="card" style="border-color:var(--error); box-shadow: 0 0 20px rgba(235, 77, 75, 0.4); animation: pop 0.3s ease;">
                     <h2 style="color:var(--error); margin-bottom:15px;">${title}</h2>
@@ -1501,73 +1571,99 @@ HTML_TEMPLATE = """
         }
 
         function startPolling() {
-            if(pollInterval) clearInterval(pollInterval);
-            pollInterval = setInterval(updateRoomState, 2000);
+            if (pollTimeout) clearTimeout(pollTimeout);
+            isPolling = true;
+            pollNext();
         }
 
+        function stopPolling() {
+            isPolling = false;
+            if (pollTimeout) clearTimeout(pollTimeout);
+        }
+
+        async function pollNext() {
+            if (!isPolling || !currentRoom) return;
+            try {
+                await updateRoomState();
+            } catch (e) {
+                console.error("Poll cycle error:", e);
+            }
+            if (isPolling && currentRoom) {
+                pollTimeout = setTimeout(pollNext, 2000);
+            }
+        }
+
+        let activeStatePromise = null;
         async function updateRoomState() {
             if(!currentRoom) return false;
-            try {
-                console.log('updateRoomState fetching', currentRoom);
-                const res = await fetch(`/api/online/room/${currentRoom}`);
-                console.log('updateRoomState status', res.status);
-                if (!res.ok) {
-                    if (res.status === 404) {
-                        alert("تم إغلاق الغرفة أو الرمز غير صحيح");
-                        leaveRoom();
+            if (activeStatePromise) return activeStatePromise;
+
+            activeStatePromise = (async () => {
+                try {
+                    console.log('updateRoomState fetching', currentRoom);
+                    const res = await fetch(`/api/online/room/${currentRoom}`);
+                    console.log('updateRoomState status', res.status);
+                    if (!res.ok) {
+                        if (res.status === 404) {
+                            showError("تم إغلاق الغرفة من قبل المضيف أو انتهت جلسة اللعب.", "الغرفة غير موجودة أو مغلقة");
+                            leaveRoom();
+                            return false;
+                        }
+                        throw new Error("Room fetch failed");
+                    }
+                    const d = await res.json();
+                    console.log('updateRoomState response', d);
+                    if(d.success) {
+                        window.roomData = d;
+                        const status = d.room.status;
+
+                        // التحديث البصري للحالة
+                        if(status === 'waiting') {
+                            renderRoom();
+                        } else if(status === 'voting_limit') {
+                            renderVotingLimit();
+                        } else if(status === 'voting_cat') {
+                            renderVotingCat();
+                        } else if(status === 'playing_roles') {
+                            renderOnlineRoles();
+                        } else if(status === 'playing_questions') {
+                            renderOnlineQuestions();
+                        } else if(status === 'voting_spy') {
+                            renderOnlineVoting();
+                        } else if(status === 'spy_reveal') {
+                            renderOnlineReveal();
+                        } else if(status === 'result') {
+                            renderOnlineResult();
+                        }
+
+                        // التنبيهات الصوتية
+                        if (status !== lastKnownStatus) {
+                            if (status === 'playing_questions') AUDIO.tick.play().catch(()=>{});
+                            if (status === 'result' && d.room.game_data.game_over) AUDIO.success.play().catch(()=>{});
+                            lastKnownStatus = status;
+                        }
+
+                        // الكروت والعقوبات
+                        d.players.forEach(p => {
+                            const oldCards = lastKnownCards[p.user_id] || {yellow: 0, red: false};
+                            if (p.yellow_cards > oldCards.yellow || (p.red_card && !oldCards.red)) {
+                                AUDIO.penalty.play().catch(()=>{});
+                            }
+                            lastKnownCards[p.user_id] = {yellow: p.yellow_cards, red: p.red_card};
+                        });
+
+                        return true;
+                    } else {
                         return false;
                     }
-                    throw new Error("Room fetch failed");
-                }
-                const d = await res.json();
-                console.log('updateRoomState response', d);
-                if(d.success) {
-                    window.roomData = d;
-                    const status = d.room.status;
-
-                    // التحديث البصري للحالة
-                    if(status === 'waiting') {
-                        renderRoom();
-                    } else if(status === 'voting_limit') {
-                        renderVotingLimit();
-                    } else if(status === 'voting_cat') {
-                        renderVotingCat();
-                    } else if(status === 'playing_roles') {
-                        renderOnlineRoles();
-                    } else if(status === 'playing_questions') {
-                        renderOnlineQuestions();
-                    } else if(status === 'voting_spy') {
-                        renderOnlineVoting();
-                    } else if(status === 'spy_reveal') {
-                        renderOnlineReveal();
-                    } else if(status === 'result') {
-                        renderOnlineResult();
-                    }
-
-                    // التنبيهات الصوتية
-                    if (status !== lastKnownStatus) {
-                        if (status === 'playing_questions') AUDIO.tick.play().catch(()=>{});
-                        if (status === 'result' && d.room.game_data.game_over) AUDIO.success.play().catch(()=>{});
-                        lastKnownStatus = status;
-                    }
-
-                    // الكروت والعقوبات
-                    d.players.forEach(p => {
-                        const oldCards = lastKnownCards[p.user_id] || {yellow: 0, red: false};
-                        if (p.yellow_cards > oldCards.yellow || (p.red_card && !oldCards.red)) {
-                            AUDIO.penalty.play().catch(()=>{});
-                        }
-                        lastKnownCards[p.user_id] = {yellow: p.yellow_cards, red: p.red_card};
-                    });
-
-                    return true;
-                } else {
+                } catch (err) {
+                    console.error("Update room state error:", err);
                     return false;
+                } finally {
+                    activeStatePromise = null;
                 }
-            } catch (err) {
-                console.error("Update room state error:", err);
-                return false;
-            }
+            })();
+            return activeStatePromise;
         }
 
         function renderVotingLimit() {
@@ -1582,7 +1678,7 @@ HTML_TEMPLATE = """
                       </button>`;
             });
             h += `</div><p>بانتظار بقية اللاعبين...</p>`;
-            document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+            updateMainUI(`<div class="card">${h}</div>`);
         }
 
         function renderVotingCat() {
@@ -1596,10 +1692,17 @@ HTML_TEMPLATE = """
                       </button>`;
             });
             h += `</div><p>سيتم اختيار الفئة الأكثر تصويتاً</p>`;
-            document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+            updateMainUI(`<div class="card">${h}</div>`);
         }
 
+        let isSendingVote = false;
         async function sendVote(type, value) {
+            if (isSendingVote) return;
+            isSendingVote = true;
+
+            const buttons = document.querySelectorAll('.card button');
+            buttons.forEach(b => b.style.opacity = '0.5');
+
             try {
                 const res = await fetch('/api/online/submit_vote', {
                     method: 'POST',
@@ -1608,12 +1711,17 @@ HTML_TEMPLATE = """
                 });
                 if (!res.ok) throw new Error('Network response was not ok');
                 const d = await res.json();
-                if(!d.success) alert(d.msg || "تعذر إرسال التصويت");
+                if(!d.success) {
+                    showError(d.msg || "تعذر إرسال التصويت", "فشل التصويت");
+                }
             } catch (e) {
                 console.error(e);
-                alert("حدث خطأ في الاتصال بالسيرفر");
+                showError("حدث خطأ في الاتصال بالسيرفر أثناء إرسال التصويت.", "خطأ في الاتصال");
+            } finally {
+                isSendingVote = false;
+                buttons.forEach(b => b.style.opacity = '1');
             }
-            updateRoomState();
+            await updateRoomState();
         }
 
         function renderRoom() {
@@ -1658,14 +1766,14 @@ HTML_TEMPLATE = """
         function copyInviteLink() {
             const url = window.location.origin + '?join=' + currentRoom;
             navigator.clipboard.writeText(url).then(() => {
-                alert("تم نسخ رابط الدعوة! أرسله لأصدقائك.");
+                showToast("🔗 تم نسخ رابط الدعوة! أرسله لأصدقائك.");
             });
         }
 
         function copyRoomCode() {
             if (!currentRoom) return;
             navigator.clipboard.writeText(currentRoom).then(() => {
-                alert("تم نسخ رمز الغرفة: " + currentRoom);
+                showToast("📋 تم نسخ رمز الغرفة: " + currentRoom);
             }).catch(err => {
                 console.error("Failed to copy code: ", err);
                 const tempInput = document.createElement("input");
@@ -1674,7 +1782,7 @@ HTML_TEMPLATE = """
                 tempInput.select();
                 document.execCommand("copy");
                 document.body.removeChild(tempInput);
-                alert("تم نسخ رمز الغرفة: " + currentRoom);
+                showToast("📋 تم نسخ رمز الغرفة: " + currentRoom);
             });
         }
 
@@ -1685,7 +1793,7 @@ HTML_TEMPLATE = """
                 body: JSON.stringify({room_code: code, user_id: currentUser.user_id, player_name: currentUser.player_name})
             });
             const d = await res.json();
-            if(d.success) enterRoom(code); else alert(d.msg);
+            if(d.success) enterRoom(code); else showError(d.msg || "تعذر الانضمام للغرفة.", "فشل الانضمام");
         }
 
         async function startOnlineGame() {
@@ -1698,10 +1806,10 @@ HTML_TEMPLATE = """
                 });
                 if (!res.ok) throw new Error('Network response was not ok');
                 const d = await res.json();
-                if(!d.success) alert(d.msg || "تعذر بدء اللعبة");
+                if(!d.success) showError(d.msg || "تعذر بدء اللعبة", "خطأ في بدء اللعبة");
             } catch (e) {
                 console.error(e);
-                alert("حدث خطأ في الاتصال بالسيرفر");
+                showError("حدث خطأ في الاتصال بالسيرفر أثناء بدء اللعبة.", "خطأ في الاتصال");
             }
         }
 
@@ -1711,18 +1819,18 @@ HTML_TEMPLATE = """
             const isSpy = room.spy_id == currentUser.user_id;
 
             if(me.is_ready) {
-                document.getElementById('main-ui').innerHTML = `<div class="card"><h3>بانتظار بقية اللاعبين...</h3><div class="shuffling">⏳</div></div>`;
+                updateMainUI(`<div class="card"><h3>بانتظار بقية اللاعبين...</h3><div class="shuffling">⏳</div></div>`);
                 return;
             }
 
-            document.getElementById('main-ui').innerHTML = `
+            updateMainUI(`
                 <div class="card">
                     <h3>أنت: <b style="color:var(--accent)">${currentUser.player_name}</b></h3>
                     <div id="box" style="background:#0f0c29; padding:20px; border-radius:20px; margin:20px 0;">
                         <h3>${isSpy ? '🕵️ أنت برة السالفة!' : '🤫 السالفة هي: ' + room.secret_word}</h3>
                     </div>
                     <button onclick="onlineAction('ready_role')">فهمت، جاهز</button>
-                </div>`;
+                </div>`);
         }
 
         async function onlineAction(action, extra = {}) {
@@ -1734,10 +1842,10 @@ HTML_TEMPLATE = """
                 });
                 if (!res.ok) throw new Error('Network response was not ok');
                 const d = await res.json();
-                if(!d.success && d.msg) alert(d.msg);
+                if(!d.success && d.msg) showError(d.msg, "تنبيه ⚠️");
             } catch (e) {
                 console.error(e);
-                alert("حدث خطأ أثناء تنفيذ الإجراء");
+                showError("حدث خطأ أثناء تنفيذ هذا الإجراء بالسيرفر.", "خطأ في الاتصال");
             }
             updateRoomState();
         }
@@ -1754,6 +1862,24 @@ HTML_TEMPLATE = """
             const isAsker = q.asker_id == currentUser.user_id;
             const isAnswerer = q.ans_id == currentUser.user_id;
             const me = players.find(p => p.user_id == currentUser.user_id);
+
+            const elapsed = Math.floor(Date.now()/1000 - (gameData.phase_start || 0));
+            const limit = (q.status === 'answering') ? 20 : 15;
+            const timeLeft = Math.max(0, limit - elapsed);
+
+            if (timeLeft <= 5 && timeLeft > 0) AUDIO.warning.play().catch(()=>{});
+
+            // If questions card is already in the DOM and status matches, we can update the timer text inline to avoid any flashing/flickering!
+            const questionsCard = document.getElementById('questions-card');
+            const stateKey = `${q_idx}_${q.status}_${me.red_card ? 'red' : 'active'}`;
+
+            if (questionsCard && questionsCard.getAttribute('data-state-key') === stateKey) {
+                const timerElem = document.getElementById('questions-timer');
+                if (timerElem) {
+                    timerElem.innerText = `⏱️ الوقت المتبقي: ${timeLeft} ثانية`;
+                }
+                return;
+            }
 
             let h = `<h2>مرحلة الأسئلة</h2>`;
 
@@ -1786,15 +1912,9 @@ HTML_TEMPLATE = """
                 }
             }
 
-            const elapsed = Math.floor(Date.now()/1000 - (gameData.phase_start || 0));
-            const limit = (q.status === 'answering') ? 20 : 15;
-            const timeLeft = Math.max(0, limit - elapsed);
+            h += `<div id="questions-timer" style="margin-top:20px; color:var(--error); font-weight:bold;">⏱️ الوقت المتبقي: ${timeLeft} ثانية</div>`;
 
-            if (timeLeft <= 5 && timeLeft > 0) AUDIO.warning.play().catch(()=>{});
-
-            h += `<div style="margin-top:20px; color:var(--error); font-weight:bold;">⏱️ الوقت المتبقي: ${timeLeft} ثانية</div>`;
-
-            document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+            updateMainUI(`<div class="card" id="questions-card" data-state-key="${stateKey}">${h}</div>`);
         }
 
         async function submitOnlineQuestion() {
@@ -1813,27 +1933,26 @@ HTML_TEMPLATE = """
             const me = players.find(p => p.user_id == currentUser.user_id);
 
             if(me.red_card) {
-                document.getElementById('main-ui').innerHTML = `<div class="card"><h3>أنت مستبعد من التصويت (كرت أحمر)</h3><p>بانتظار بقية اللاعبين...</p><div class="shuffling">⏳</div></div>`;
+                updateMainUI(`<div class="card"><h3>أنت مستبعد من التصويت (كرت أحمر)</h3><p>بانتظار بقية اللاعبين...</p><div class="shuffling">⏳</div></div>`);
                 return;
             }
 
             if(me.is_ready) {
-                document.getElementById('main-ui').innerHTML = `<div class="card"><h3>تم إرسال صوتك...</h3><p>بانتظار بقية اللاعبين...</p><div class="shuffling">⏳</div></div>`;
+                updateMainUI(`<div class="card"><h3>تم إرسال صوتك...</h3><p>بانتظار بقية اللاعبين...</p><div class="shuffling">⏳</div></div>`);
                 return;
             }
 
-            let h = `<h3>صوت سراً: منو اللي برة السالفة؟</h3><div id="vbox"></div>`;
-            document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
-
+            let h = `<h3>صوت سراً: منو اللي برة السالفة؟</h3>
+                     <div id="vbox" style="display:flex; flex-direction:column; gap:10px; margin-top:20px;">`;
             players.forEach(p => {
                 if(p.user_id != currentUser.user_id) {
-                    let btn = document.createElement('button');
-                    btn.className = 'vote-item';
-                    btn.innerText = p.player_name + (p.red_card ? " (مستبعد)" : "");
-                    btn.onclick = () => onlineAction('vote', {target_id: p.user_id});
-                    document.getElementById('vbox').appendChild(btn);
+                    h += `<button class="vote-item" onclick="onlineAction('vote', {target_id: ${p.user_id}})">
+                            ${p.player_name} ${p.red_card ? ' (مستبعد)' : ''}
+                          </button>`;
                 }
             });
+            h += `</div>`;
+            updateMainUI(`<div class="card">${h}</div>`);
         }
 
         function renderOnlineReveal() {
@@ -1846,15 +1965,15 @@ HTML_TEMPLATE = """
                 room.game_data.guesses.forEach(g => {
                     h += `<div class="vote-item" onclick="onlineAction('spy_guess', {guess: '${g.replace(/'/g, "\\'")}'})">${g}</div>`;
                 });
-                document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+                updateMainUI(`<div class="card">${h}</div>`);
             } else {
-                document.getElementById('main-ui').innerHTML = `
+                updateMainUI(`
                     <div class="card">
                         <h1>اللي برة السالفة هو:</h1>
                         <h2 style="color:var(--error); font-size:40px;">${spy.player_name}</h2>
                         <p>بانتظار تخمين الجاسوس...</p>
                         <div class="shuffling">🌀</div>
-                    </div>`;
+                    </div>`);
             }
         }
 
@@ -1874,7 +1993,7 @@ HTML_TEMPLATE = """
                 scoresList += `<div class="score-item"><span>${p.player_name}${cards}</span> <b>${p.score}</b></div>`;
             });
 
-            document.getElementById('main-ui').innerHTML = `
+            updateMainUI(`
                 <div class="card">
                     ${gameOver ? `<h1 style="color:var(--accent)">🏆 الفائز باللعبة: ${winner ? winner.player_name : 'غير معروف'}</h1>` : ''}
                     <h2 style="color:${spyGuessedRight? 'var(--success)':'var(--error)'}">السالفة كانت: ${room.secret_word}</h2>
@@ -1892,7 +2011,7 @@ HTML_TEMPLATE = """
 
         function leaveRoom() {
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'none';
-            clearInterval(pollInterval);
+            stopPolling();
             currentRoom = null;
             showMenu();
         }
