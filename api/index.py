@@ -2006,7 +2006,7 @@ HTML_TEMPLATE = """
                         (isHost ? `<button onclick="onlineAction('new_round')">جولة جديدة</button>` : `<p>بانتظار المضيف لبدء جولة جديدة...</p>`)
                     }
                     <button style="background:#636e72" onclick="leaveRoom()">خروج من الغرفة</button>
-                </div>`;
+                </div>`);
         }
 
         function leaveRoom() {
