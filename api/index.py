@@ -867,6 +867,34 @@ async def get_room(room_code: str):
             finally:
                 conn_new.close()
 
+        # Compute time_left server-side to avoid timezone/clock desync
+        time_left = 0
+        if room:
+            status = room.get('status')
+            game_data = room.get('game_data') or {}
+            if isinstance(game_data, str):
+                try:
+                    game_data = json.loads(game_data)
+                except:
+                    game_data = {}
+            
+            phase_start = game_data.get('phase_start')
+            if phase_start:
+                elapsed = time.time() - phase_start
+                if status in ['voting_limit', 'voting_cat', 'voting_spy']:
+                    time_left = max(0, int(10 - elapsed))
+                elif status == 'playing_questions':
+                    q_idx = game_data.get('q_idx', 0)
+                    q_seq = game_data.get('q_seq', [])
+                    if q_idx < len(q_seq):
+                        curr_q = q_seq[q_idx]
+                        limit = 20 if curr_q.get('status') == 'answering' else 15
+                        time_left = max(0, int(limit - elapsed))
+            
+            room_dict = dict(room)
+            room_dict['time_left'] = time_left
+            room = room_dict
+
         return {"success": True, "room": room, "players": players}
     except Exception as e:
         print(f"Error in get_room: {e}")
@@ -1241,8 +1269,8 @@ HTML_TEMPLATE = """
         :root { --primary: #6c5ce7; --bg: #0f0c29; --card: #1b1464; --accent: #f9ca24; --error: #eb4d4b; --success: #2ecc71; }
         body { font-family: 'Cairo', sans-serif; background: var(--bg); color: white; margin: 0; min-height: 100vh; }
         .flex-center { display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction: column; }
-        .container { width: 95%; max-width: 500px; text-align: center; padding: 20px; box-sizing: border-box; }
-        .card { background: var(--card); padding: 30px; border-radius: 30px; box-shadow: 0 15px 35px rgba(0,0,0,0.6); border: 2px solid #3c339e; animation: fadeIn 0.3s ease; }
+        .container { width: 98%; max-width: 500px; text-align: center; padding: 5px; box-sizing: border-box; }
+        .card { background: var(--card); padding: 24px 16px; border-radius: 24px; box-shadow: 0 15px 35px rgba(0,0,0,0.6); border: 2px solid #3c339e; animation: fadeIn 0.3s ease; width: 100%; box-sizing: border-box; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         .reveal-text { animation: pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
@@ -1396,9 +1424,142 @@ HTML_TEMPLATE = """
             word-break: break-word;
         }
 
+        /* Q&A Chat Layout Styles */
+        .qa-chat-layout {
+            display: flex;
+            flex-direction: column;
+            height: 520px; /* fixed height for chat card */
+            max-height: 75vh;
+            text-align: right;
+            direction: rtl;
+        }
+        .qa-chat-header-main {
+            padding-bottom: 12px;
+            border-bottom: 2px solid #2f278c;
+            margin-bottom: 10px;
+        }
+        .qa-chat-header-main h2 {
+            margin: 0 0 6px 0;
+            font-size: 22px;
+            color: #a29bfe;
+        }
+        .qa-current-turn {
+            font-size: 15px;
+            background: rgba(255,255,255,0.05);
+            padding: 6px 12px;
+            border-radius: 12px;
+            display: inline-block;
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+        .qa-chat-scroll-area {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 10px 5px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-bottom: 15px;
+            background: rgba(15, 12, 41, 0.4);
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.05);
+            box-shadow: inset 0 4px 15px rgba(0,0,0,0.4);
+            scroll-behavior: smooth;
+        }
+        .qa-chat-scroll-area::-webkit-scrollbar {
+            width: 5px;
+        }
+        .qa-chat-scroll-area::-webkit-scrollbar-thumb {
+            background: var(--primary);
+            border-radius: 10px;
+        }
+        .chat-message-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .chat-bubble {
+            max-width: 85%;
+            padding: 10px 14px;
+            border-radius: 18px;
+            font-size: 15px;
+            line-height: 1.5;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            animation: pop 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.15);
+        }
+        .bubble-asker {
+            background: linear-gradient(135deg, #2c256b, #1b1464);
+            align-self: flex-start;
+            border-bottom-right-radius: 4px;
+            border: 1px solid #3c339e;
+        }
+        .bubble-answerer {
+            background: linear-gradient(135deg, #10ac84, #0f9b76);
+            align-self: flex-end;
+            border-bottom-left-radius: 4px;
+            color: white;
+        }
+        .bubble-typing {
+            background: rgba(255,255,255,0.06);
+            align-self: center;
+            border: 1px dashed rgba(255,255,255,0.15);
+            color: #9aa0b4;
+            font-style: italic;
+            text-align: center;
+        }
+        .bubble-sender {
+            font-size: 11px;
+            font-weight: bold;
+            opacity: 0.85;
+            margin-bottom: 4px;
+        }
+        .bubble-content {
+            word-break: break-word;
+        }
+        .qa-chat-footer-input {
+            border-top: 2px solid #2f278c;
+            padding-top: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .qa-timer-badge {
+            align-self: center;
+            font-size: 14px;
+            font-weight: bold;
+            color: var(--error);
+            background: rgba(235, 77, 75, 0.1);
+            padding: 4px 12px;
+            border-radius: 8px;
+            border: 1px solid rgba(235, 77, 75, 0.2);
+        }
+        .qa-input-box-wrapper {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .qa-typing-status {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            padding: 12px;
+            text-align: center;
+            font-size: 14px;
+            color: #9aa0b4;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        @keyframes typing-dots {
+            0%, 20% { content: "."; }
+            40% { content: ".."; }
+            60% { content: "..."; }
+            80%, 100% { content: ""; }
+        }
+        .typing-dots::after {
+            content: "";
+            animation: typing-dots 1.5s infinite;
+        }
+
         /* Responsive styling for larger screen devices */
         @media (min-width: 600px) {
-            .container { max-width: 700px; width: 90%; }
+            .container { max-width: 850px; width: 95%; }
             .card { padding: 45px 35px; border-radius: 40px; }
             button { font-size: 22px; padding: 20px; border-radius: 22px; }
             input, select { font-size: 20px; padding: 20px; border-radius: 20px; }
@@ -1406,7 +1567,7 @@ HTML_TEMPLATE = """
             h2 { font-size: 34px; }
             h3 { font-size: 28px; }
             .vote-item { font-size: 20px; padding: 22px; }
-            .qa-chat-body { max-height: 250px; }
+            .qa-chat-body { max-height: 350px; }
         }
     </style>
 </head>
@@ -1829,6 +1990,28 @@ HTML_TEMPLATE = """
             }
         }
 
+        let onlineTimerInterval = null;
+        let onlineTimeLeft = 0;
+        function startOnlineCountdown(timeLeft, elementId, templateFn) {
+            onlineTimeLeft = timeLeft;
+            const elem = document.getElementById(elementId);
+            if (elem) elem.innerText = templateFn(onlineTimeLeft);
+
+            if (onlineTimerInterval) clearInterval(onlineTimerInterval);
+            onlineTimerInterval = setInterval(() => {
+                if (onlineTimeLeft > 0) {
+                    onlineTimeLeft--;
+                    const el = document.getElementById(elementId);
+                    if (el) el.innerText = templateFn(onlineTimeLeft);
+                    if (onlineTimeLeft <= 5 && onlineTimeLeft > 0 && elementId === 'questions-timer') {
+                        AUDIO.warning.play().catch(()=>{});
+                    }
+                } else {
+                    clearInterval(onlineTimerInterval);
+                }
+            }, 1000);
+        }
+
         let activeStatePromise = null;
         async function updateRoomState() {
             if(!currentRoom) return false;
@@ -1852,6 +2035,11 @@ HTML_TEMPLATE = """
                     if(d.success) {
                         window.roomData = d;
                         const status = d.room.status;
+
+                        // Ensure exit button is visible to ALL players since they are in an active room!
+                        if(document.getElementById('global-exit-btn')) {
+                            document.getElementById('global-exit-btn').style.display = 'block';
+                        }
 
                         // التحديث البصري للحالة
                         if(status === 'waiting') {
@@ -1906,9 +2094,7 @@ HTML_TEMPLATE = """
             const {room, players} = window.roomData;
             const myVote = players.find(p => p.user_id == currentUser.user_id)?.vote_limit;
             
-            const gameData = room.game_data || {};
-            const elapsed = Math.floor(Date.now()/1000 - (gameData.phase_start || 0));
-            const timeLeft = Math.max(0, 10 - elapsed);
+            const timeLeft = room.time_left ?? 0;
 
             const limitCard = document.getElementById('voting-limit-card');
             if (limitCard) {
@@ -1919,10 +2105,7 @@ HTML_TEMPLATE = """
                     btn.style.background = isSelected ? 'var(--success)' : '';
                     btn.innerHTML = `${val} نقطة ${isSelected ? '✅' : ''}`;
                 });
-                const timerElem = document.getElementById('voting-limit-timer');
-                if (timerElem) {
-                    timerElem.innerText = `⏱️ الوقت المتبقي للتصويت: ${timeLeft} ثانية`;
-                }
+                startOnlineCountdown(timeLeft, 'voting-limit-timer', (t) => `⏱️ الوقت المتبقي للتصويت: ${t} ثانية`);
                 return;
             }
 
@@ -1939,15 +2122,14 @@ HTML_TEMPLATE = """
                   <div id="voting-limit-timer" style="margin-top:20px; color:var(--error); font-weight:bold; font-size:18px;">⏱️ الوقت المتبقي للتصويت: ${timeLeft} ثانية</div>
                   <p>بانتظار بقية اللاعبين...</p>`;
             updateMainUI(`<div class="card" id="voting-limit-card">${h}</div>`);
+            startOnlineCountdown(timeLeft, 'voting-limit-timer', (t) => `⏱️ الوقت المتبقي للتصويت: ${t} ثانية`);
         }
 
         function renderVotingCat() {
             const {room, players} = window.roomData;
             const myVote = players.find(p => p.user_id == currentUser.user_id)?.vote_cat;
             
-            const gameData = room.game_data || {};
-            const elapsed = Math.floor(Date.now()/1000 - (gameData.phase_start || 0));
-            const timeLeft = Math.max(0, 10 - elapsed);
+            const timeLeft = room.time_left ?? 0;
 
             const catCard = document.getElementById('voting-cat-card');
             if (catCard) {
@@ -1958,10 +2140,7 @@ HTML_TEMPLATE = """
                     btn.style.background = isSelected ? 'var(--success)' : '';
                     btn.innerHTML = `${cat} ${isSelected ? '✅' : ''}`;
                 });
-                const timerElem = document.getElementById('voting-cat-timer');
-                if (timerElem) {
-                    timerElem.innerText = `⏱️ الوقت المتبقي للتصويت: ${timeLeft} ثانية`;
-                }
+                startOnlineCountdown(timeLeft, 'voting-cat-timer', (t) => `⏱️ الوقت المتبقي للتصويت: ${t} ثانية`);
                 return;
             }
 
@@ -1977,6 +2156,7 @@ HTML_TEMPLATE = """
                   <div id="voting-cat-timer" style="margin-top:20px; color:var(--error); font-weight:bold; font-size:18px;">⏱️ الوقت المتبقي للتصويت: ${timeLeft} ثانية</div>
                   <p>سيتم اختيار الفئة الأكثر تصويتاً</p>`;
             updateMainUI(`<div class="card" id="voting-cat-card">${h}</div>`);
+            startOnlineCountdown(timeLeft, 'voting-cat-timer', (t) => `⏱️ الوقت المتبقي للتصويت: ${t} ثانية`);
         }
 
         let isSendingVote = false;
@@ -2152,23 +2332,27 @@ HTML_TEMPLATE = """
 
             let chatHtml = `<div class="qa-chat-container">
                 <div class="qa-chat-header">💬 سجل الأسئلة والأجوبة السابقة</div>
-                <div class="qa-chat-body">`;
+                <div class="qa-chat-body" id="qa-compact-chat-scroll" style="max-height:160px; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding:10px;">`;
             
             completed.forEach(q => {
                 chatHtml += `
-                    <div class="qa-chat-item">
-                        <div class="qa-chat-q">
-                            <span class="qa-chat-badge asker">🙋‍♂️ ${q.asker_name}:</span>
-                            <span class="qa-chat-text">${escapeHtml(q.question)}</span>
+                    <div class="chat-message-group">
+                        <div class="chat-bubble bubble-asker" style="font-size:13px; padding:8px 12px; border-radius:12px; width:fit-content; max-width:85%;">
+                            <div class="bubble-sender">🙋‍♂️ ${q.asker_name}</div>
+                            <div class="bubble-content">${escapeHtml(q.question)}</div>
                         </div>
-                        <div class="qa-chat-a">
-                            <span class="qa-chat-badge answerer">💬 ${q.ans_name}:</span>
-                            <span class="qa-chat-text">${escapeHtml(q.answer)}</span>
+                        <div class="chat-bubble bubble-answerer" style="font-size:13px; padding:8px 12px; border-radius:12px; width:fit-content; max-width:85%; align-self:flex-end;">
+                            <div class="bubble-sender">💬 ${q.ans_name}</div>
+                            <div class="bubble-content">${escapeHtml(q.answer)}</div>
                         </div>
                     </div>`;
             });
             
             chatHtml += `</div></div>`;
+            setTimeout(() => {
+                const compactScroll = document.getElementById('qa-compact-chat-scroll');
+                if (compactScroll) compactScroll.scrollTop = compactScroll.scrollHeight;
+            }, 50);
             return chatHtml;
         }
 
@@ -2185,59 +2369,120 @@ HTML_TEMPLATE = """
             const isAnswerer = q.ans_id == currentUser.user_id;
             const me = players.find(p => p.user_id == currentUser.user_id);
 
-            const elapsed = Math.floor(Date.now()/1000 - (gameData.phase_start || 0));
-            const limit = (q.status === 'answering') ? 20 : 15;
-            const timeLeft = Math.max(0, limit - elapsed);
-
-            if (timeLeft <= 5 && timeLeft > 0) AUDIO.warning.play().catch(()=>{});
-
-            // If questions card is already in the DOM and status matches, we can update the timer text inline to avoid any flashing/flickering!
-            const questionsCard = document.getElementById('questions-card');
+            const timeLeft = room.time_left ?? 0;
             const stateKey = `${q_idx}_${q.status}_${me.red_card ? 'red' : 'active'}`;
 
+            // If questions card is already in the DOM and status matches, we only update the timer via interval to avoid losing focus!
+            const questionsCard = document.getElementById('questions-card');
             if (questionsCard && questionsCard.getAttribute('data-state-key') === stateKey) {
-                const timerElem = document.getElementById('questions-timer');
-                if (timerElem) {
-                    timerElem.innerText = `⏱️ الوقت المتبقي: ${timeLeft} ثانية`;
-                }
                 return;
             }
 
-            let h = `<h2>مرحلة الأسئلة</h2>`;
+            // Build scrollable chat content
+            let chatHtml = "";
+            q_seq.forEach((item, idx) => {
+                if (item.status === 'done') {
+                    chatHtml += `
+                        <div class="chat-message-group">
+                            <div class="chat-bubble bubble-asker">
+                                <div class="bubble-sender">🙋‍♂️ ${item.asker_name}:</div>
+                                <div class="bubble-content">${escapeHtml(item.question)}</div>
+                            </div>
+                            <div class="chat-bubble bubble-answerer">
+                                <div class="bubble-sender">💬 ${item.ans_name}:</div>
+                                <div class="bubble-content">${escapeHtml(item.answer)}</div>
+                            </div>
+                        </div>`;
+                } else if (idx === q_idx) {
+                    if (item.status === 'answering') {
+                        chatHtml += `
+                            <div class="chat-message-group">
+                                <div class="chat-bubble bubble-asker">
+                                    <div class="bubble-sender">🙋‍♂️ ${item.asker_name}:</div>
+                                    <div class="bubble-content">${escapeHtml(item.question)}</div>
+                                </div>
+                                <div class="chat-bubble bubble-typing">
+                                    <div class="bubble-sender">💬 ${item.ans_name}:</div>
+                                    <div class="bubble-content">جاري كتابة الإجابة... <span class="typing-dots"></span></div>
+                                </div>
+                            </div>`;
+                    } else if (item.status === 'pending' || item.status === 'asking') {
+                        chatHtml += `
+                            <div class="chat-message-group">
+                                <div class="chat-bubble bubble-typing">
+                                    <div class="bubble-sender">🙋‍♂️ ${item.asker_name}:</div>
+                                    <div class="bubble-content">جاري كتابة السؤال... <span class="typing-dots"></span></div>
+                                </div>
+                            </div>`;
+                    }
+                }
+            });
 
-            if(me.red_card) {
-                h += `<p style="color:var(--error); font-weight:bold;">❌ أنت مستبعد (كرت أحمر)</p>`;
+            // Footer inputs
+            let inputHtml = "";
+            if (me.red_card) {
+                inputHtml = `<div class="qa-typing-status" style="color:var(--error); font-weight:bold;">❌ أنت مستبعد من هذه الجولة (كرت أحمر)</div>`;
+            } else if (q.status === 'pending' || q.status === 'asking') {
+                if (isAsker) {
+                    inputHtml = `
+                        <div style="display: flex; gap: 8px;">
+                            <input id="online_q_input" placeholder="اكتب سؤالك لـ ${q.ans_name}..." style="margin: 0; flex-grow: 1;">
+                            <button onclick="submitOnlineQuestion()" style="margin: 0; width: auto; padding: 12px 20px;">إرسال 🚀</button>
+                        </div>`;
+                } else {
+                    inputHtml = `<div class="qa-typing-status">⏳ بانتظار <b style="color:var(--accent)">${q.asker_name}</b> ليكتب السؤال...</div>`;
+                }
+            } else if (q.status === 'answering') {
+                if (isAnswerer) {
+                    inputHtml = `
+                        <div style="display: flex; gap: 8px;">
+                            <input id="online_a_input" placeholder="اكتب إجابتك هنا..." style="margin: 0; flex-grow: 1;">
+                            <button onclick="submitOnlineAnswer()" style="margin: 0; width: auto; padding: 12px 20px;">إرسال 🚀</button>
+                        </div>`;
+                } else {
+                    inputHtml = `<div class="qa-typing-status">⏳ بانتظار <b style="color:var(--accent)">${q.ans_name}</b> ليرد على السؤال...</div>`;
+                }
             }
 
-            h += `<div style="font-size:20px; margin:20px 0;">
-                    <b style="color:var(--primary)">${q.asker_name}</b> يسأل <b style="color:var(--error)">${q.ans_name}</b>
-                  </div>`;
+            let fullHtml = `
+                <div class="qa-chat-layout">
+                    <!-- Header -->
+                    <div class="qa-chat-header-main">
+                        <h2>💬 مرحلة الأسئلة والدردشة</h2>
+                        <div class="qa-current-turn">
+                            <span style="color: var(--primary); font-weight: bold;">${q.asker_name}</span> 
+                            👈 
+                            <span style="color: var(--error); font-weight: bold;">${q.ans_name}</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Chat Scroll -->
+                    <div class="qa-chat-scroll-area" id="qa-chat-scroll">
+                        ${chatHtml || '<p style="text-align:center; color:#9aa0b4; margin-top:20px;">لا توجد أسئلة سابقة بعد. الجولة تبدأ الآن!</p>'}
+                    </div>
+                    
+                    <!-- Footer Input Area -->
+                    <div class="qa-chat-footer-input">
+                        <div id="questions-timer" class="qa-timer-badge">⏱️ الوقت المتبقي: ${timeLeft} ثانية</div>
+                        <div class="qa-input-box-wrapper">
+                            ${inputHtml}
+                        </div>
+                    </div>
+                </div>
+            `;
 
-            if(q.status === 'pending' || q.status === 'asking') {
-                if(isAsker && !me.red_card) {
-                    h += `<input id="online_q_input" placeholder="اكتب سؤالك هنا...">
-                          <button onclick="submitOnlineQuestion()">إرسال السؤال</button>`;
-                } else {
-                    h += `<p>بانتظار <b style="color:var(--accent)">${q.asker_name}</b> ليكتب السؤال...</p>
-                          <div class="shuffling">⏳</div>`;
+            updateMainUI(`<div class="card" id="questions-card" data-state-key="${stateKey}" style="padding: 15px; border-radius: 20px;">${fullHtml}</div>`);
+            
+            // Auto scroll to bottom
+            setTimeout(() => {
+                const scrollArea = document.getElementById('qa-chat-scroll');
+                if (scrollArea) {
+                    scrollArea.scrollTop = scrollArea.scrollHeight;
                 }
-            } else if(q.status === 'answering') {
-                h += `<div style="background:rgba(255,255,255,0.1); padding:15px; border-radius:15px; margin:15px 0;">
-                        <b>السؤال:</b> ${q.question}
-                      </div>`;
-                if(isAnswerer && !me.red_card) {
-                    h += `<input id="online_a_input" placeholder="اكتب إجابتك هنا...">
-                          <button onclick="submitOnlineAnswer()">إرسال الإجابة</button>`;
-                } else {
-                    h += `<p>بانتظار <b style="color:var(--accent)">${q.ans_name}</b> ليرد على السؤال...</p>
-                          <div class="shuffling">⏳</div>`;
-                }
-            }
+            }, 50);
 
-            h += `<div id="questions-timer" style="margin-top:20px; color:var(--error); font-weight:bold;">⏱️ الوقت المتبقي: ${timeLeft} ثانية</div>`;
-            h += buildQAChatHistory();
-
-            updateMainUI(`<div class="card" id="questions-card" data-state-key="${stateKey}">${h}</div>`);
+            // Start countdown
+            startOnlineCountdown(timeLeft, 'questions-timer', (t) => `⏱️ الوقت المتبقي: ${t} ثانية`);
         }
 
         async function submitOnlineQuestion() {
@@ -2255,9 +2500,7 @@ HTML_TEMPLATE = """
             const {room, players} = window.roomData;
             const me = players.find(p => p.user_id == currentUser.user_id);
 
-            const gameData = room.game_data || {};
-            const elapsed = Math.floor(Date.now()/1000 - (gameData.phase_start || 0));
-            const timeLeft = Math.max(0, 10 - elapsed);
+            const timeLeft = room.time_left ?? 0;
 
             if(me.red_card) {
                 updateMainUI(`<div class="card"><h3>أنت مستبعد من التصويت (كرت أحمر)</h3><p>بانتظار بقية اللاعبين...</p><div class="shuffling">⏳</div></div>`);
@@ -2271,10 +2514,7 @@ HTML_TEMPLATE = """
 
             const votingCard = document.getElementById('online-voting-card');
             if (votingCard) {
-                const timerElem = document.getElementById('online-voting-timer');
-                if (timerElem) {
-                    timerElem.innerText = `⏱️ الوقت المتبقي للتصويت: ${timeLeft} ثانية`;
-                }
+                startOnlineCountdown(timeLeft, 'online-voting-timer', (t) => `⏱️ الوقت المتبقي للتصويت: ${t} ثانية`);
                 return;
             }
 
@@ -2291,6 +2531,7 @@ HTML_TEMPLATE = """
                   <div id="online-voting-timer" style="margin-top:20px; color:var(--error); font-weight:bold; font-size:18px;">⏱️ الوقت المتبقي للتصويت: ${timeLeft} ثانية</div>`;
             h += buildQAChatHistory();
             updateMainUI(`<div class="card" id="online-voting-card">${h}</div>`);
+            startOnlineCountdown(timeLeft, 'online-voting-timer', (t) => `⏱️ الوقت المتبقي للتصويت: ${t} ثانية`);
         }
 
         function renderOnlineReveal() {
