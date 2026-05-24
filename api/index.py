@@ -50,28 +50,30 @@ def init_db():
         with conn.cursor() as cur:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
-                    user_id SERIAL PRIMARY KEY,
+                    user_id BIGINT PRIMARY KEY,
                     username_key TEXT UNIQUE,
                     password_key TEXT,
                     player_name TEXT,
-                    is_registered BOOLEAN DEFAULT FALSE
+                    is_registered BOOLEAN DEFAULT FALSE,
+                    total_wins INTEGER DEFAULT 0,
+                    saved_players JSONB DEFAULT '[]'
                 );
                 CREATE TABLE IF NOT EXISTS rooms (
                     room_code TEXT PRIMARY KEY,
-                    host_id INTEGER,
+                    host_id BIGINT,
                     status TEXT DEFAULT 'waiting', -- waiting, voting_limit, voting_cat, playing, voting_spy, result
                     category TEXT,
                     win_limit INTEGER DEFAULT 5,
-                    current_turn_asker INTEGER,
-                    current_turn_answerer INTEGER,
+                    current_turn_asker BIGINT,
+                    current_turn_answerer BIGINT,
                     secret_word TEXT,
-                    spy_id INTEGER,
+                    spy_id BIGINT,
                     game_data JSONB DEFAULT '{}', -- {messages: [], cards: {}, votes: {}}
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 CREATE TABLE IF NOT EXISTS room_players (
                     room_code TEXT REFERENCES rooms(room_code) ON DELETE CASCADE,
-                    user_id INTEGER,
+                    user_id BIGINT,
                     player_name TEXT,
                     score INTEGER DEFAULT 0,
                     is_ready BOOLEAN DEFAULT FALSE,
@@ -104,8 +106,17 @@ def init_db():
                 INSERT INTO settings (key, value) VALUES ('sound_reveal', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
                 INSERT INTO settings (key, value) VALUES ('sound_win', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
                 INSERT INTO settings (key, value) VALUES ('sound_fail', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
+                -- تحويل الأعمدة لتدعم أرقام تيليجرام الكبيرة
+                ALTER TABLE users ALTER COLUMN user_id TYPE BIGINT;
+                ALTER TABLE rooms ALTER COLUMN host_id TYPE BIGINT;
+                ALTER TABLE rooms ALTER COLUMN current_turn_asker TYPE BIGINT;
+                ALTER TABLE rooms ALTER COLUMN current_turn_answerer TYPE BIGINT;
+                ALTER TABLE rooms ALTER COLUMN spy_id TYPE BIGINT;
+                ALTER TABLE room_players ALTER COLUMN user_id TYPE BIGINT;
+
                 -- تحديث جدول المستخدمين ليشمل إحصائيات
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS total_wins INTEGER DEFAULT 0;
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS online_points INTEGER DEFAULT 0;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS saved_players JSONB DEFAULT '[]';
                 ALTER TABLE room_players ADD COLUMN IF NOT EXISTS join_order SERIAL;
                 ALTER TABLE categories ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0;
@@ -262,17 +273,44 @@ async def start_game(data: dict):
 @app.post("/api/online/create")
 async def create_room(data: dict):
     conn = get_db_conn()
-    if not conn: return {"success": False, "msg": "DB Error"}
+    if not conn: return {"success": False, "msg": "فشل الاتصال بقاعدة البيانات"}
     try:
+        uid_raw = data.get('user_id')
+        if uid_raw is None:
+            return {"success": False, "msg": "معرف المستخدم مفقود. يرجى إعادة تسجيل الدخول."}
+
+        user_id = int(uid_raw)
+        player_name = str(data.get('player_name', 'لاعب'))
         room_code = ''.join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=5))
+
         with conn.cursor() as cur:
+            # 1. ضمان وجود المستخدم في جدول users أولاً لتجنب خطأ Foreign Key
+            # نستخدم ON CONFLICT للتعامل مع وجوده مسبقاً
+            cur.execute("""
+                INSERT INTO users (user_id, player_name, is_registered)
+                VALUES (%s, %s, TRUE)
+                ON CONFLICT (user_id) DO UPDATE SET player_name = EXCLUDED.player_name
+            """, (user_id, player_name))
+
+            # 2. إنشاء الغرفة
             cur.execute("INSERT INTO rooms (room_code, host_id, status) VALUES (%s, %s, 'waiting')",
-                        (room_code, data['user_id']))
-            cur.execute("INSERT INTO room_players (room_code, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)",
-                        (room_code, data['user_id'], data['player_name']))
+                        (room_code, user_id))
+
+            # 3. إضافة المنشئ كلاعب أول
+            cur.execute("""
+                INSERT INTO room_players (room_code, user_id, player_name, is_ready)
+                VALUES (%s, %s, %s, TRUE)
+                ON CONFLICT (room_code, user_id) DO UPDATE SET is_ready = TRUE
+            """, (room_code, user_id, player_name))
+
             conn.commit()
         return {"success": True, "room_code": room_code}
-    finally: conn.close()
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"CRITICAL ERROR in create_room: {e}")
+        return {"success": False, "msg": f"خطأ تقني: {str(e)}"}
+    finally:
+        if conn: conn.close()
 
 @app.post("/api/online/join")
 async def join_room(data: dict):
@@ -698,6 +736,16 @@ async def get_words():
 
 # --- Admin Dashboard APIs ---
 
+@app.get("/api/online/rankings")
+async def get_online_rankings():
+    conn = get_db_conn()
+    if not conn: return []
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT player_name, online_points FROM users WHERE online_points > 0 ORDER BY online_points DESC LIMIT 50")
+            return cur.fetchall()
+    finally: conn.close()
+
 @app.get("/api/admin/players")
 async def admin_get_players():
     conn = get_db_conn()
@@ -996,6 +1044,7 @@ HTML_TEMPLATE = """
                 case 'online_menu': showOnlineMenu(false); break;
                 case 'setup': showSetup(data.step, false); break;
                 case 'reports': showReports(false); break;
+                case 'global_rankings': showGlobalRankings(false); break;
                 case 'edit_profile': showEditProfile(false); break;
                 case 'admin': showAdminDashboard(false); break;
             }
@@ -1102,7 +1151,7 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>اللعب أونلاين</h1>
-                    <button style="background:var(--success)" onclick="createRoom()">إنشاء غرفة جديدة</button>
+                    <button style="background:var(--success)" onclick="createRoom(event)">إنشاء غرفة جديدة</button>
                     <div style="margin:20px 0;">
                         <input id="join_code" placeholder="رمز الغرفة (مثال: ABCD)" style="text-transform:uppercase">
                         <button onclick="joinRoom()">دخول غرفة</button>
@@ -1111,14 +1160,48 @@ HTML_TEMPLATE = """
                 </div>`;
         }
 
-        async function createRoom() {
-            const res = await fetch('/api/online/create', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({user_id: currentUser.user_id, player_name: currentUser.player_name})
-            });
-            const d = await res.json();
-            if(d.success) enterRoom(d.room_code);
+        async function createRoom(e) {
+            if (!currentUser || !currentUser.user_id) {
+                alert("بيانات المستخدم غير مكتملة. يرجى تسجيل الخروج والدخول مرة أخرى.");
+                console.error("Missing currentUser or user_id:", currentUser);
+                return;
+            }
+
+            const btn = e ? e.target : null;
+            let originalText = "";
+            if (btn) {
+                originalText = btn.innerText;
+                btn.disabled = true;
+                btn.innerText = "جاري الإنشاء...";
+            }
+
+            try {
+                const res = await fetch('/api/online/create', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        user_id: currentUser.user_id,
+                        player_name: currentUser.player_name || "لاعب مجهول"
+                    })
+                });
+
+                if (!res.ok) throw new Error("Server response not OK");
+
+                const d = await res.json();
+                if(d.success) {
+                    await enterRoom(d.room_code);
+                } else {
+                    alert(d.msg || "فشل إنشاء الغرفة");
+                }
+            } catch(err) {
+                alert("حدث خطأ في الاتصال بالسيرفر. تأكد من اتصال الإنترنت.");
+                console.error("Create Room Error:", err);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerText = originalText;
+                }
+            }
         }
 
         async function joinRoom() {
@@ -1133,10 +1216,11 @@ HTML_TEMPLATE = """
             if(d.success) enterRoom(code); else alert(d.msg);
         }
 
-        function enterRoom(code) {
+        async function enterRoom(code) {
             currentRoom = code;
+            document.getElementById('main-ui').innerHTML = `<div class="card">جاري دخول الغرفة...</div>`;
+            await updateRoomState();
             startPolling();
-            renderRoom();
         }
 
         function startPolling() {
@@ -1146,11 +1230,13 @@ HTML_TEMPLATE = """
 
         async function updateRoomState() {
             if(!currentRoom) return;
-            const res = await fetch(`/api/online/room/${currentRoom}`);
-            const d = await res.json();
-            if(d.success) {
-                window.roomData = d;
-                const status = d.room.status;
+            try {
+                const res = await fetch(`/api/online/room/${currentRoom}`);
+                const d = await res.json();
+                if(d.success) {
+                    window.roomData = d;
+                    const status = d.room.status;
+                    // ... (بقية الكود)
 
                 // --- Audio Feedback Logic ---
                 if (status !== lastKnownStatus) {
@@ -2674,11 +2760,15 @@ HTML_TEMPLATE = """
             manageWords(cat);
         }
 
-        async function showReports(push = true) {
+        function showReports(push = true) {
             if(push) {
                 history.pushState({screen: 'reports'}, "");
                 toggleSidebar();
             }
+            renderReportsUI();
+        }
+
+        async function renderReportsUI() {
             // تحديث بيانات المستخدم للحصول على أحدث النقاط للاعبين المحليين
             const resAuth = await fetch('/api/auth/login', {
                 method: 'POST',
@@ -2694,7 +2784,12 @@ HTML_TEMPLATE = """
             let players = (currentUser.saved_players || []).map(p => typeof p === 'string' ? {name: p, wins: 0} : p);
             players.sort((a, b) => (b.wins || 0) - (a.wins || 0));
 
-            let h = `<h2>📊 تقارير لاعبيك المحليين</h2>
+            let h = `
+                <div style="display:flex; gap:5px; margin-bottom:15px;">
+                    <button style="flex:1; margin:0; background:var(--primary); font-size:14px;" disabled>📊 محلي</button>
+                    <button style="flex:1; margin:0; background:rgba(255,255,255,0.1); font-size:14px;" onclick="navigateTo('global_rankings')">🌍 عالمي (أونلاين)</button>
+                </div>
+                <h2>📊 تقارير لاعبيك المحليين</h2>
                 <p style="font-size:14px; color:#aaa;">ترتيب اللاعبين الذين أضفتهم حسب عدد مرات الفوز</p>
                 <div style="max-height:400px; overflow-y:auto; margin:15px 0;">`;
 
@@ -2722,6 +2817,52 @@ HTML_TEMPLATE = """
 
             h += `</div><button onclick="navigateTo('menu')">رجوع</button>`;
             document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+        }
+
+        async function showGlobalRankings(push = true) {
+            if(push) {
+                history.pushState({screen: 'global_rankings'}, "");
+                if(document.getElementById('sidebar').classList.contains('open')) toggleSidebar();
+            }
+            showLoading("جاري تحميل الترتيب العالمي...");
+            try {
+                const res = await fetch('/api/online/rankings');
+                const rankings = await res.json();
+
+                let h = `
+                    <div style="display:flex; gap:5px; margin-bottom:15px;">
+                        <button style="flex:1; margin:0; background:rgba(255,255,255,0.1); font-size:14px;" onclick="navigateTo('reports')">📊 محلي</button>
+                        <button style="flex:1; margin:0; background:var(--primary); font-size:14px;" disabled>🌍 عالمي (أونلاين)</button>
+                    </div>
+                    <h2>🌍 المتصدرين عالمياً</h2>
+                    <p style="font-size:14px; color:#aaa;">أفضل 50 لاعباً في وضع الأونلاين</p>
+                    <div style="max-height:400px; overflow-y:auto; margin:15px 0;">`;
+
+                if(rankings.length === 0) {
+                    h += `<p style="padding:40px;">لا يوجد لاعبين في الترتيب حالياً.</p>`;
+                } else {
+                    rankings.forEach((p, i) => {
+                        let medal = "";
+                        if(i === 0) medal = "🥇 ";
+                        else if(i === 1) medal = "🥈 ";
+                        else if(i === 2) medal = "🥉 ";
+
+                        h += `<div class="score-item" style="border-left: 4px solid ${i<3 ? 'var(--accent)' : '#333'}">
+                            <div style="text-align:right">
+                                <b>${medal}${p.player_name}</b>
+                            </div>
+                            <div style="text-align:left">
+                                <b style="color:var(--accent)">${p.online_points}</b> <small>نقطة</small>
+                            </div>
+                        </div>`;
+                    });
+                }
+
+                h += `</div><button onclick="navigateTo('menu')">رجوع</button>`;
+                document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
+            } catch(e) {
+                document.getElementById('main-ui').innerHTML = `<div class="card"><h2>فشل تحميل البيانات</h2><button onclick="navigateTo('menu')">رجوع</button></div>`;
+            }
         }
         function confirmExitGame() {
             if(confirm("هل أنت متأكد أنك تريد إلغاء اللعبة والعودة للقائمة الرئيسية؟")) {
