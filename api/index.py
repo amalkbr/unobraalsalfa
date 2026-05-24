@@ -10,6 +10,8 @@ from psycopg2.extras import RealDictCursor
 app = FastAPI()
 
 # --- Database Connection ---
+DB_INITIALIZED = False
+
 def get_db_conn():
     db_url = os.environ.get('DATABASE_URL')
     if db_url:
@@ -44,6 +46,8 @@ CATEGORIES = {
 }
 
 def init_db():
+    global DB_INITIALIZED
+    if DB_INITIALIZED: return
     conn = get_db_conn()
     if not conn: return
     try:
@@ -108,25 +112,29 @@ def init_db():
                 INSERT INTO settings (key, value) VALUES ('sound_win', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
                 INSERT INTO settings (key, value) VALUES ('sound_fail', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%' OR settings.value LIKE '%mixkit.co%' OR settings.value LIKE '%githubusercontent.com%';
 
-                -- Ensure columns exist for older schemas
+                -- Ensure columns exist for older schemas (Migrations)
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS total_wins INTEGER DEFAULT 0;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS online_points INTEGER DEFAULT 0;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS saved_players JSONB DEFAULT '[]';
                 ALTER TABLE categories ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0;
+                ALTER TABLE room_players ADD COLUMN IF NOT EXISTS join_order INTEGER DEFAULT 0;
             """)
 
             # --- Seeding Data ---
-            cur.execute("SELECT COUNT(*) FROM words")
-            count = cur.fetchone()[0]
-            if count == 0:
+            cur.execute("SELECT EXISTS (SELECT 1 FROM words LIMIT 1)")
+            if not cur.fetchone()[0]:
                 for cat, word_list in CATEGORIES.items():
-                    # تأكد من وجود الفئة أولاً في جدول الفئات
                     cur.execute("INSERT INTO categories (name) VALUES (%s) ON CONFLICT DO NOTHING", (cat,))
                     for word in word_list:
                         cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (cat, word.strip()))
 
             conn.commit()
-    finally: conn.close()
+            DB_INITIALIZED = True
+    except Exception as e:
+        print(f"Database initialization failed: {e}")
+        if conn: conn.rollback()
+    finally:
+        if conn: conn.close()
 
 init_db()
 
@@ -328,14 +336,25 @@ async def join_room(data: dict):
     if not conn: return {"success": False, "msg": "DB Error"}
     try:
         room_code = data['room_code'].upper()
+        user_id = data['user_id']
+        player_name = data['player_name']
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT status FROM rooms WHERE room_code = %s", (room_code,))
             room = cur.fetchone()
             if not room: return {"success": False, "msg": "الغرفة غير موجودة"}
             if room['status'] != 'waiting': return {"success": False, "msg": "اللعبة بدأت بالفعل"}
 
-            cur.execute("INSERT INTO room_players (room_code, user_id, player_name) VALUES (%s, %s, %s) ON CONFLICT (room_code, user_id) DO UPDATE SET player_name = EXCLUDED.player_name",
-                        (data['room_code'].upper(), data['user_id'], data['player_name']))
+            # التحقق من وجود اللاعب مسبقاً للحفاظ على ترتيبه
+            cur.execute("SELECT join_order FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
+            row = cur.fetchone()
+            if row:
+                cur.execute("UPDATE room_players SET player_name = %s WHERE room_code = %s AND user_id = %s",
+                            (player_name, room_code, user_id))
+            else:
+                cur.execute("SELECT COALESCE(MAX(join_order), 0) + 1 as next_order FROM room_players WHERE room_code = %s", (room_code,))
+                next_order = cur.fetchone()['next_order']
+                cur.execute("INSERT INTO room_players (room_code, user_id, player_name, join_order) VALUES (%s, %s, %s, %s)",
+                            (room_code, user_id, player_name, next_order))
             conn.commit()
         return {"success": True}
     except Exception as e:
@@ -439,7 +458,7 @@ async def prepare_round(room_code):
             if not words: words = ["بيتزا", "شاورما", "منسف"] # افتراضي
 
             correct = random.choice(words)
-            cur.execute("SELECT user_id, player_name, red_card FROM room_players WHERE room_code = %s ORDER BY join_order ASC", (room_code,))
+            cur.execute("SELECT user_id, player_name, red_card FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
             players = cur.fetchall()
 
             spy_idx = random.randint(0, len(players)-1)
@@ -610,7 +629,7 @@ async def get_room(room_code: str):
                 cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
                 room = cur.fetchone()
 
-            cur.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card FROM room_players WHERE room_code = %s ORDER BY join_order ASC", (room_code,))
+            cur.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
             players = cur.fetchall()
             return {"success": True, "room": room, "players": players}
     except Exception as e:
@@ -1262,47 +1281,54 @@ HTML_TEMPLATE = """
                 </div>`;
         }
 
+        let isCreatingRoom = false;
         async function createRoom(e) {
+            if (isCreatingRoom) return;
             if (!currentUser || !currentUser.user_id) {
                 alert("بيانات المستخدم غير مكتملة. يرجى تسجيل الخروج والدخول مرة أخرى.");
-                console.error("Missing currentUser or user_id:", currentUser);
                 return;
             }
 
-            const btn = e ? e.target : null;
+            const btn = e ? (e.target.closest('button') || e.target) : null;
             let originalText = "";
-            if (btn) {
+            if (btn && btn.tagName === 'BUTTON') {
                 originalText = btn.innerText;
                 btn.disabled = true;
                 btn.innerText = "جاري الإنشاء...";
             }
 
+            isCreatingRoom = true;
             try {
                 const res = await fetch('/api/online/create', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        user_id: currentUser.user_id,
+                        user_id: currentUser.user_id.toString(), // إرسال كـ string لضمان الدقة
                         player_name: currentUser.player_name || "لاعب مجهول"
                     })
                 });
 
-                if (!res.ok) throw new Error("Server response not OK");
+                if (!res.ok) throw new Error(`Server Error: ${res.status}`);
 
                 const d = await res.json();
-                if(d.success) {
+                if(d.success && d.room_code) {
                     await enterRoom(d.room_code);
                 } else {
                     alert(d.msg || "فشل إنشاء الغرفة");
+                    if (btn && btn.tagName === 'BUTTON') {
+                        btn.disabled = false;
+                        btn.innerText = originalText;
+                    }
                 }
             } catch(err) {
-                alert("حدث خطأ في الاتصال بالسيرفر. تأكد من اتصال الإنترنت.");
                 console.error("Create Room Error:", err);
-            } finally {
-                if (btn) {
+                alert("حدث خطأ في الاتصال بالسيرفر. يرجى المحاولة لاحقاً.");
+                if (btn && btn.tagName === 'BUTTON') {
                     btn.disabled = false;
                     btn.innerText = originalText;
                 }
+            } finally {
+                isCreatingRoom = false;
             }
         }
 
@@ -1329,9 +1355,18 @@ HTML_TEMPLATE = """
 
         async function enterRoom(code) {
             currentRoom = code;
-            document.getElementById('main-ui').innerHTML = `<div class="card">جاري دخول الغرفة...</div>`;
-            await updateRoomState();
-            startPolling();
+            document.getElementById('main-ui').innerHTML = `<div class="card"><h2>جاري دخول الغرفة...</h2><p>رمز الغرفة: ${code}</p></div>`;
+            try {
+                await updateRoomState();
+                startPolling();
+            } catch (e) {
+                console.error("Initial room entry failed:", e);
+                // محاولة إعادة المحاولة بعد ثانية إذا فشل أول تحديث
+                setTimeout(() => {
+                    updateRoomState();
+                    startPolling();
+                }, 1000);
+            }
         }
 
         function startPolling() {

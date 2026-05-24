@@ -78,7 +78,7 @@ def init_db():
                     team INT DEFAULT 0,
                     said_uno BOOLEAN DEFAULT FALSE,
                     is_ready BOOLEAN DEFAULT FALSE,
-                    join_order SERIAL,
+                    join_order INTEGER DEFAULT 0,
                     last_msg_id BIGINT,
                     PRIMARY KEY (room_id, user_id))''')
 

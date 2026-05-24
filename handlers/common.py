@@ -1357,7 +1357,9 @@ async def _join_room_by_code(message, code, user_data):
         return
 
     u_name = user_data['player_name']
-    db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready) VALUES (%s, %s, %s, TRUE)", (code, uid, u_name), commit=True)
+    cur_count = db_query("SELECT COALESCE(MAX(join_order), 0) FROM room_players WHERE room_id = %s", (code,))[0][0] or 0
+    db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready, join_order) VALUES (%s, %s, %s, TRUE, %s)",
+             (code, uid, u_name, cur_count + 1), commit=True)
 
     p_count += 1
     creator_id = room[0]['creator_id']
@@ -2473,11 +2475,11 @@ async def create_friends_room(c: types.CallbackQuery, state: FSMContext):
         db_query("INSERT INTO rooms (room_id, creator_id, max_players, score_limit) VALUES (%s, %s, %s, %s)",
             (room_id, c.from_user.id, p_count, limit), commit=True)
     
-    # إضافة المنشئ للغرفة
+    # إضافة المنشئ للغرفة بترتيب 1
     user_db = db_query("SELECT player_name FROM users WHERE user_id = %s", (c.from_user.id,))
     p_name = user_db[0]['player_name'] if user_db else c.from_user.full_name
-    db_query("INSERT INTO room_players (room_id, user_id, player_name, join_order) VALUES (%s, %s, %s, %s)",
-    (room_id, c.from_user.id, p_name, 1), commit=True)
+    db_query("INSERT INTO room_players (room_id, user_id, player_name, join_order, is_ready) VALUES (%s, %s, %s, 1, TRUE)",
+    (room_id, c.from_user.id, p_name), commit=True)
     
     if is_tournament:
         text = f"✅ **تم إنشاء بطولة مصغرة!**\n\n🔢 الكود: `{room_id}`\n👥 العدد: {p_count}\n🏆 الجولات: {tournament_rounds}\n\nأرسل الكود لأصدقائك للانضمام. الفائز يُحدد بعد {tournament_rounds} جولات."
