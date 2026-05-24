@@ -1739,7 +1739,7 @@ HTML_TEMPLATE = """
 
             // التحقق مما إذا كانت بطاقة الانتظار معروضة بالفعل لتحديث قائمة اللاعبين فقط وتفادي النبض/الرمش
             const lobbyCard = document.getElementById('lobby-card');
-            if (lobbyCard && document.getElementById('lobby-room-code')?.innerText === room.room_code) {
+            if (lobbyCard && currentRoom && currentRoom.trim().toUpperCase() === room.room_code.trim().toUpperCase()) {
                 const pListContainer = document.getElementById('lobby-players-list');
                 if (pListContainer && pListContainer.innerHTML !== pList) {
                     pListContainer.innerHTML = pList;

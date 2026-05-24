@@ -1,5 +1,5 @@
-const CACHE_NAME = 'alsalfa-v5';
-const DYNAMIC_CACHE = 'alsalfa-dynamic-v5';
+const CACHE_NAME = 'alsalfa-v6';
+const DYNAMIC_CACHE = 'alsalfa-dynamic-v6';
 const ASSETS = [
   '/',
   '/manifest.json',
