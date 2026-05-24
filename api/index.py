@@ -681,6 +681,8 @@ HTML_TEMPLATE = """
         .no-img { width: 100%; height: 60px; background: #2f278c; display: flex; align-items: center; justify-content: center; border-radius: 10px; font-size: 24px; }
         @keyframes rotate { from { transform: rotate(0); } to { transform: rotate(360deg); } }
         @keyframes spin { to { transform: rotate(360deg); } }
+        .modal { display: none; position: fixed; z-index: 3000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); }
+        .modal-content { background: var(--card); margin: 15% auto; padding: 25px; border: 2px solid var(--primary); width: 85%; max-width: 400px; border-radius: 25px; animation: pop 0.3s ease; text-align: center; }
     </style>
 </head>
 <body>
@@ -691,7 +693,7 @@ HTML_TEMPLATE = """
         <div style="background:#1b1464; padding:15px; border-radius:15px; margin:20px 0;">
             <p id="user-display" style="margin:0; font-weight:bold;">زائر</p>
         </div>
-        <button id="install-btn-sidebar" style="background:var(--accent); color:black; font-size:14px; display:none;" onclick="installApp()">📲 تثبيت التطبيق</button>
+        <button id="install-btn-sidebar" style="background:var(--accent); color:black; font-size:14px;" onclick="showInstallOptions()">📲 إضافة للشاشة الرئيسية</button>
         <button style="background:var(--success); font-size:14px;" onclick="showReports()">📊 التقارير والمتصدرين</button>
         <button style="background:var(--primary); font-size:14px;" onclick="showEditProfile()">تعديل بيانات الحساب</button>
         <button style="background:var(--error); font-size:14px;" onclick="logout()">تسجيل الخروج</button>
@@ -2323,14 +2325,55 @@ HTML_TEMPLATE = """
         });
 
         function updateInstallButtonVisibility() {
+            // الزر الآن يظهر دائماً ليعطي خيارات يدوية خاصة للآيفون
             const btn = document.getElementById('install-btn-sidebar');
-            if (btn) {
-                if (deferredPrompt) {
-                    btn.style.setProperty('display', 'block', 'important');
+            const modalBtn = document.getElementById('modal-install-btn');
+
+            if (modalBtn) {
+                if (!deferredPrompt) {
+                    modalBtn.style.opacity = "0.5";
+                    modalBtn.innerText = "✨ التثبيت التلقائي غير مدعوم";
                 } else {
-                    btn.style.setProperty('display', 'none', 'important');
+                    modalBtn.style.opacity = "1";
+                    modalBtn.innerText = "✨ تثبيت التطبيق (PWA)";
                 }
             }
+        }
+
+        function showInstallOptions() {
+            document.getElementById('installModal').style.display = 'block';
+            if(document.getElementById('sidebar').classList.contains('open')) toggleSidebar();
+        }
+
+        function closeInstallModal() {
+            document.getElementById('installModal').style.display = 'none';
+        }
+
+        function showShortcutGuide() {
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+            if (isIOS) {
+                alert("للإضافة في آيفون:\n1. اضغط على زر 'مشاركة' (Share) في المتصفح بالأسفل.\n2. اختر 'إضافة إلى الشاشة الرئيسية' (Add to Home Screen).");
+            } else {
+                alert("للإضافة كاختصار:\n1. اضغط على نقاط القائمة الثلاث في المتصفح بالأعلى.\n2. اختر 'إضافة إلى الشاشة الرئيسية' أو 'تثبيت التطبيق'.");
+            }
+            closeInstallModal();
+        }
+
+        async function installApp() {
+            if (!deferredPrompt) {
+                showShortcutGuide();
+                return;
+            }
+            deferredPrompt.prompt();
+            const { outcome } = await deferredPrompt.userChoice;
+            if (outcome === 'accepted') {
+                console.log('User accepted install');
+            }
+            deferredPrompt = null;
+            updateInstallButtonVisibility();
+            const banner = document.getElementById('install-banner');
+            if (banner) banner.remove();
+            closeInstallModal();
         }
 
         function showInstallBanner() {
