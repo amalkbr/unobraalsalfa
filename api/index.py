@@ -702,7 +702,8 @@ async def calculate_online_results(room_code):
                 cur.execute("UPDATE rooms SET status = 'result' WHERE room_code = %s", (room_code,))
             else:
                 # Always go to spy_reveal phase to let the spy guess the word
-                cur.execute("UPDATE rooms SET status = 'spy_reveal' WHERE room_code = %s", (room_code,))
+                game_data['phase_start'] = time.time()
+                cur.execute("UPDATE rooms SET status = 'spy_reveal', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
 
             cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
             conn.commit()
@@ -825,6 +826,15 @@ async def get_room(room_code: str):
 
                         changed = True
 
+            elif status == 'spy_reveal':
+                phase_start = game_data.get('phase_start')
+                if phase_start and (time.time() - phase_start > 15):
+                    # Auto-timeout for spy guess
+                    if 'spy_guess' not in game_data:
+                        game_data['spy_guess'] = "لم يختبر (انتهى الوقت)"
+                    cur.execute("UPDATE rooms SET status = 'result', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                    changed = True
+
             if changed:
                 cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
                 conn.commit()
@@ -879,8 +889,8 @@ async def get_room(room_code: str):
             phase_start = game_data.get('phase_start')
             if phase_start:
                 elapsed = time.time() - phase_start
-                if status in ['voting_limit', 'voting_cat', 'voting_spy']:
-                    time_left = max(0, int(10 - elapsed))
+                if status in ['voting_limit', 'voting_cat', 'voting_spy', 'spy_reveal']:
+                    time_left = max(0, int(15 - elapsed))
                 elif status == 'playing_questions':
                     q_idx = game_data.get('q_idx', 0)
                     q_seq = game_data.get('q_seq', [])
@@ -2560,9 +2570,11 @@ HTML_TEMPLATE = """
             const isSpy = room.spy_id == currentUser.user_id;
             const spy = players.find(p => p.user_id == room.spy_id);
             const caught = room.game_data.spy_caught;
+            const timeLeft = room.time_left ?? 0;
 
             if(isSpy) {
-                let h = `<h3>${caught ? 'كشفوك! خمن وش السالفة؟' : 'ما كشفوك! خمن وش السالفة عشان تاخذ نقطة زيادة 🎯'}</h3>
+                let h = `<div id="spy-guess-timer" class="qa-timer-badge" style="margin-bottom:15px;">⏱️ وقت التخمين: ${timeLeft} ثانية</div>
+                         <h3>${caught ? 'كشفوك! خمن وش السالفة؟' : 'ما كشفوك! خمن وش السالفة عشان تاخذ نقطة زيادة 🎯'}</h3>
                          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin:20px 0;">`;
                 room.game_data.guesses.forEach(g => {
                     h += `<div class="vote-item" style="margin:0; padding:15px; font-size:14px;" onclick="onlineAction('spy_guess', {guess: '${g.replace(/'/g, "\\'")}'})">${g}</div>`;
@@ -2570,21 +2582,25 @@ HTML_TEMPLATE = """
                 h += `</div>`;
                 h += buildQAChatHistory();
                 updateMainUI(`<div class="card">${h}</div>`);
+                startOnlineCountdown(timeLeft, 'spy-guess-timer', (t) => `⏱️ وقت التخمين: ${t} ثانية`);
             } else {
                 let h = `
                         <h1>${caught ? 'كفشتوا الجاسوس! ✅' : 'ما كفشتوا الجاسوس! ❌'}</h1>
                         <p style="font-size:18px;">اللي برة السالفة هو: <b style="color:var(--error); font-size:28px; display:block; margin:10px 0;">${spy.player_name}</b></p>
-                        <p>بانتظار تخمين الجاسوس للسالفة...</p>
+                        <div id="spy-guess-waiting-timer" style="color:var(--accent); font-weight:bold; margin:15px 0;">بانتظار تخمين الجاسوس... (${timeLeft}ث)</div>
                         <div class="shuffling">🌀</div>`;
                 h += buildQAChatHistory();
                 updateMainUI(`<div class="card">${h}</div>`);
+                startOnlineCountdown(timeLeft, 'spy-guess-waiting-timer', (t) => `بانتظار تخمين الجاسوس... (${t}ث)`);
             }
         }
 
         function renderOnlineResult() {
             const {room, players} = window.roomData;
             const spy = players.find(p => p.user_id == room.spy_id);
-            const spyGuessedRight = (room.game_data.spy_guess === room.secret_word);
+            const spyGuess = room.game_data.spy_guess;
+            const secretWord = room.secret_word;
+            const spyGuessedRight = (spyGuess === secretWord);
             const isHost = room.host_id == currentUser.user_id;
             const gameOver = room.game_data.game_over;
             const winner = players.find(p => p.user_id == room.game_data.winner_id);
@@ -2597,18 +2613,55 @@ HTML_TEMPLATE = """
                 scoresList += `<div class="score-item"><span>${p.player_name}${cards}</span> <b>${p.score}</b></div>`;
             });
 
-            updateMainUI(`
-                <div class="card">
-                    ${gameOver ? `<h1 style="color:var(--accent)">🏆 الفائز باللعبة: ${winner ? winner.player_name : 'غير معروف'}</h1>` : ''}
-                    <h2 style="color:${spyGuessedRight? 'var(--success)':'var(--error)'}">السالفة كانت: ${room.secret_word}</h2>
-                    <p>${spy.player_name} ${spyGuessedRight ? 'عرف السالفة!' : 'ما عرف السالفة.'}</p>
-                    <hr style="border:1px solid #3c339e; margin:15px 0;">
-                    <h3>النقاط الحالية (الهدف: ${room.win_limit}):</h3>
-                    <div style="margin-bottom:20px;">${scoresList}</div>
-                    ${gameOver ?
-                        `<button onclick="showMenu()">العودة للقائمة الرئيسية</button>` :
-                        (isHost ? `<button onclick="onlineAction('new_round')">جولة جديدة</button>` : `<p>بانتظار المضيف لبدء جولة جديدة...</p>`)
+            // Build guess feedback list
+            let guessesHtml = `<div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin:15px 0;">`;
+            if (room.game_data.guesses) {
+                room.game_data.guesses.forEach(g => {
+                    let style = "background: rgba(255,255,255,0.05); color: #9aa0b4; border: 1px solid rgba(255,255,255,0.1);";
+                    let icon = "";
+
+                    if (g === secretWord) {
+                        style = "background: var(--success); color: white; border: 2px solid white; font-weight: bold;";
+                        icon = " ✅";
+                    } else if (g === spyGuess && !spyGuessedRight) {
+                        style = "background: var(--error); color: white; border: 1px solid white;";
+                        icon = " ❌";
                     }
+
+                    guessesHtml += `<div class="vote-item" style="margin:0; padding:10px; font-size:13px; cursor:default; ${style}">${g}${icon}</div>`;
+                });
+            }
+            guessesHtml += `</div>`;
+
+            const resultTitle = spyGuessedRight ? "🎉 الجاسوس ذكي وعرف السالفة!" : "🥳 كفشتوا الجاسوس وما عرف السالفة!";
+            const resultColor = spyGuessedRight ? "var(--success)" : "var(--error)";
+
+            updateMainUI(`
+                <div class="card" style="padding: 20px 15px;">
+                    ${gameOver ? `<h1 style="color:var(--accent); font-size:28px; margin-bottom:10px;">🏆 بطل اللعبة: ${winner ? winner.player_name : 'غير معروف'}</h1>` : ''}
+
+                    <div style="background: rgba(0,0,0,0.2); padding: 15px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 20px;">
+                        <h2 style="color:${resultColor}; margin-top:0;">${resultTitle}</h2>
+                        <p style="font-size:18px; margin: 10px 0;">الجاسوس <b style="color:var(--accent)">${spy.player_name}</b> اختار: <b style="color:${resultColor}">${spyGuess || 'لم يختبر'}</b></p>
+                        <p>السالفة الحقيقية كانت: <b style="color:var(--success)">${secretWord}</b></p>
+                        ${guessesHtml}
+                    </div>
+
+                    <hr style="border:1px solid #3c339e; margin:20px 0;">
+                    <h3 style="margin-bottom:15px;">النقاط الحالية (الهدف: ${room.win_limit}):</h3>
+                    <div style="margin-bottom:25px;">${scoresList}</div>
+
+                    <div style="display:flex; flex-direction:column; gap:10px;">
+                        ${gameOver ?
+                            `<button onclick="showMenu()">العودة للقائمة الرئيسية</button>` :
+                            (isHost ? `<button onclick="onlineAction('new_round')">جولة جديدة 🔄</button>` : `<div class="qa-typing-status">⏳ بانتظار المضيف لبدء جولة جديدة...</div>`)
+                        }
+                    </div>
+
+                    ${buildQAChatHistory()}
+                </div>
+            `);
+        }
                     <button style="background:#636e72" onclick="leaveRoom()">خروج من الغرفة</button>
                 </div>`);
         }
