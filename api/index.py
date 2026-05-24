@@ -1668,31 +1668,57 @@ HTML_TEMPLATE = """
 
         function renderVotingLimit() {
             const myVote = window.roomData.players.find(p => p.user_id == currentUser.user_id)?.vote_limit;
+            
+            const limitCard = document.getElementById('voting-limit-card');
+            if (limitCard) {
+                const buttons = limitCard.querySelectorAll('button');
+                buttons.forEach(btn => {
+                    const val = parseInt(btn.getAttribute('data-value'));
+                    const isSelected = myVote == val;
+                    btn.style.background = isSelected ? 'var(--success)' : '';
+                    btn.innerHTML = `${val} نقطة ${isSelected ? '✅' : ''}`;
+                });
+                return;
+            }
+
             let h = `<h2>🏆 التصويت على هدف الفوز</h2>
                      <p>أول لاعب يصل لهذا العدد من النقاط يفوز باللعبة</p>
                      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin:20px 0;">`;
             [5, 10, 15, 20].forEach(val => {
                 const isSelected = myVote == val;
-                h += `<button onclick="sendVote('limit', ${val})" style="background:${isSelected ? 'var(--success)' : ''}">
+                h += `<button data-value="${val}" onclick="sendVote('limit', ${val})" style="background:${isSelected ? 'var(--success)' : ''}">
                         ${val} نقطة ${isSelected ? '✅' : ''}
                       </button>`;
             });
             h += `</div><p>بانتظار بقية اللاعبين...</p>`;
-            updateMainUI(`<div class="card">${h}</div>`);
+            updateMainUI(`<div class="card" id="voting-limit-card">${h}</div>`);
         }
 
         function renderVotingCat() {
             const myVote = window.roomData.players.find(p => p.user_id == currentUser.user_id)?.vote_cat;
+            
+            const catCard = document.getElementById('voting-cat-card');
+            if (catCard) {
+                const buttons = catCard.querySelectorAll('button');
+                buttons.forEach(btn => {
+                    const cat = btn.getAttribute('data-value');
+                    const isSelected = myVote == cat;
+                    btn.style.background = isSelected ? 'var(--success)' : '';
+                    btn.innerHTML = `${cat} ${isSelected ? '✅' : ''}`;
+                });
+                return;
+            }
+
             let h = `<h2>📂 التصويت على الفئة</h2>
                      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin:20px 0; max-height:300px; overflow-y:auto; padding:5px;">`;
             ["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"].forEach(cat => {
                 const isSelected = myVote == cat;
-                h += `<button onclick="sendVote('cat', '${cat}')" style="background:${isSelected ? 'var(--success)' : ''}; font-size:14px; padding:10px;">
+                h += `<button data-value="${cat}" onclick="sendVote('cat', '${cat}')" style="background:${isSelected ? 'var(--success)' : ''}; font-size:14px; padding:10px;">
                         ${cat} ${isSelected ? '✅' : ''}
                       </button>`;
             });
             h += `</div><p>سيتم اختيار الفئة الأكثر تصويتاً</p>`;
-            updateMainUI(`<div class="card">${h}</div>`);
+            updateMainUI(`<div class="card" id="voting-cat-card">${h}</div>`);
         }
 
         let isSendingVote = false;

@@ -1,5 +1,5 @@
-const CACHE_NAME = 'alsalfa-v6';
-const DYNAMIC_CACHE = 'alsalfa-dynamic-v6';
+const CACHE_NAME = 'alsalfa-v7';
+const DYNAMIC_CACHE = 'alsalfa-dynamic-v7';
 const ASSETS = [
   '/',
   '/manifest.json',
@@ -32,14 +32,19 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;
+  const url = new URL(request.url);
+
+  // Skip all API requests so that real-time game state is never cached!
+  if (url.pathname.startsWith('/api/')) {
+    return;
+  }
+
   if (request.method !== 'GET') return;
 
   // Skip favicon errors
   if (request.url.includes('favicon.ico')) {
     return;
   }
-
-  const url = new URL(request.url);
 
   if (ASSETS.some(asset => request.url.endsWith(asset))) {
     event.respondWith(
