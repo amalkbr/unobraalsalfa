@@ -1338,13 +1338,18 @@ HTML_TEMPLATE = """
 
         let isCreatingRoom = false;
         async function createRoom(e) {
+            console.log('createRoom called', { currentUser, eventType: e?.type });
             if (isCreatingRoom) return;
             if (!currentUser || !currentUser.user_id) {
                 alert("بيانات المستخدم غير مكتملة. يرجى تسجيل الخروج والدخول مرة أخرى.");
                 return;
             }
 
-            const btn = e ? (e.target.closest('button') || e.target) : null;
+            let btn = null;
+            if (e && e.target) {
+                btn = (e.target instanceof Element) ? (e.target.closest('button') || e.target) : null;
+            }
+
             let originalText = "";
             if (btn && btn.tagName === 'BUTTON') {
                 originalText = btn.innerText;
@@ -1414,10 +1419,12 @@ HTML_TEMPLATE = """
         }
 
         async function enterRoom(code) {
+            console.log('enterRoom called', code);
             currentRoom = code;
             document.getElementById('main-ui').innerHTML = `<div class="card"><h2>جاري دخول الغرفة...</h2><p>رمز الغرفة: <b style="color:var(--accent)">${code}</b></p></div>`;
             try {
                 const success = await updateRoomState();
+                console.log('enterRoom updateRoomState result', success);
                 if (success) {
                     startPolling();
                 } else {
@@ -1447,7 +1454,9 @@ HTML_TEMPLATE = """
         async function updateRoomState() {
             if(!currentRoom) return false;
             try {
+                console.log('updateRoomState fetching', currentRoom);
                 const res = await fetch(`/api/online/room/${currentRoom}`);
+                console.log('updateRoomState status', res.status);
                 if (!res.ok) {
                     if (res.status === 404) {
                         alert("تم إغلاق الغرفة أو الرمز غير صحيح");
@@ -1457,6 +1466,7 @@ HTML_TEMPLATE = """
                     throw new Error("Room fetch failed");
                 }
                 const d = await res.json();
+                console.log('updateRoomState response', d);
                 if(d.success) {
                     window.roomData = d;
                     const status = d.room.status;
