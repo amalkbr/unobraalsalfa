@@ -1137,7 +1137,13 @@ HTML_TEMPLATE = """
     </div>
     <div class="flex-center"><div class="container" id="main-ui"></div></div>
     <script>
-        let currentUser = JSON.parse(localStorage.getItem('user')) || null;
+        let currentUser = null;
+        try {
+            currentUser = JSON.parse(localStorage.getItem('user')) || null;
+        } catch (e) {
+            console.error("Failed to parse user from localStorage:", e);
+            localStorage.removeItem('user');
+        }
         let game = null;
         let p_votes = {};
         let totalScores = {}; // نقاط الجلسة
@@ -1335,7 +1341,7 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>اللعب أونلاين</h1>
-                    <button id="btn-create-room" style="background:var(--success)" onclick="createRoom()">إنشاء غرفة جديدة</button>
+                    <button id="btn-create-room" style="background: linear-gradient(135deg, #2ecc71, #27ae60); box-shadow: 0 4px 15px rgba(46, 204, 113, 0.4); border-radius: 20px; font-weight: 900; letter-spacing: 1px;" onclick="createRoom()">✨ إنشاء غرفة جديدة</button>
                     <div style="margin:20px 0;">
                         <input id="join_code" placeholder="رمز الغرفة (مثال: ABCD)" style="text-transform:uppercase">
                         <button onclick="joinRoom()">دخول غرفة</button>
