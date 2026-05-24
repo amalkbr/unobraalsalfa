@@ -1269,7 +1269,7 @@ HTML_TEMPLATE = """
         :root { --primary: #6c5ce7; --bg: #0f0c29; --card: #1b1464; --accent: #f9ca24; --error: #eb4d4b; --success: #2ecc71; }
         body { font-family: 'Cairo', sans-serif; background: var(--bg); color: white; margin: 0; min-height: 100vh; }
         .flex-center { display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction: column; }
-        .container { width: 98%; max-width: 500px; text-align: center; padding: 5px; box-sizing: border-box; }
+        .container { width: 98%; text-align: center; padding: 5px; box-sizing: border-box; }
         .card { background: var(--card); padding: 24px 16px; border-radius: 24px; box-shadow: 0 15px 35px rgba(0,0,0,0.6); border: 2px solid #3c339e; animation: fadeIn 0.3s ease; width: 100%; box-sizing: border-box; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
@@ -1786,10 +1786,12 @@ HTML_TEMPLATE = """
             game = null;
             totalScores = {}; // ريست للنقاط عند العودة للقائمة
             document.getElementById('main-ui').innerHTML = `
-                <div class="card">
-                    <h1>ابدأ اللعب</h1>
-                    <button onclick="navigateTo('online_menu')">🌐 أونلاين</button>
-                    <button style="background:#e056fd" onclick="navigateTo('setup', {step: 1})">🏠 أوفلاين (مجلس)</button>
+                <div class="card" style="padding: 30px 20px;">
+                    <div style="font-size: 60px; margin-bottom: 20px;">🕵️‍♂️</div>
+                    <h1 style="margin-bottom: 10px;">لعبة برا السالفة</h1>
+                    <p style="color: #a29bfe; margin-bottom: 30px; font-size: 16px;">اكتشف الجاسوس قبل فوات الأوان!</p>
+                    <button onclick="navigateTo('online_menu')" style="margin-bottom: 15px;">🌐 لعب أونلاين</button>
+                    <button style="background: linear-gradient(45deg, #e056fd, #be2edd);" onclick="navigateTo('setup', {step: 1})">🏠 لعب أوفلاين (مجلس)</button>
                 </div>`;
         }
 
@@ -1995,14 +1997,20 @@ HTML_TEMPLATE = """
         function startOnlineCountdown(timeLeft, elementId, templateFn) {
             onlineTimeLeft = timeLeft;
             const elem = document.getElementById(elementId);
-            if (elem) elem.innerText = templateFn(onlineTimeLeft);
+            if (elem) {
+                elem.innerText = templateFn(onlineTimeLeft);
+                elem.setAttribute('data-val', onlineTimeLeft);
+            }
 
             if (onlineTimerInterval) clearInterval(onlineTimerInterval);
             onlineTimerInterval = setInterval(() => {
                 if (onlineTimeLeft > 0) {
                     onlineTimeLeft--;
                     const el = document.getElementById(elementId);
-                    if (el) el.innerText = templateFn(onlineTimeLeft);
+                    if (el) {
+                        el.innerText = templateFn(onlineTimeLeft);
+                        el.setAttribute('data-val', onlineTimeLeft);
+                    }
                     if (onlineTimeLeft <= 5 && onlineTimeLeft > 0 && elementId === 'questions-timer') {
                         AUDIO.warning.play().catch(()=>{});
                     }
@@ -2098,31 +2106,29 @@ HTML_TEMPLATE = """
 
             const limitCard = document.getElementById('voting-limit-card');
             if (limitCard) {
-                const buttons = limitCard.querySelectorAll('button');
+                const buttons = limitCard.querySelectorAll('.win-opt');
                 buttons.forEach(btn => {
                     const val = parseInt(btn.getAttribute('data-value'));
                     const isSelected = myVote == val;
-                    btn.style.background = isSelected ? 'var(--success)' : '';
-                    btn.innerHTML = `${val} نقطة ${isSelected ? '✅' : ''}`;
+                    if (isSelected) btn.classList.add('selected'); else btn.classList.remove('selected');
                 });
                 startOnlineCountdown(timeLeft, 'voting-limit-timer', (t) => `⏱️ الوقت المتبقي للتصويت: ${t} ثانية`);
                 return;
             }
 
-            let h = `<h2>🏆 التصويت على هدف الفوز</h2>
-                     <p>أول لاعب يصل لهذا العدد من النقاط يفوز باللعبة</p>
-                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin:20px 0;">`;
+            let h = `<h2>🏆 هدف الفوز</h2>
+                     <p style="color: #9aa0b4; margin-bottom: 20px;">أول لاعب يصل لهذا العدد من النقاط يفوز</p>
+                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin:20px 0;">`;
             [5, 10, 15, 20].forEach(val => {
                 const isSelected = myVote == val;
-                h += `<button data-value="${val}" onclick="sendVote('limit', ${val})" style="background:${isSelected ? 'var(--success)' : ''}">
-                        ${val} نقطة ${isSelected ? '✅' : ''}
-                      </button>`;
+                h += `<div class="win-opt ${isSelected?'selected':''}" data-value="${val}" onclick="sendVote('limit', ${val})">
+                        ${val} نقطة
+                      </div>`;
             });
             h += `</div>
-                  <div id="voting-limit-timer" style="margin-top:20px; color:var(--error); font-weight:bold; font-size:18px;">⏱️ الوقت المتبقي للتصويت: ${timeLeft} ثانية</div>
-                  <p>بانتظار بقية اللاعبين...</p>`;
+                  <div id="voting-limit-timer" style="margin-top:20px; color:var(--error); font-weight:bold; font-size:18px;">⏱️ الوقت المتبقي: ${timeLeft} ثانية</div>`;
             updateMainUI(`<div class="card" id="voting-limit-card">${h}</div>`);
-            startOnlineCountdown(timeLeft, 'voting-limit-timer', (t) => `⏱️ الوقت المتبقي للتصويت: ${t} ثانية`);
+            startOnlineCountdown(timeLeft, 'voting-limit-timer', (t) => `⏱️ الوقت المتبقي: ${t} ثانية`);
         }
 
         function renderVotingCat() {
@@ -2133,8 +2139,8 @@ HTML_TEMPLATE = """
 
             const catCard = document.getElementById('voting-cat-card');
             if (catCard) {
-                const buttons = catCard.querySelectorAll('button');
-                buttons.forEach(btn => {
+                const items = catCard.querySelectorAll('.vote-item');
+                items.forEach(btn => {
                     const cat = btn.getAttribute('data-value');
                     const isSelected = myVote == cat;
                     btn.style.background = isSelected ? 'var(--success)' : '';
@@ -2144,17 +2150,17 @@ HTML_TEMPLATE = """
                 return;
             }
 
-            let h = `<h2>📂 التصويت على الفئة</h2>
-                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin:20px 0; max-height:300px; overflow-y:auto; padding:5px;">`;
+            let h = `<h2>📂 اختر الفئة</h2>
+                     <p style="color: #9aa0b4; margin-bottom: 10px;">سيتم اختيار الفئة الأكثر تصويتاً</p>
+                     <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin:20px 0; max-height:350px; overflow-y:auto; padding:5px; border: 1px solid rgba(255,255,255,0.05); border-radius:15px; background: rgba(0,0,0,0.2);">`;
             ["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"].forEach(cat => {
                 const isSelected = myVote == cat;
-                h += `<button data-value="${cat}" onclick="sendVote('cat', '${cat}')" style="background:${isSelected ? 'var(--success)' : ''}; font-size:14px; padding:10px;">
+                h += `<div class="vote-item" data-value="${cat}" onclick="sendVote('cat', '${cat}')" style="background:${isSelected ? 'var(--success)' : ''}; font-size:15px; padding:12px; margin:0;">
                         ${cat} ${isSelected ? '✅' : ''}
-                      </button>`;
+                      </div>`;
             });
             h += `</div>
-                  <div id="voting-cat-timer" style="margin-top:20px; color:var(--error); font-weight:bold; font-size:18px;">⏱️ الوقت المتبقي للتصويت: ${timeLeft} ثانية</div>
-                  <p>سيتم اختيار الفئة الأكثر تصويتاً</p>`;
+                  <div id="voting-cat-timer" style="margin-top:10px; color:var(--error); font-weight:bold; font-size:18px;">⏱️ الوقت المتبقي: ${timeLeft} ثانية</div>`;
             updateMainUI(`<div class="card" id="voting-cat-card">${h}</div>`);
             startOnlineCountdown(timeLeft, 'voting-cat-timer', (t) => `⏱️ الوقت المتبقي للتصويت: ${t} ثانية`);
         }
@@ -2372,13 +2378,10 @@ HTML_TEMPLATE = """
             const timeLeft = room.time_left ?? 0;
             const stateKey = `${q_idx}_${q.status}_${me.red_card ? 'red' : 'active'}`;
 
-            // If questions card is already in the DOM and status matches, we only update the timer via interval to avoid losing focus!
+            // Check if we need to full-render or just partial update
             const questionsCard = document.getElementById('questions-card');
-            if (questionsCard && questionsCard.getAttribute('data-state-key') === stateKey) {
-                return;
-            }
 
-            // Build scrollable chat content
+            // Build chat bubbles HTML
             let chatHtml = "";
             q_seq.forEach((item, idx) => {
                 if (item.status === 'done') {
@@ -2418,7 +2421,27 @@ HTML_TEMPLATE = """
                 }
             });
 
-            // Footer inputs
+            if (questionsCard && questionsCard.getAttribute('data-state-key') === stateKey) {
+                // PARTIAL UPDATE: Just update the chat scroll area if content changed
+                const scrollArea = document.getElementById('qa-chat-scroll');
+                if (scrollArea && scrollArea.getAttribute('data-content-hash') !== chatHtml.length.toString()) {
+                    scrollArea.innerHTML = chatHtml || '<p style="text-align:center; color:#9aa0b4; margin-top:20px;">لا توجد أسئلة سابقة بعد. الجولة تبدأ الآن!</p>';
+                    scrollArea.setAttribute('data-content-hash', chatHtml.length.toString());
+                    scrollArea.scrollTop = scrollArea.scrollHeight;
+                }
+                // Update timer
+                const timerElem = document.getElementById('questions-timer');
+                if (timerElem) {
+                   // We trust the local countdown but sync with server if drift is large
+                   const localVal = parseInt(timerElem.getAttribute('data-val') || "0");
+                   if (Math.abs(localVal - timeLeft) > 2) {
+                       startOnlineCountdown(timeLeft, 'questions-timer', (t) => `⏱️ الوقت المتبقي: ${t} ثانية`);
+                   }
+                }
+                return;
+            }
+
+            // FULL RENDER (State changed)
             let inputHtml = "";
             if (me.red_card) {
                 inputHtml = `<div class="qa-typing-status" style="color:var(--error); font-weight:bold;">❌ أنت مستبعد من هذه الجولة (كرت أحمر)</div>`;
@@ -2457,7 +2480,7 @@ HTML_TEMPLATE = """
                     </div>
                     
                     <!-- Chat Scroll -->
-                    <div class="qa-chat-scroll-area" id="qa-chat-scroll">
+                    <div class="qa-chat-scroll-area" id="qa-chat-scroll" data-content-hash="${chatHtml.length}">
                         ${chatHtml || '<p style="text-align:center; color:#9aa0b4; margin-top:20px;">لا توجد أسئلة سابقة بعد. الجولة تبدأ الآن!</p>'}
                     </div>
                     
