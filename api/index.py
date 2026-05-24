@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 import json
 import random
 import os
@@ -115,6 +115,14 @@ init_db()
 
 @app.get("/", response_class=HTMLResponse)
 async def home(): return HTML_TEMPLATE
+
+@app.get("/manifest.json")
+async def manifest():
+    return FileResponse(os.path.join("static", "manifest.json"))
+
+@app.get("/sw.js")
+async def service_worker():
+    return FileResponse(os.path.join("static", "sw.js"))
 
 @app.get("/join/{room_code}", response_class=HTMLResponse)
 async def join_room_link(room_code: str):
@@ -688,6 +696,18 @@ HTML_TEMPLATE = """
 <body>
     <div class="menu-btn" onclick="toggleSidebar()">☰</div>
     <div class="exit-btn" id="global-exit-btn" onclick="confirmExitGame()">✖</div>
+
+    <!-- Install Prompt Modal -->
+    <div id="installModal" class="modal">
+        <div class="modal-content">
+            <h2 style="color:var(--accent)">تثبيت التطبيق 📱</h2>
+            <p>للحصول على أفضل تجربة، أضف اللعبة إلى شاشتك الرئيسية.</p>
+            <button id="modal-install-btn" onclick="installApp()">✨ تثبيت التطبيق (PWA)</button>
+            <button class="btn-yellow" onclick="showShortcutGuide()">📝 دليل الإضافة اليدوية</button>
+            <button style="background:#636e72" onclick="closeInstallModal()">إغلاق</button>
+        </div>
+    </div>
+
     <div id="sidebar" class="sidebar">
         <h2 style="color:var(--accent)">القائمة</h2>
         <div style="background:#1b1464; padding:15px; border-radius:15px; margin:20px 0;">
@@ -2389,19 +2409,6 @@ HTML_TEMPLATE = """
                 </div>
             `;
             document.body.appendChild(banner);
-        }
-
-        async function installApp() {
-            if (!deferredPrompt) return;
-            deferredPrompt.prompt();
-            const { outcome } = await deferredPrompt.userChoice;
-            if (outcome === 'accepted') {
-                console.log('User accepted install');
-            }
-            deferredPrompt = null;
-            updateInstallButtonVisibility();
-            const banner = document.getElementById('install-banner');
-            if (banner) banner.remove();
         }
 
         init();
