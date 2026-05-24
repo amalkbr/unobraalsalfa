@@ -1793,7 +1793,7 @@ HTML_TEMPLATE = """
                     </div>
                 </div>
                 <div id="guess_grid">`;
-            game.guesses.forEach(g => h += `<div class="vote-item guess-item" onclick="clearInterval(timerInterval); handleSpyGuess(this, '${g.replace(/'/g, "\\'")}')">${g}</div>`);
+            game.guesses.forEach(g => h += `<div class="vote-item guess-item" onclick="clearInterval(timerInterval); handleSpyGuess(this, '${g.replace(/'/g, "\\\\'")}')">${g}</div>`);
             h += `</div>`;
             document.getElementById('main-ui').innerHTML = `<div class="card">${h}</div>`;
 
@@ -2372,9 +2372,9 @@ HTML_TEMPLATE = """
         function showShortcutGuide() {
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
             if (isIOS) {
-                alert("للإضافة في آيفون:\n1. اضغط على زر 'مشاركة' (Share) في المتصفح بالأسفل.\n2. اختر 'إضافة إلى الشاشة الرئيسية' (Add to Home Screen).");
+                alert("للإضافة في آيفون:\\n1. اضغط على زر 'مشاركة' (Share) في المتصفح بالأسفل.\\n2. اختر 'إضافة إلى الشاشة الرئيسية' (Add to Home Screen).");
             } else {
-                alert("للإضافة كاختصار:\n1. اضغط على نقاط القائمة الثلاث في المتصفح بالأعلى.\n2. اختر 'إضافة إلى الشاشة الرئيسية' أو 'تثبيت التطبيق'.");
+                alert("للإضافة كاختصار:\\n1. اضغط على نقاط القائمة الثلاث في المتصفح بالأعلى.\\n2. اختر 'إضافة إلى الشاشة الرئيسية' أو 'تثبيت التطبيق'.");
             }
             closeInstallModal();
         }
