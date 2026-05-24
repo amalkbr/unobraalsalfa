@@ -108,46 +108,43 @@ def init_db():
             """)
 
             # 2. هجرة البيانات وتوافق الأعمدة (Migrations)
-            cur.execute("""
-                -- إضافة الأعمدة المفقودة لجدول المستخدمين
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS total_wins INTEGER DEFAULT 0;
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS online_points INTEGER DEFAULT 0;
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS saved_players JSONB DEFAULT '[]';
+            # تنفيذ العمليات خطوة بخطوة لضمان استمرار التشغيل حتى لو فشلت إحدى الخطوات
+            migration_steps = [
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS total_wins INTEGER DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS online_points INTEGER DEFAULT 0",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS saved_players JSONB DEFAULT '[]'",
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS room_code TEXT",
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS room_id TEXT",
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS host_id BIGINT",
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS creator_id BIGINT",
+                "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS room_code TEXT",
+                "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS room_id TEXT",
+                "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS join_order INTEGER DEFAULT 0",
+                # محاولة تحويل الأنواع لدعم التوافق باستخدام USING لضمان التحويل الصحيح
+                "ALTER TABLE rooms ALTER COLUMN room_id TYPE TEXT USING room_id::TEXT",
+                "ALTER TABLE rooms ALTER COLUMN room_code TYPE TEXT USING room_code::TEXT",
+                "ALTER TABLE room_players ALTER COLUMN room_id TYPE TEXT USING room_id::TEXT",
+                "ALTER TABLE room_players ALTER COLUMN room_code TYPE TEXT USING room_code::TEXT",
+                # مزامنة البيانات بين الأعمدة المتقابلة
+                "UPDATE rooms SET room_code = room_id WHERE room_code IS NULL AND room_id IS NOT NULL",
+                "UPDATE rooms SET room_id = room_code WHERE room_id IS NULL AND room_code IS NOT NULL",
+                "UPDATE rooms SET host_id = creator_id WHERE host_id IS NULL AND creator_id IS NOT NULL",
+                "UPDATE rooms SET creator_id = host_id WHERE creator_id IS NULL AND host_id IS NOT NULL",
+                "UPDATE room_players SET room_code = room_id WHERE room_code IS NULL AND room_id IS NOT NULL",
+                "UPDATE room_players SET room_id = room_code WHERE room_id IS NULL AND room_code IS NOT NULL",
+                # ضمان وجود الفهارس الضرورية
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_room_code ON rooms(room_code)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_room_players_code_user ON room_players(room_code, user_id)"
+            ]
 
-                -- تحويل أعمدة الربط إلى نصوص لضمان التوافق (Bridging)
-                ALTER TABLE rooms ADD COLUMN IF NOT EXISTS room_code TEXT;
-                ALTER TABLE rooms ADD COLUMN IF NOT EXISTS room_id TEXT;
-                ALTER TABLE rooms ADD COLUMN IF NOT EXISTS host_id BIGINT;
-                ALTER TABLE rooms ADD COLUMN IF NOT EXISTS creator_id BIGINT;
-
-                -- محاولة تغيير النوع لدعم التداخل بين البوت والـ API
-                DO $$
-                BEGIN
-                    ALTER TABLE rooms ALTER COLUMN room_id TYPE TEXT;
-                    ALTER TABLE rooms ALTER COLUMN room_code TYPE TEXT;
-                    ALTER TABLE room_players ALTER COLUMN room_id TYPE TEXT;
-                    ALTER TABLE room_players ALTER COLUMN room_code TYPE TEXT;
-                EXCEPTION WHEN OTHERS THEN
-                    RAISE NOTICE 'Could not alter column types, might be already correct or restricted.';
-                END $$;
-
-                ALTER TABLE room_players ADD COLUMN IF NOT EXISTS room_code TEXT;
-                ALTER TABLE room_players ADD COLUMN IF NOT EXISTS room_id TEXT;
-                ALTER TABLE room_players ADD COLUMN IF NOT EXISTS join_order INTEGER DEFAULT 0;
-
-                -- مزامنة البيانات بين الأعمدة المتقابلة (API vs Bot)
-                UPDATE rooms SET room_code = room_id WHERE room_code IS NULL AND room_id IS NOT NULL;
-                UPDATE rooms SET room_id = room_code WHERE room_id IS NULL AND room_code IS NOT NULL;
-                UPDATE rooms SET host_id = creator_id WHERE host_id IS NULL AND creator_id IS NOT NULL;
-                UPDATE rooms SET creator_id = host_id WHERE creator_id IS NULL AND host_id IS NOT NULL;
-
-                UPDATE room_players SET room_code = room_id WHERE room_code IS NULL AND room_id IS NOT NULL;
-                UPDATE room_players SET room_id = room_code WHERE room_id IS NULL AND room_code IS NOT NULL;
-
-                -- ضمان وجود فهارس فريدة لعمليات ON CONFLICT
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_room_code ON rooms(room_code);
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_room_players_code_user ON room_players(room_code, user_id);
-            """)
+            for step in migration_steps:
+                try:
+                    cur.execute(step)
+                    conn.commit()
+                except Exception as e:
+                    conn.rollback()
+                    # طباعة الخطأ في سجلات الخادم للمساعدة في التشخيص
+                    print(f"Migration Step Info: {step} | Result: {e}")
 
             # 3. إعدادات افتراضية
             cur.execute("""
@@ -339,33 +336,36 @@ async def create_room(data: dict):
         room_code = ''.join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=5))
 
         with conn.cursor() as cur:
-            # 1. ضمان وجود المستخدم في جدول users أولاً لتجنب خطأ Foreign Key
-            # نستخدم ON CONFLICT للتعامل مع وجوده مسبقاً
+            # 1. ضمان وجود المستخدم وتحديث اسمه إذا تغير
             cur.execute("""
                 INSERT INTO users (user_id, player_name, is_registered)
                 VALUES (%s, %s, TRUE)
                 ON CONFLICT (user_id) DO UPDATE SET player_name = EXCLUDED.player_name
             """, (user_id, player_name))
 
-            # 2. إنشاء الغرفة مع دعم الأعمدة البديلة (room_id, creator_id) للتوافق مع البوت
+            # 2. إنشاء الغرفة (نستخدم الأعمدة المزدوجة لضمان التوافق)
+            # نحدد الفئة والحد الأدنى للفوز كقيم افتراضية
             cur.execute("""
-                INSERT INTO rooms (room_code, room_id, host_id, creator_id, status)
-                VALUES (%s, %s, %s, %s, 'waiting')
+                INSERT INTO rooms (room_code, room_id, host_id, creator_id, status, category, win_limit)
+                VALUES (%s, %s, %s, %s, 'waiting', 'أكلات', 10)
             """, (room_code, room_code, user_id, user_id))
 
-            # 3. إضافة المنشئ كلاعب أول مع تحديد ترتيب الانضمام (join_order = 1) ودعم room_id
+            # 3. إضافة منشئ الغرفة كلاعب أول
             cur.execute("""
-                INSERT INTO room_players (room_code, room_id, user_id, player_name, is_ready, join_order)
-                VALUES (%s, %s, %s, %s, TRUE, 1)
-                ON CONFLICT (room_code, user_id) DO UPDATE SET is_ready = TRUE, join_order = 1, room_id = EXCLUDED.room_id
+                INSERT INTO room_players (room_code, room_id, user_id, player_name, is_ready, join_order, score)
+                VALUES (%s, %s, %s, %s, TRUE, 1, 0)
+                ON CONFLICT (room_code, user_id) DO UPDATE
+                SET is_ready = TRUE, join_order = 1, room_id = EXCLUDED.room_id, player_name = EXCLUDED.player_name
             """, (room_code, room_code, user_id, player_name))
 
             conn.commit()
         return {"success": True, "room_code": room_code}
     except Exception as e:
         if conn: conn.rollback()
-        print(f"CRITICAL ERROR in create_room: {e}")
-        return {"success": False, "msg": f"خطأ تقني: {str(e)}"}
+        # تسجيل الخطأ بالتفصيل في سجلات النظام (Vercel Logs)
+        import sys
+        print(f"!!! DATABASE ERROR IN create_room: {e}", file=sys.stderr)
+        return {"success": False, "msg": f"خطأ تقني في قاعدة البيانات: {str(e)}"}
     finally:
         if conn: conn.close()
 
