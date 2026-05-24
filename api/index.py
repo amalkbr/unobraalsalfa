@@ -91,6 +91,10 @@ def init_db():
                 INSERT INTO settings (key, value) VALUES ('question_timeout', '30') ON CONFLICT DO NOTHING;
                 INSERT INTO settings (key, value) VALUES ('vote_timeout', '10') ON CONFLICT DO NOTHING;
                 INSERT INTO settings (key, value) VALUES ('spy_guess_timeout', '15') ON CONFLICT DO NOTHING;
+                INSERT INTO settings (key, value) VALUES ('sound_click', 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/click.mp3') ON CONFLICT DO NOTHING;
+                INSERT INTO settings (key, value) VALUES ('sound_reveal', 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/level-up.mp3') ON CONFLICT DO NOTHING;
+                INSERT INTO settings (key, value) VALUES ('sound_win', 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/success.mp3') ON CONFLICT DO NOTHING;
+                INSERT INTO settings (key, value) VALUES ('sound_fail', 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/wrong.mp3') ON CONFLICT DO NOTHING;
                 -- تحديث جدول المستخدمين ليشمل إحصائيات
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS total_wins INTEGER DEFAULT 0;
                 ALTER TABLE users ADD COLUMN IF NOT EXISTS saved_players JSONB DEFAULT '[]';
@@ -131,15 +135,29 @@ async def join_room_link(room_code: str):
 @app.get("/api/settings")
 async def get_settings():
     conn = get_db_conn()
-    if not conn: return {"question_timeout": 30, "vote_timeout": 10, "spy_guess_timeout": 15}
+    defaults = {
+        "question_timeout": 30,
+        "vote_timeout": 10,
+        "spy_guess_timeout": 15,
+        "sound_click": "https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/click.mp3",
+        "sound_reveal": "https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/level-up.mp3",
+        "sound_win": "https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/success.mp3",
+        "sound_fail": "https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/wrong.mp3"
+    }
+    if not conn: return defaults
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT key, value FROM settings")
             rows = cur.fetchall()
-            settings = {row[0]: int(row[1]) for row in rows}
-            if 'question_timeout' not in settings: settings['question_timeout'] = 30
-            if 'vote_timeout' not in settings: settings['vote_timeout'] = 10
-            if 'spy_guess_timeout' not in settings: settings['spy_guess_timeout'] = 15
+            settings = {row[0]: row[1] for row in rows}
+
+            # Merge with defaults
+            for k, v in defaults.items():
+                if k not in settings:
+                    settings[k] = v
+                elif k.endswith('_timeout'):
+                    settings[k] = int(settings[k])
+
             return settings
     finally: conn.close()
 
@@ -730,6 +748,10 @@ HTML_TEMPLATE = """
         let questionTimeout = 30;
         let voteTimeout = 10;
         let spyGuessTimeout = 15;
+        let soundClickUrl = 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/click.mp3';
+        let soundRevealUrl = 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/level-up.mp3';
+        let soundWinUrl = 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/success.mp3';
+        let soundFailUrl = 'https://raw.githubusercontent.com/rafael-m-silva/Fast-Finger-Game/master/sounds/wrong.mp3';
         let timerInterval = null;
         const DEFAULT_CATEGORIES = [
             'أكلات', 'حيوانات', 'ملابس', 'كورة', 'سيارات', 'شركات', 'كواكب', 'أجهزة', 'تطبيقات', 'فواكه وخضار', 'شخصيات', 'كارتون', 'مشروبات', 'حلويات', 'مسلسلات', 'انمي', 'كيبوب', 'قيمرز', 'مهن'
@@ -739,9 +761,19 @@ HTML_TEMPLATE = """
             try {
                 const res = await fetch('/api/settings');
                 const d = await res.json();
-                questionTimeout = d.question_timeout || 30;
-                voteTimeout = d.vote_timeout || 10;
-                spyGuessTimeout = d.spy_guess_timeout || 15;
+                questionTimeout = parseInt(d.question_timeout) || 30;
+                voteTimeout = parseInt(d.vote_timeout) || 10;
+                spyGuessTimeout = parseInt(d.spy_guess_timeout) || 15;
+                if(d.sound_click) soundClickUrl = d.sound_click;
+                if(d.sound_reveal) soundRevealUrl = d.sound_reveal;
+                if(d.sound_win) soundWinUrl = d.sound_win;
+                if(d.sound_fail) soundFailUrl = d.sound_fail;
+
+                // تحديث الكائنات الصوتية بالروابط الجديدة
+                sounds.click = new Audio(soundClickUrl);
+                sounds.reveal = new Audio(soundRevealUrl);
+                sounds.win = new Audio(soundWinUrl);
+                sounds.fail = new Audio(soundFailUrl);
             } catch(e) { console.error("Settings fetch failed", e); }
         }
 
@@ -1964,29 +1996,47 @@ HTML_TEMPLATE = """
         function adminManageTimeouts() {
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
-                    <h2>⏱️ إعدادات المهل الزمنية</h2>
-                    <div style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin:20px 0; text-align:right;">
-                        <label>وقت مهلة السؤال (ثانية):</label>
-                        <div style="display:flex; gap:10px; margin-top:5px; margin-bottom:15px;">
-                            <input type="number" id="timeout_setting" value="${questionTimeout}" style="margin:0">
-                            <button onclick="saveTimeoutSetting('question_timeout', 'timeout_setting')" style="width:100px; margin:0; background:var(--success)">حفظ</button>
+                    <h2>⏱️ إعدادات المهل والأصوات</h2>
+                    <div style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin:20px 0; text-align:right; max-height:450px; overflow-y:auto;">
+                        <h3 style="color:var(--accent); border-bottom:1px solid #3c339e; padding-bottom:5px;">المهل الزمنية (بالثواني)</h3>
+                        <label>وقت مهلة السؤال:</label>
+                        <div style="display:flex; gap:10px; margin-bottom:15px;">
+                            <input type="number" id="timeout_setting" value="${questionTimeout}">
+                            <button onclick="saveAdminSetting('question_timeout', 'timeout_setting')" style="width:80px; background:var(--success)">حفظ</button>
                         </div>
-                        <label>وقت مهلة التصويت (ثانية):</label>
-                        <div style="display:flex; gap:10px; margin-top:5px; margin-bottom:15px;">
-                            <input type="number" id="vote_timeout_setting" value="${voteTimeout}" style="margin:0">
-                            <button onclick="saveTimeoutSetting('vote_timeout', 'vote_timeout_setting')" style="width:100px; margin:0; background:var(--success)">حفظ</button>
+                        <label>وقت مهلة التصويت:</label>
+                        <div style="display:flex; gap:10px; margin-bottom:15px;">
+                            <input type="number" id="vote_timeout_setting" value="${voteTimeout}">
+                            <button onclick="saveAdminSetting('vote_timeout', 'vote_timeout_setting')" style="width:80px; background:var(--success)">حفظ</button>
                         </div>
-                        <label>وقت تخمين الجاسوس (ثانية):</label>
-                        <div style="display:flex; gap:10px; margin-top:5px;">
-                            <input type="number" id="spy_timeout_setting" value="${spyGuessTimeout}" style="margin:0">
-                            <button onclick="saveTimeoutSetting('spy_guess_timeout', 'spy_timeout_setting')" style="width:100px; margin:0; background:var(--success)">حفظ</button>
+
+                        <h3 style="color:var(--accent); border-bottom:1px solid #3c339e; padding-bottom:5px; margin-top:20px;">روابط الأصوات (URL)</h3>
+                        <label>صوت النقر/التالي:</label>
+                        <div style="display:flex; flex-direction:column; gap:5px; margin-bottom:15px;">
+                            <input type="text" id="sound_click_setting" value="${soundClickUrl}" dir="ltr">
+                            <button onclick="saveAdminSetting('sound_click', 'sound_click_setting')" style="background:var(--success); padding:8px;">حفظ الرابط</button>
+                        </div>
+                        <label>صوت كشف الدور:</label>
+                        <div style="display:flex; flex-direction:column; gap:5px; margin-bottom:15px;">
+                            <input type="text" id="sound_reveal_setting" value="${soundRevealUrl}" dir="ltr">
+                            <button onclick="saveAdminSetting('sound_reveal', 'sound_reveal_setting')" style="background:var(--success); padding:8px;">حفظ الرابط</button>
+                        </div>
+                        <label>صوت الفوز:</label>
+                        <div style="display:flex; flex-direction:column; gap:5px; margin-bottom:15px;">
+                            <input type="text" id="sound_win_setting" value="${soundWinUrl}" dir="ltr">
+                            <button onclick="saveAdminSetting('sound_win', 'sound_win_setting')" style="background:var(--success); padding:8px;">حفظ الرابط</button>
+                        </div>
+                        <label>صوت الخطأ/الفشل:</label>
+                        <div style="display:flex; flex-direction:column; gap:5px; margin-bottom:15px;">
+                            <input type="text" id="sound_fail_setting" value="${soundFailUrl}" dir="ltr">
+                            <button onclick="saveAdminSetting('sound_fail', 'sound_fail_setting')" style="background:var(--success); padding:8px;">حفظ الرابط</button>
                         </div>
                     </div>
                     <button style="background:#636e72" onclick="showAdminDashboard(false)">رجوع</button>
                 </div>`;
         }
 
-        async function saveTimeoutSetting(key, inputId) {
+        async function saveAdminSetting(key, inputId) {
             const val = document.getElementById(inputId).value;
             const res = await fetch('/api/admin/settings/update', {
                 method: 'POST',
@@ -1995,10 +2045,15 @@ HTML_TEMPLATE = """
             });
             const d = await res.json();
             if(d.success) {
+                // تحديث القيم محلياً فوراً
                 if(key === 'question_timeout') questionTimeout = parseInt(val);
                 if(key === 'vote_timeout') voteTimeout = parseInt(val);
                 if(key === 'spy_guess_timeout') spyGuessTimeout = parseInt(val);
-                alert("تم تحديث وقت المهلة بنجاح");
+                if(key === 'sound_click') { soundClickUrl = val; sounds.click = new Audio(val); }
+                if(key === 'sound_reveal') { soundRevealUrl = val; sounds.reveal = new Audio(val); }
+                if(key === 'sound_win') { soundWinUrl = val; sounds.win = new Audio(val); }
+                if(key === 'sound_fail') { soundFailUrl = val; sounds.fail = new Audio(val); }
+                alert("تم التحديث بنجاح ✅");
             }
         }
 
