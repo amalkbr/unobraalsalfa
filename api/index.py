@@ -700,10 +700,8 @@ async def calculate_online_results(room_code):
                 # Persist to global user profile (online_points)
                 cur.execute("UPDATE users SET online_points = online_points + 1 WHERE user_id = %s", (winner_id,))
                 cur.execute("UPDATE rooms SET status = 'result' WHERE room_code = %s", (room_code,))
-            elif not spy_caught:
-                cur.execute("UPDATE rooms SET status = 'result' WHERE room_code = %s", (room_code,))
             else:
-                # Spy caught, move to guess phase
+                # Always go to spy_reveal phase to let the spy guess the word
                 cur.execute("UPDATE rooms SET status = 'spy_reveal' WHERE room_code = %s", (room_code,))
 
             cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
@@ -2561,19 +2559,22 @@ HTML_TEMPLATE = """
             const {room, players} = window.roomData;
             const isSpy = room.spy_id == currentUser.user_id;
             const spy = players.find(p => p.user_id == room.spy_id);
+            const caught = room.game_data.spy_caught;
 
             if(isSpy) {
-                let h = `<h3>كشفوك! خمن وش السالفة؟</h3>`;
+                let h = `<h3>${caught ? 'كشفوك! خمن وش السالفة؟' : 'ما كشفوك! خمن وش السالفة عشان تاخذ نقطة زيادة 🎯'}</h3>
+                         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin:20px 0;">`;
                 room.game_data.guesses.forEach(g => {
-                    h += `<div class="vote-item" onclick="onlineAction('spy_guess', {guess: '${g.replace(/'/g, "\\'")}'})">${g}</div>`;
+                    h += `<div class="vote-item" style="margin:0; padding:15px; font-size:14px;" onclick="onlineAction('spy_guess', {guess: '${g.replace(/'/g, "\\'")}'})">${g}</div>`;
                 });
+                h += `</div>`;
                 h += buildQAChatHistory();
                 updateMainUI(`<div class="card">${h}</div>`);
             } else {
                 let h = `
-                        <h1>اللي برة السالفة هو:</h1>
-                        <h2 style="color:var(--error); font-size:40px;">${spy.player_name}</h2>
-                        <p>بانتظار تخمين الجاسوس...</p>
+                        <h1>${caught ? 'كفشتوا الجاسوس! ✅' : 'ما كفشتوا الجاسوس! ❌'}</h1>
+                        <p style="font-size:18px;">اللي برة السالفة هو: <b style="color:var(--error); font-size:28px; display:block; margin:10px 0;">${spy.player_name}</b></p>
+                        <p>بانتظار تخمين الجاسوس للسالفة...</p>
                         <div class="shuffling">🌀</div>`;
                 h += buildQAChatHistory();
                 updateMainUI(`<div class="card">${h}</div>`);
