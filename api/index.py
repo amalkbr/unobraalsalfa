@@ -1363,10 +1363,15 @@ HTML_TEMPLATE = """
                     })
                 });
 
-                if (!res.ok) throw new Error(`Server Error: ${res.status}`);
+                if (!res.ok) {
+                    const text = await res.text();
+                    console.error("Create Room failed HTTP response:", res.status, text);
+                    throw new Error(`Server Error: ${res.status}`);
+                }
 
                 const d = await res.json();
-                if(d.success && d.room_code) {
+                console.log("Create Room response:", d);
+                if (d.success && d.room_code) {
                     await enterRoom(d.room_code);
                 } else {
                     alert(d.msg || "فشل إنشاء الغرفة");
@@ -1375,7 +1380,7 @@ HTML_TEMPLATE = """
                         btn.innerText = originalText;
                     }
                 }
-            } catch(err) {
+            } catch (err) {
                 console.error("Create Room Error:", err);
                 alert("حدث خطأ في الاتصال بالسيرفر. يرجى المحاولة لاحقاً.");
                 if (btn && btn.tagName === 'BUTTON') {
