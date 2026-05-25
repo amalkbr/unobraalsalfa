@@ -1330,7 +1330,8 @@ async def admin_get_players():
     if not conn: return []
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT user_id, username_key, player_name, total_wins FROM users ORDER BY total_wins DESC")
+            # ترتيب مباشر في قاعدة البيانات مع حد أقصى لتحسين السرعة
+            cur.execute("SELECT user_id, username_key, player_name, total_wins FROM users ORDER BY total_wins DESC LIMIT 200")
             return cur.fetchall()
     except Exception as e:
         print(f"Error in admin_get_players: {e}")
@@ -1343,7 +1344,8 @@ async def get_categories():
     if not conn: return []
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT name, image_url as image FROM categories ORDER BY display_order ASC, name ASC")
+            # تم تعديل الاستعلام ليشمل id و image_url و display_order
+            cur.execute("SELECT id, name, image_url, display_order FROM categories ORDER BY display_order ASC, name ASC")
             cats = cur.fetchall()
 
             # If categories table is empty, seed it
@@ -1352,7 +1354,7 @@ async def get_categories():
                 for i, c in enumerate(default_cats):
                     cur.execute("INSERT INTO categories (name, display_order) VALUES (%s, %s) ON CONFLICT DO NOTHING", (c, i))
                 conn.commit()
-                cur.execute("SELECT name, image_url as image FROM categories ORDER BY display_order ASC, name ASC")
+                cur.execute("SELECT id, name, image_url, display_order FROM categories ORDER BY display_order ASC, name ASC")
                 cats = cur.fetchall()
 
             # Migrate words if words table is empty
@@ -4620,7 +4622,7 @@ HTML_TEMPLATE = """
                     <div class="admin-content-box" style="background:transparent; padding:0; margin-top:10px;">
                         <div class="admin-grid" style="max-height:80vh; overflow-y:auto; padding:10px;">`;
 
-                players.sort((a,b) => (b.total_wins || 0) - (a.total_wins || 0));
+                // تمت إزالة الترتيب من هنا لأنه يتم الآن في السيرفر لسرعة الاستجابة
 
                 players.forEach(p => {
                     const safePlayerName = escapeHtml(p.player_name);
