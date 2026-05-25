@@ -1940,7 +1940,7 @@ HTML_TEMPLATE = """
         let game = null;
         let p_votes = {};
         let totalScores = {}; // نقاط الجلسة
-        let winLimit = 1000;
+        let winLimit = 10;
         let questionTimeout = 30;
         let voteTimeout = 10;
         let spyGuessTimeout = 15;
@@ -3415,18 +3415,19 @@ HTML_TEMPLATE = """
                 updateSelectedCount();
             } else if(step === 3) {
                 // عرض صفحة اختيار عدد الفوز أولاً في الاوفلاين
+                const currentWinLimit = window.winLimit || 10;
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
                         <h2>🏆 هدف الفوز</h2>
                         <p style="color: #9aa0b4; margin-bottom: 20px;">حدد عدد النقاط المطلوب للفوز بالسالفة</p>
 
                         <div style="display: flex; gap: 10px; justify-content: center; margin-bottom: 30px;">
-                            <div class="win-opt" onclick="selectWinLimit(this, 5)">5</div>
-                            <div class="win-opt selected" onclick="selectWinLimit(this, 10)">10</div>
-                            <div class="win-opt" onclick="selectWinLimit(this, 15)">15</div>
-                            <div class="win-opt" onclick="selectWinLimit(this, 20)">20</div>
+                            <div class="win-opt ${currentWinLimit === 5 ? 'selected' : ''}" onclick="selectWinLimit(this, 5)">5</div>
+                            <div class="win-opt ${currentWinLimit === 10 ? 'selected' : ''}" onclick="selectWinLimit(this, 10)">10</div>
+                            <div class="win-opt ${currentWinLimit === 15 ? 'selected' : ''}" onclick="selectWinLimit(this, 15)">15</div>
+                            <div class="win-opt ${currentWinLimit === 20 ? 'selected' : ''}" onclick="selectWinLimit(this, 20)">20</div>
                         </div>
-                        <input type="hidden" id="win_limit_val" value="10">
+                        <input type="hidden" id="win_limit_val" value="${currentWinLimit}">
 
                         <button class="btn-yellow" onclick="showOfflineCategoryStep()">التالي: اختيار الفئة</button>
                         <button style="background:#636e72" onclick="navigateTo('setup', {step: 2})">رجوع</button>
@@ -3456,25 +3457,12 @@ HTML_TEMPLATE = """
                 }
             } catch (err) { console.error(err); }
         }
-                        } else if (!cachedCats || !cachedCats.length) {
-                            showCategoryError();
-                        }
-                    } else if (!cachedCats || !cachedCats.length) {
-                        showCategoryError();
-                    }
-                } catch (err) {
-                    console.error('Category fetch failed', err);
-                    if (!cachedCats || !cachedCats.length) {
-                        showCategoryError();
-                    }
-                }
-            }
-        }
 
         function selectWinLimit(el, val) {
             document.querySelectorAll('.win-opt').forEach(opt => opt.classList.remove('selected'));
             el.classList.add('selected');
             document.getElementById('win_limit_val').value = val;
+            window.winLimit = val;
         }
 
         function selectCat(el, name) {
@@ -3728,8 +3716,8 @@ HTML_TEMPLATE = """
             });
 
             loadCategoryImages();
-        }
-  // إظهار تنبيهات التحميل إذا لزم الأمر
+
+            // إظهار تنبيهات التحميل إذا لزم الأمر
             if (fromCache || isFallback) {
                 const existingNotice = document.querySelector('.cache-notice');
                 if (!existingNotice) {
@@ -3787,7 +3775,11 @@ HTML_TEMPLATE = """
                 btn.disabled = true;
                 btn.innerHTML = '<span class="shuffling" style="font-size:20px; margin:0;">🌀</span> جاري البدء...';
             }
-            winLimit = parseInt(document.getElementById('win_limit_val').value);
+            // استخدام winLimit العالمي المحفوظ بدلاً من البحث عن عنصر قد يكون حُذف من الـ DOM
+            if (!window.winLimit) {
+                const winEl = document.getElementById('win_limit_val');
+                window.winLimit = winEl ? parseInt(winEl.value) : 10;
+            }
             start(cat);
         }
 
