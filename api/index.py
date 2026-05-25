@@ -2114,6 +2114,8 @@ HTML_TEMPLATE = """
     <div class="menu-btn" onclick="toggleSidebar()">☰</div>
     <div class="exit-btn" id="global-exit-btn" onclick="confirmExitGame()">✖</div>
 
+    <div id="sidebar-overlay" onclick="toggleSidebar()" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.3); z-index:999; backdrop-filter: blur(2px);"></div>
+
     <!-- Install Prompt Modal -->
     <div id="installModal" class="modal">
         <div class="modal-content">
@@ -2130,10 +2132,12 @@ HTML_TEMPLATE = """
         <div style="background:#1b1464; padding:15px; border-radius:15px; margin:20px 0;">
             <p id="user-display" style="margin:0; font-weight:bold;">زائر</p>
         </div>
-        <button id="install-btn-sidebar" style="background:var(--accent); color:black; font-size:14px;" onclick="showInstallOptions()">📲 إضافة للشاشة الرئيسية</button>
+        <div id="sidebar-dynamic-top"></div>
         <button style="background:#25D366; color:white; font-size:14px;" onclick="window.open('https://wa.me/9647733921468', '_blank')">💬 تواصل مع مصمم اللعبة</button>
         <button style="background:var(--success); font-size:14px;" onclick="showReports()">📊 التقارير والمتصدرين</button>
         <button style="background:var(--primary); font-size:14px;" onclick="showEditProfile()">تعديل بيانات الحساب</button>
+        <button id="share-game-btn" style="background:#0984e3; font-size:14px;" onclick="shareGame()">🔗 شارك اللعبة</button>
+        <button id="install-btn-sidebar" style="background:var(--accent); color:black; font-size:14px;" onclick="showInstallOptions()">📲 إضافة للشاشة الرئيسية</button>
         <button style="background:var(--error); font-size:14px;" onclick="logout()">تسجيل الخروج</button>
         <button style="background:#636e72; font-size:14px;" onclick="toggleSidebar()">إغلاق</button>
     </div>
@@ -2311,8 +2315,8 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h2>تسجيل الدخول</h2>
-                    <input id="u_name" placeholder="اسم المستخدم">
-                    <input id="u_pass" type="password" placeholder="كلمة المرور">
+                    <input id="u_name" placeholder="يوزرك">
+                    <input id="u_pass" type="password" placeholder="باسووردك">
                     <button onclick="login()" style="background: var(--primary); margin-top: 10px;">دخول ✅</button>
                     <button onclick="showAuth()" style="background: #636e72; margin-top: 10px;">رجوع</button>
                 </div>`;
@@ -2322,9 +2326,9 @@ HTML_TEMPLATE = """
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h2>إنشاء حساب جديد</h2>
-                    <input id="r_nick" placeholder="اسمك المستعار (يظهر للاعبين)">
-                    <input id="u_name" placeholder="اسم المستخدم (للجهاز)">
-                    <input id="u_pass" type="password" placeholder="كلمة المرور">
+                    <input id="r_nick" placeholder="اسمك باللعبة">
+                    <input id="u_name" placeholder="يوزرك">
+                    <input id="u_pass" type="password" placeholder="باسووردك">
                     <button onclick="register()" style="background: var(--accent); color: #000; margin-top: 10px;">إنشاء الحساب 🚀</button>
                     <button onclick="showAuth()" style="background: #636e72; margin-top: 10px;">رجوع</button>
                 </div>`;
@@ -4171,6 +4175,10 @@ HTML_TEMPLATE = """
                     </div>
                     <button onclick="document.getElementById('box').classList.remove('hidden'); this.style.display='none'; document.getElementById('bnxt').style.display='block'; playSound('click')">اكشف الدور</button>
                     <button id="bnxt" style="display:none" onclick="game.curr++; showRole()">فهمت، التالي</button>
+
+                    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
+                        <button onclick="confirmExitGame()" style="background:transparent; color:#ff7675; font-size:14px; padding:5px; border:none; text-decoration:underline;">❌ إنهاء اللعبة والعودة للرئيسية</button>
+                    </div>
                 </div>`;
         }
 
@@ -4484,7 +4492,16 @@ HTML_TEMPLATE = """
         }
 
         function toggleSidebar() {
-            document.getElementById('sidebar').classList.toggle('open');
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            sidebar.classList.toggle('open');
+
+            if (sidebar.classList.contains('open')) {
+                overlay.style.display = 'block';
+            } else {
+                overlay.style.display = 'none';
+            }
+
             updateSidebar();
             updateInstallButtonVisibility();
         }
@@ -4500,15 +4517,16 @@ HTML_TEMPLATE = """
         function updateSidebar() { if(currentUser) {
             document.getElementById('user-display').innerText = currentUser.player_name;
 
-            // إضافة زر إعدادات الوقت للمستخدم في القائمة الجانبية
-            if (!document.getElementById('user-settings-btn')) {
+            // إضافة زر إعدادات الوقت للمستخدم في رأس القائمة
+            const topDiv = document.getElementById('sidebar-dynamic-top');
+            if (topDiv && !document.getElementById('user-settings-btn')) {
                 let sbtn = document.createElement('button');
                 sbtn.id = 'user-settings-btn';
                 sbtn.innerText = "⚙️ إعدادات الوقت";
                 sbtn.style.background = "rgba(255,255,255,0.1)";
-                sbtn.style.marginTop = "10px";
+                sbtn.style.marginBottom = "10px";
                 sbtn.onclick = () => { toggleSidebar(); showUserSettings(); };
-                document.getElementById('sidebar').appendChild(sbtn);
+                topDiv.appendChild(sbtn);
             }
 
             if(currentUser.username_key === 'admin') {
@@ -4519,10 +4537,33 @@ HTML_TEMPLATE = """
                     btn.style.background = "var(--accent)";
                     btn.style.color = "black";
                     btn.onclick = () => navigateTo('admin');
-                    document.getElementById('sidebar').appendChild(btn);
+                    // نضعه قبل زر الإغلاق لضمان الترتيب
+                    const sidebar = document.getElementById('sidebar');
+                    sidebar.insertBefore(btn, sidebar.lastElementChild);
                 }
             }
-        }}
+        } }
+
+        function shareGame() {
+            const shareData = {
+                title: 'لعبة برا السالفة',
+                text: 'اني العب لعبة برا السالفه ممتعة جدا تعالي خلي نلعها بس انقر ع الرابط',
+                url: window.location.origin
+            };
+
+            if (navigator.share) {
+                navigator.share(shareData).catch(console.error);
+            } else {
+                // Fallback for browsers that don't support Web Share API
+                const dummy = document.createElement('input');
+                document.body.appendChild(dummy);
+                dummy.value = shareData.text + " " + shareData.url;
+                dummy.select();
+                document.execCommand('copy');
+                document.body.removeChild(dummy);
+                alert('تم نسخ نص المشاركة والرابط، يمكنك الآن إرسالها لأصدقائك!');
+            }
+        }
 
         async function showAdminDashboard(push = true) {
             if(push) {
