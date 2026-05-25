@@ -1413,29 +1413,159 @@ HTML_TEMPLATE = """
     <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/8030/8030198.png">
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
-        :root { --primary: #6c5ce7; --bg: #0f0c29; --card: #1b1464; --accent: #f9ca24; --error: #eb4d4b; --success: #2ecc71; }
-        body { font-family: 'Cairo', sans-serif; background: var(--bg); color: white; margin: 0; min-height: 100vh; }
+        :root {
+            --primary: #00d2ff;
+            --bg: #050505;
+            --card: rgba(25, 25, 35, 0.95);
+            --accent: #00ff88;
+            --error: #ff2d55;
+            --success: #00ff88;
+            --neon-blue: #00d2ff;
+            --neon-purple: #9d50bb;
+        }
+        body {
+            font-family: 'Cairo', sans-serif;
+            background: radial-gradient(circle at center, #1a1a2e 0%, #050505 100%);
+            color: white;
+            margin: 0;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
         .flex-center { display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction: column; }
         .container { width: 98%; text-align: center; padding: 5px; box-sizing: border-box; }
-        .card { background: var(--card); padding: 24px 16px; border-radius: 24px; box-shadow: 0 15px 35px rgba(0,0,0,0.6); border: 2px solid #3c339e; animation: fadeIn 0.3s ease; width: 100%; box-sizing: border-box; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .card {
+            background: var(--card);
+            padding: 24px 16px;
+            border-radius: 24px;
+            box-shadow: 0 0 20px rgba(0, 210, 255, 0.15), inset 0 0 15px rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(0, 210, 255, 0.3);
+            backdrop-filter: blur(10px);
+            animation: fadeIn 0.3s ease;
+            width: 100%;
+            box-sizing: border-box;
+            position: relative;
+        }
+        .card::before {
+            content: '';
+            position: absolute;
+            top: -2px; left: -2px; right: -2px; bottom: -2px;
+            background: linear-gradient(45deg, var(--primary), transparent, var(--accent));
+            z-index: -1;
+            border-radius: 26px;
+            opacity: 0.3;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-        .reveal-text { animation: pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        .reveal-text {
+            animation: pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            text-shadow: 0 0 10px var(--primary);
+        }
         @keyframes pop { 0% { transform: scale(0.5); } 100% { transform: scale(1); } }
-        h1 { font-weight: 900; color: #a29bfe; margin-bottom: 25px; font-size: 32px; }
-        input, select { width: 100%; padding: 15px; margin: 10px 0; border-radius: 15px; border: 2px solid #2f278c; background: #0f0c29; color: white; font-size: 16px; box-sizing: border-box; outline: none; }
-        button { width: 100%; padding: 16px; margin: 12px 0; border-radius: 18px; border: none; background: linear-gradient(45deg, #6c5ce7, #a29bfe); color: white; font-weight: bold; cursor: pointer; font-size: 18px; transition: 0.3s; }
-        button:hover { transform: translateY(-3px); }
-        button:disabled { opacity: 0.6; cursor: not-allowed; transform: none !important; }
-        .btn-yellow { background: linear-gradient(45deg, #f9ca24, #f1c40f) !important; color: #1b1464 !important; box-shadow: 0 5px 15px rgba(249, 202, 36, 0.4); }
-        .btn-yellow:hover { background: linear-gradient(45deg, #f1c40f, #f9ca24) !important; }
-        .sidebar { position: fixed; right: -280px; top: 0; width: 280px; height: 100vh; background: #130f40; transition: 0.4s; z-index: 1000; padding: 30px 20px; box-sizing: border-box; border-left: 2px solid var(--primary); overflow-y: auto; display: flex; flex-direction: column; gap: 5px; }
-        .sidebar::-webkit-scrollbar { width: 5px; }
-        .sidebar::-webkit-scrollbar-thumb { background: var(--primary); border-radius: 10px; }
-        .sidebar.open { right: 0; }
-        .menu-btn { position: fixed; right: 20px; top: 20px; font-size: 28px; cursor: pointer; z-index: 1001; background: var(--card); width: 50px; height: 50px; border-radius: 15px; text-align: center; line-height: 50px; }
-        .vote-item { background: #2f278c; padding: 18px; margin: 10px 0; border-radius: 20px; cursor: pointer; transition: 0.2s; font-weight: bold; }
-        .vote-item:hover { background: var(--primary); transform: scale(1.02); }
+        h1 {
+            font-weight: 900;
+            color: white;
+            text-shadow: 0 0 15px var(--primary);
+            margin-bottom: 25px;
+            font-size: 32px;
+            letter-spacing: 1px;
+        }
+        input, select {
+            width: 100%;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 15px;
+            border: 1px solid rgba(0, 210, 255, 0.2);
+            background: rgba(0,0,0,0.5);
+            color: white;
+            font-size: 16px;
+            box-sizing: border-box;
+            outline: none;
+            transition: 0.3s;
+        }
+        input:focus { border-color: var(--primary); box-shadow: 0 0 10px rgba(0, 210, 255, 0.4); }
+        button {
+            width: 100%;
+            padding: 16px;
+            margin: 12px 0;
+            border-radius: 18px;
+            border: none;
+            background: linear-gradient(90deg, #00d2ff, #3a7bd5);
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 18px;
+            transition: 0.3s;
+            box-shadow: 0 4px 15px rgba(0, 210, 255, 0.3);
+            text-transform: uppercase;
+        }
+        button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(0, 210, 255, 0.5);
+            filter: brightness(1.1);
+        }
+        button:active { transform: scale(0.98); }
+        button:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; }
+        .btn-yellow {
+            background: linear-gradient(90deg, #00ff88, #00bd68) !important;
+            color: #050505 !important;
+            box-shadow: 0 4px 15px rgba(0, 255, 136, 0.3) !important;
+        }
+        .btn-yellow:hover { box-shadow: 0 6px 20px rgba(0, 255, 136, 0.5) !important; }
+        .sidebar {
+            position: fixed;
+            right: -280px;
+            top: 0;
+            width: 280px;
+            height: 100vh;
+            background: rgba(10, 10, 20, 0.95);
+            backdrop-filter: blur(15px);
+            transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 1000;
+            padding: 30px 20px;
+            box-sizing: border-box;
+            border-left: 1px solid var(--primary);
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .sidebar::-webkit-scrollbar { width: 3px; }
+        .sidebar::-webkit-scrollbar-thumb { background: var(--primary); }
+        .sidebar.open { right: 0; box-shadow: -10px 0 30px rgba(0,0,0,0.5); }
+        .menu-btn {
+            position: fixed;
+            right: 20px;
+            top: 20px;
+            font-size: 24px;
+            cursor: pointer;
+            z-index: 1001;
+            background: rgba(255,255,255,0.05);
+            width: 50px;
+            height: 50px;
+            border-radius: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255,255,255,0.1);
+            transition: 0.3s;
+        }
+        .menu-btn:hover { background: var(--primary); color: #050505; }
+        .vote-item {
+            background: rgba(255,255,255,0.05);
+            padding: 18px;
+            margin: 10px 0;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: 0.3s;
+            font-weight: bold;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .vote-item:hover {
+            background: rgba(0, 210, 255, 0.1);
+            border-color: var(--primary);
+            transform: scale(1.02);
+        }
         .hidden { display: none !important; }
         .toast {
             position: fixed;
@@ -1463,12 +1593,43 @@ HTML_TEMPLATE = """
         }
         .q-badge { background: var(--error); padding: 4px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 15px; display: inline-block; }
         .shuffling { animation: rotate 1s infinite linear; font-size: 50px; margin: 20px; display:inline-block; }
-        .score-item { display: flex; justify-content: space-between; background: #0f0c29; padding: 10px 20px; border-radius: 10px; margin: 5px 0; border: 1px solid #3c339e; }
-        .cat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 20px 0; max-height: 340px; overflow-y: auto; padding: 10px; }
-        .cat-card { background: #130f40; border-radius: 15px; padding: 10px; cursor: pointer; border: 2px solid transparent; transition: 0.3s; display: flex; flex-direction: column; align-items: center; min-height: 170px; }
-        .cat-card.placeholder { opacity: 0.7; filter: blur(0.5px); }
-        .cat-card img { width: 100%; height: 120px; object-fit: cover; border-radius: 12px; margin-bottom: 8px; opacity: 0; transition: opacity 0.25s ease-in-out; }
-        .cat-card.selected { border-color: var(--accent); background: #1b1464; box-shadow: 0 0 15px var(--accent); }
+        .score-item {
+            display: flex;
+            justify-content: space-between;
+            background: rgba(255,255,255,0.03);
+            padding: 12px 20px;
+            border-radius: 15px;
+            margin: 8px 0;
+            border: 1px solid rgba(255,255,255,0.05);
+            transition: 0.3s;
+        }
+        .score-item:hover {
+            background: rgba(255,255,255,0.07);
+            border-color: var(--primary);
+        }
+        .cat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 20px 0; max-height: 400px; overflow-y: auto; padding: 10px; }
+        .cat-card {
+            background: rgba(255,255,255,0.03);
+            border-radius: 20px;
+            padding: 12px;
+            cursor: pointer;
+            border: 1px solid rgba(255,255,255,0.08);
+            transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 170px;
+        }
+        .cat-card:hover {
+            transform: translateY(-5px);
+            background: rgba(0, 210, 255, 0.05);
+            border-color: var(--primary);
+        }
+        .cat-card.selected {
+            border-color: var(--accent);
+            background: rgba(0, 255, 136, 0.1);
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.2);
+        }
         .cat-image-wrapper { position: relative; width: 100%; }
         .image-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #1a1538; border-radius: 12px; color: #9aa0b4; font-size: 18px; pointer-events: none; }
         .win-opt {
@@ -1579,6 +1740,8 @@ HTML_TEMPLATE = """
             max-height: 85vh;
             text-align: right;
             direction: rtl;
+            background: linear-gradient(180deg, rgba(0, 210, 255, 0.03) 0%, rgba(0, 0, 0, 0) 100%);
+            border-radius: 20px;
         }
         .qa-chat-header-main {
             padding-bottom: 12px;
@@ -1606,10 +1769,10 @@ HTML_TEMPLATE = """
             flex-direction: column;
             gap: 15px;
             margin-bottom: 15px;
-            background: rgba(15, 12, 41, 0.4);
+            background: rgba(0, 0, 0, 0.4);
             border-radius: 18px;
-            border: 1px solid rgba(255,255,255,0.05);
-            box-shadow: inset 0 4px 15px rgba(0,0,0,0.4);
+            border: 1px solid rgba(0, 210, 255, 0.1);
+            box-shadow: inset 0 4px 15px rgba(0,0,0,0.6);
             scroll-behavior: smooth;
         }
         .qa-chat-scroll-area::-webkit-scrollbar {
@@ -1626,24 +1789,26 @@ HTML_TEMPLATE = """
         }
         .chat-bubble {
             max-width: 85%;
-            padding: 10px 14px;
-            border-radius: 18px;
+            padding: 12px 16px;
+            border-radius: 15px;
             font-size: 15px;
             line-height: 1.5;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
             animation: pop 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.15);
+            position: relative;
+            border: 1px solid rgba(255,255,255,0.1);
         }
         .bubble-asker {
-            background: linear-gradient(135deg, #2c256b, #1b1464);
+            background: linear-gradient(135deg, rgba(0, 210, 255, 0.1), rgba(58, 123, 213, 0.2));
             align-self: flex-start;
-            border-bottom-right-radius: 4px;
-            border: 1px solid #3c339e;
+            border-bottom-right-radius: 2px;
+            border-color: rgba(0, 210, 255, 0.4);
         }
         .bubble-answerer {
-            background: linear-gradient(135deg, #10ac84, #0f9b76);
+            background: linear-gradient(135deg, rgba(0, 255, 136, 0.1), rgba(0, 189, 104, 0.2));
             align-self: flex-end;
-            border-bottom-left-radius: 4px;
-            color: white;
+            border-bottom-left-radius: 2px;
+            border-color: rgba(0, 255, 136, 0.4);
         }
         .bubble-typing {
             background: rgba(255,255,255,0.06);
@@ -1663,21 +1828,22 @@ HTML_TEMPLATE = """
             word-break: break-word;
         }
         .qa-chat-footer-input {
-            border-top: 2px solid #2f278c;
-            padding-top: 12px;
+            border-top: 1px solid rgba(0, 210, 255, 0.2);
+            padding-top: 15px;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 12px;
         }
         .qa-timer-badge {
             align-self: center;
             font-size: 14px;
             font-weight: bold;
-            color: var(--error);
-            background: rgba(235, 77, 75, 0.1);
-            padding: 4px 12px;
-            border-radius: 8px;
-            border: 1px solid rgba(235, 77, 75, 0.2);
+            color: var(--neon-blue);
+            background: rgba(0, 210, 255, 0.1);
+            padding: 6px 15px;
+            border-radius: 10px;
+            border: 1px solid var(--primary);
+            box-shadow: 0 0 10px rgba(0, 210, 255, 0.2);
         }
         .qa-input-box-wrapper {
             display: flex;
@@ -1739,6 +1905,7 @@ HTML_TEMPLATE = """
             <p id="user-display" style="margin:0; font-weight:bold;">زائر</p>
         </div>
         <button id="install-btn-sidebar" style="background:var(--accent); color:black; font-size:14px;" onclick="showInstallOptions()">📲 إضافة للشاشة الرئيسية</button>
+        <button style="background:#25D366; color:white; font-size:14px;" onclick="window.open('https://wa.me/9647733921468', '_blank')">💬 تواصل مع صاحب اللعبة</button>
         <button style="background:var(--success); font-size:14px;" onclick="showReports()">📊 التقارير والمتصدرين</button>
         <button style="background:var(--primary); font-size:14px;" onclick="showEditProfile()">تعديل بيانات الحساب</button>
         <button style="background:var(--error); font-size:14px;" onclick="logout()">تسجيل الخروج</button>
@@ -1957,7 +2124,8 @@ HTML_TEMPLATE = """
                     <h1 style="margin-bottom: 10px;">لعبة برا السالفة</h1>
                     <p style="color: #a29bfe; margin-bottom: 30px; font-size: 16px;">اكتشف الجاسوس قبل فوات الأوان!</p>
                     <button onclick="navigateTo('online_menu')" style="margin-bottom: 15px;">🌐 لعب أونلاين</button>
-                    <button style="background: linear-gradient(45deg, #e056fd, #be2edd);" onclick="navigateTo('setup', {step: 1})">🏠 لعب أوفلاين (مجلس)</button>
+                    <button style="background: linear-gradient(45deg, #e056fd, #be2edd); margin-bottom: 15px;" onclick="navigateTo('setup', {step: 1})">🏠 لعب أوفلاين (مجلس)</button>
+                    <p style="margin-top: 10px; font-size: 14px; color: #888; opacity: 0.8;">تصميم ابو الاكبر</p>
                 </div>`;
         }
 
