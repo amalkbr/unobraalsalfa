@@ -2164,9 +2164,28 @@ HTML_TEMPLATE = """
         let soundFailUrl = '';
         let appIconUrl = 'https://cdn-icons-png.flaticon.com/512/8030/8030198.png';
         let timerInterval = null;
-        const DEFAULT_CATEGORIES = [
-            'أكلات', 'حيوانات', 'ملابس', 'كورة', 'سيارات', 'شركات', 'كواكب', 'أجهزة', 'تطبيقات', 'فواكه وخضار', 'شخصيات', 'كارتون', 'مشروبات', 'حلويات', 'مسلسلات', 'انمي', 'كيبوب', 'قيمرز', 'مهن'
-        ];
+        const CATEGORIES_DATA = {
+            "أكلات": ["بيتزا", "برجر", "شاورما", "منسف", "كبسة", "فلافل", "مندي", "باستا", "دولمة", "برياني", "مسحب", "كبة", "بخاري", "مقلوبة", "سوشي", "تاكو", "ملوخية", "باشميل"],
+            "حيوانات": ["أسد", "نمر", "زرافة", "فيل", "قطة", "كلب", "أرنب", "قرد", "تمساح", "ثعلب", "ذئب", "جمل", "حصان", "سنجاب", "بطريق", "دولفين", "قرش"],
+            "ملابس": ["قميص", "بنطلون", "فستان", "تنورة", "جاكيت", "قبعة", "جوارب", "حذاء", "ربطة عنق", "بلوزة", "بشت", "شماغ", "عباية", "هودي"],
+            "كورة": ["ريال مدريد", "برشلونة", "ليفربول", "الهلال", "النصر", "الاتحاد", "الاهلي", "ميسي", "رونالدو", "صلاح", "مبابي", "نيمار", "مانشستر سيتي", "بايرن ميونخ"],
+            "سيارات": ["تويوتا", "مرسيدس", "فورد", "تسلا", "نيسان", "هوندا", "بي ام دبليو", "لكزس", "مازدا", "كيا", "باجيرو", "لاند كروزر", "شفروليه", "كامري", "بنتلي"],
+            "شركات": ["جوجل", "ابل", "مايكروسوفت", "سامسونج", "امازون", "فيسبوك", "تسلا", "كوكاكولا", "بيبسي", "نايكي", "اديداس", "هواوي", "سوني"],
+            "كواكب": ["المريخ", "المشتري", "زحل", "الأرض", "الزهرة", "عطارد", "نبتون", "أورانوس", "الشمس", "القمر", "بلوتو"],
+            "أجهزة": ["آيفون", "بليستيشن", "لابتوب", "تلفزيون", "ساعة ذكية", "كاميرا", "ايباد", "اكس بوكس", "بي سي", "سماعات", "غسالة", "مكيف", "ثلاجة", "مايكرويف"],
+            "تطبيقات": ["واتساب", "انستقرام", "تيك توك", "سناب شات", "تلغرام", "يوتيوب", "تويتر", "فيسبوك", "ديسكورد", "سبوتيفاي", "نتفلكس", "بوجي"],
+            "فواكه وخضار": ["تفاح", "موز", "مانجو", "فراولة", "بطيخ", "عنب", "برتقال", "أناناس", "كيوي", "توت", "كرز", "رمان", "خيار", "طماطم", "جزر", "بطاطس", "بصل"],
+            "شخصيات": ["سوبرمان", "باتمان", "سبايدرمان", "جوكر", "هالك", "ايرون مان", "ثور", "كابتن امريكا", "ثانوس", "بلاك بانثر"],
+            "كارتون": ["توم وجيري", "ميكي ماوس", "سبونج بوب", "بن 10", "غامبول", "سبيستون", "سابق ولاحق", "كونان", "بوكيمون", "سندباد"],
+            "مشروبات": ["شاي", "قهوة", "عصير", "حليب", "بيبسي", "كوكاكولا", "ميرندا", "سفن اب", "كود رد", "بايسن", "موخيتو", "كركديه"],
+            "حلويات": ["كنافة", "بسبوسة", "بقلاوة", "دونات", "تشيز كيك", "كيك", "كريب", "وافل", "ايس كريم", "ماكرون", "سينابون"],
+            "مسلسلات": ["صراع العروش", "لا كاسا دي بابل", "بريكنج باد", "فريندز", "الموتى السائرون", "بيكي بلايندرز", "سكيد جيم", "رشاش"],
+            "انمي": ["ون بيس", "ناروتو", "هجوم العمالقة", "دراجون بول", "هنتر", "بليتش", "كونان", "ديمون سلاير", "جوجوتسو", "ديث نوت"],
+            "كيبوب": ["بي تي اس", "بلاك بينك", "اكسو", "توايس", "ستراي كيدز", "ريد فيلفيت", "ايتيز", "نيوجينز"],
+            "قيمرز": ["نينجا", "بندريتا", "ابو فلة", "تي ام فيصل", "باور", "سيد", "اوشي", "شراود", "ميث"],
+            "مهن": ["طيار", "دكتور", "مهندس", "طباخ", "شرطي", "رائد فضاء", "معلم", "لاعب كرة", "مبرمج", "حلاق"]
+        };
+        const DEFAULT_CATEGORIES = Object.keys(CATEGORIES_DATA);
 
         async function fetchSettings() {
             try {
@@ -4130,25 +4149,77 @@ HTML_TEMPLATE = """
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'block';
             const players = window.pNamesSave || [];
 
-            // تهيئة/تحديث النقاط: الاحتفاظ فقط باللاعبين المختارين حالياً في الجلسة
             const updatedScores = {};
             players.forEach(p => {
                 updatedScores[p] = totalScores[p] || 0;
             });
             totalScores = updatedScores;
 
+            // محاولة البدء محلياً أولاً لضمان السرعة (أو في حال عدم وجود إنترنت)
+            try {
+                let localData = null;
+                const words = CATEGORIES_DATA[category] || CATEGORIES_DATA["أكلات"];
+
+                if (words) {
+                    const correct = words[Math.floor(Math.random() * words.length)];
+                    const roles = new Array(players.length).fill("in");
+                    const spyIdx = Math.floor(Math.random() * players.length);
+                    roles[spyIdx] = "spy";
+
+                    const other = words.filter(w => w !== correct);
+                    let guesses = [];
+                    let tempOther = [...other];
+                    for(let i=0; i<Math.min(other.length, 6); i++) {
+                        const rIdx = Math.floor(Math.random() * tempOther.length);
+                        guesses.push(tempOther.splice(rIdx, 1)[0]);
+                    }
+                    guesses.push(correct);
+                    guesses.sort(() => Math.random() - 0.5);
+
+                    const q_seq = [];
+                    const n = players.length;
+                    for (let i = 0; i < n; i += 2) {
+                        if (i + 1 < n) q_seq.push({ "f": players[i], "t": players[i + 1] });
+                        else q_seq.push({ "f": players[i], "t": players[0] });
+                    }
+                    for (let i = 0; i < n; i += 2) {
+                        if (i + 1 < n) q_seq.push({ "f": players[i + 1], "t": players[(i + 2) % n] });
+                    }
+
+                    localData = { word: correct, roles, guesses, q_seq, spy_idx: spyIdx };
+                }
+
+                // إذا نجح التوليد المحلي، نستخدمه فوراً
+                if (localData) {
+                    game = localData;
+                    game.players = players;
+                    game.category = category;
+                    game.curr = 0;
+                    game.qIdx = 0;
+                    showRole();
+
+                    // محاولة مزامنة البدء مع السيرفر في الخلفية إذا أردت، لكننا هنا نعطي الأولوية للسرعة
+                    fetch('/api/game/start', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({players, category})
+                    }).catch(e => console.log("Background sync failed, using local game."));
+
+                    return;
+                }
+            } catch (localErr) {
+                console.warn("Local game start failed, falling back to fetch:", localErr);
+            }
+
+            // الفولباك (Fallback) للسيرفر في حال فشل المنطق المحلي
             try {
                 const res = await fetch('/api/game/start', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({players, category})
                 });
-
                 if (!res.ok) throw new Error("فشل الاتصال بالسيرفر");
-
                 const data = await res.json();
-                if (data.error) throw new Error(data.error);
-
                 game = data;
                 game.players = players;
                 game.category = category;
