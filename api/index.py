@@ -1575,8 +1575,8 @@ HTML_TEMPLATE = """
         .qa-chat-layout {
             display: flex;
             flex-direction: column;
-            height: 520px; /* fixed height for chat card */
-            max-height: 75vh;
+            height: 700px; /* زيادة الطول ليأخذ مساحة أكبر من الشاشة */
+            max-height: 85vh;
             text-align: right;
             direction: rtl;
         }
@@ -2800,13 +2800,22 @@ HTML_TEMPLATE = """
 
             const activeCount = players.filter(p=>!p.red_card).length;
             const voteButtonHtml = hasOptedToVote ?
-                `<button disabled style="background:#3c339e; opacity:0.6; padding:15px;">✅ طلبت التصويت (${readyToVote.length}/${activeCount})</button>` :
-                `<button onclick="onlineAction('toggle_vote_ready')" style="background:var(--accent); padding:15px;">🗳️ إنهاء الأسئلة وبدء التصويت</button>`;
+                `<button disabled style="background:#3c339e; opacity:0.6; padding:8px; font-size:12px; width:auto; margin:0 auto;">✅ طلب تصويت (${readyToVote.length}/${activeCount})</button>` :
+                `<button onclick="confirmTransitionToVote()" style="background:rgba(249, 202, 36, 0.2); border:1px solid var(--accent); color:var(--accent); padding:8px 15px; font-size:12px; width:auto; margin:0 auto; border-radius:12px;">🗳️ إنهاء الأسئلة؟</button>`;
+
+            // إظهار الكلمة السرية للاعبين اللي مو جواسيس
+            const isSpy = room.spy_id == currentUser.user_id;
+            const wordDisplay = isSpy ?
+                `<div style="background:rgba(235, 77, 75, 0.1); color:var(--error); padding:5px 10px; border-radius:10px; font-size:12px; font-weight:bold;">🕵️ أنت برة السالفة - حاول التمويه!</div>` :
+                `<div style="background:rgba(46, 204, 113, 0.1); color:var(--success); padding:5px 10px; border-radius:10px; font-size:12px; font-weight:bold;">🤫 السالفة: ${room.secret_word} (${room.category})</div>`;
 
             let fullHtml = `
                 <div class="qa-chat-layout">
                     <div class="qa-chat-header-main">
-                        <h2>💬 جولة الأسئلة الحرة</h2>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                            <h2 style="margin:0;">💬 السوالف</h2>
+                            ${wordDisplay}
+                        </div>
                         ${currentQ ? `
                             <div class="qa-current-turn">
                                 <span style="color: var(--primary); font-weight: bold;">${currentQ.asker_name}</span>
@@ -2819,12 +2828,12 @@ HTML_TEMPLATE = """
                         ${chatHtml || '<p style="text-align:center; color:#9aa0b4; margin-top:20px;">ابدأوا الأسئلة! كشف الجاسوس يبدأ من هنا.</p>'}
                     </div>
                     <div class="qa-chat-footer-input">
-                        <div id="questions-timer" class="qa-timer-badge">⏱️ ${timeLeft} ثانية</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <div id="questions-timer" class="qa-timer-badge" style="margin:0;">⏱️ ${timeLeft} ثانية</div>
+                            ${voteButtonHtml}
+                        </div>
                         <div class="qa-input-box-wrapper" style="flex-direction:column; gap:10px;">
                             ${inputHtml}
-                            <div style="width:100%; border-top:1px solid rgba(255,255,255,0.05); padding-top:10px;">
-                                ${voteButtonHtml}
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -3603,7 +3612,16 @@ HTML_TEMPLATE = """
         }
 
         function showPhase1() {
-            if(game.qIdx >= game.q_seq.length) { showPhase2(game.players[0]); return; }
+            if(game.qIdx >= game.q_seq.length) {
+                document.getElementById('main-ui').innerHTML = `
+                    <div class="card" style="animation: pop 0.3s ease;">
+                        <h2 style="color:var(--accent)">انتهت الأسئلة الإجبارية! 🏁</h2>
+                        <p style="margin:20px 0; font-size:18px;">انتهت الجولة، هل تريدون البدء بالتصويت أم الاستمرار في الأسئلة الحرة؟</p>
+                        <button onclick="showPhase2(game.players[0])" style="background:var(--primary)">أسئلة حرة (إضافية) 🔄</button>
+                        <button class="btn-yellow" onclick="startVoting()" style="font-size:22px; margin-top:10px;">انتقال للتصويت 🗳️</button>
+                    </div>`;
+                return;
+            }
             const q = game.q_seq[game.qIdx];
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
@@ -3649,8 +3667,11 @@ HTML_TEMPLATE = """
                 }
             });
             startTimer(() => {
-                // في المرحلة الحرة، إذا انتهى الوقت ننتقل للتصويت
-                startVoting();
+                const timerEl = document.getElementById('timer-display');
+                if(timerEl) {
+                    timerEl.innerText = "0";
+                    timerEl.parentElement.style.animation = "pulse 1s infinite";
+                }
             });
         }
 
