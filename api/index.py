@@ -2440,12 +2440,15 @@ HTML_TEMPLATE = """
                 return;
             }
 
+            const pList = players.map(p => {
+                const cards = (p.yellow_cards ? '🟨'.repeat(p.yellow_cards) : '') + (p.red_card ? '🟥' : '');
                 return `<div class="score-item" style="padding:12px 15px; align-items:center;">
                     <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
                         <span style="font-weight:bold; font-size:18px;">${p.player_name}${cards}</span>
                         <span style="font-size:20px;">${(p.vote_limit && p.vote_cat) ? '✅' : '⏳'}</span>
                     </div>
                 </div>`;
+            }).join('');
 
             const lobbyCard = document.getElementById('lobby-card');
             // If already rendered, just update the player list and voting sections to avoid full refresh
