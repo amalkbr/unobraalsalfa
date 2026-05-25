@@ -375,6 +375,13 @@ async def create_room(data: dict):
         return {"success": False, "msg": "معرف المستخدم غير صالح. يرجى إعادة تسجيل الدخول."}
 
     player_name = str(data.get('player_name', 'لاعب'))[:100]
+    category = str(data.get('category', 'أكلات'))
+    win_limit = 10
+    try:
+        win_limit = int(data.get('win_limit', 10))
+    except:
+        pass
+
     room_code = None
 
     try:
@@ -399,8 +406,8 @@ async def create_room(data: dict):
 
             cur.execute("""
                 INSERT INTO rooms (room_code, room_id, host_id, creator_id, status, category, win_limit)
-                VALUES (%s, %s, %s, %s, 'waiting', 'أكلات', 10)
-            """, (room_code, room_code, user_id, user_id))
+                VALUES (%s, %s, %s, %s, 'waiting', %s, %s)
+            """, (room_code, room_code, user_id, user_id, category, win_limit))
 
             cur.execute("""
                 INSERT INTO room_players (room_code, room_id, user_id, player_name, is_ready, join_order, score)
@@ -528,15 +535,19 @@ async def start_online_game(data: dict):
             # 1. نقاط الفوز
             cur.execute("SELECT vote_limit, COUNT(*) as c FROM room_players WHERE room_code = %s AND vote_limit IS NOT NULL GROUP BY vote_limit ORDER BY c DESC LIMIT 1", (room_code,))
             res_limit = cur.fetchone()
-            win_limit = res_limit['vote_limit'] if res_limit else 10
 
             # 2. الفئة
             cur.execute("SELECT vote_cat, COUNT(*) as c FROM room_players WHERE room_code = %s AND vote_cat IS NOT NULL GROUP BY vote_cat ORDER BY c DESC LIMIT 1", (room_code,))
             res_cat = cur.fetchone()
-            category = res_cat['vote_cat'] if res_cat else "عامة"
 
-            # تحديث الغرفة والبدء فوراً
-            cur.execute("UPDATE rooms SET win_limit = %s, category = %s, status = 'roles_prep' WHERE room_code = %s", (win_limit, category, room_code))
+            if res_limit or res_cat:
+                win_limit = res_limit['vote_limit'] if res_limit else 10
+                category = res_cat['vote_cat'] if res_cat else "أكلات"
+                cur.execute("UPDATE rooms SET win_limit = %s, category = %s, status = 'roles_prep' WHERE room_code = %s", (win_limit, category, room_code))
+            else:
+                # If no one voted in lobby, keep the room's preset settings (chosen at creation)
+                cur.execute("UPDATE rooms SET status = 'roles_prep' WHERE room_code = %s", (room_code,))
+
             conn.commit()
 
         # البدء الفعلي (توزيع الأدوار)
@@ -1915,11 +1926,29 @@ HTML_TEMPLATE = """
 
         function showOnlineMenu(push = true) {
             if(push) history.pushState({screen: 'online_menu'}, "");
+            const categories = ["أكلات", "حيوانات", "كورة", "أجهزة", "سيارات", "تطبيقات", "انمي", "مسلسلات", "مهن"];
+            let catOptions = categories.map(c => `<option value="${c}">${c}</option>`).join('');
+
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>اللعب أونلاين</h1>
+                    <div style="margin-bottom: 20px; text-align: right; background: rgba(0,0,0,0.2); padding: 15px; border-radius: 15px;">
+                        <label style="display:block; margin-bottom:5px; font-weight:bold;">اختر التصنيف:</label>
+                        <select id="create_category" style="width:100%; margin-bottom:15px; padding:10px; border-radius:10px; background:#2d3436; color:white; border:1px solid #636e72;">
+                            ${catOptions}
+                        </select>
+
+                        <label style="display:block; margin-bottom:5px; font-weight:bold;">نقاط الفوز:</label>
+                        <select id="create_win_limit" style="width:100%; padding:10px; border-radius:10px; background:#2d3436; color:white; border:1px solid #636e72;">
+                            <option value="5">5 نقاط</option>
+                            <option value="10" selected>10 نقاط</option>
+                            <option value="15">15 نقطة</option>
+                            <option value="20">20 نقطة</option>
+                            <option value="30">30 نقطة</option>
+                        </select>
+                    </div>
                     <button id="btn-create-room" style="background: linear-gradient(135deg, #2ecc71, #27ae60); box-shadow: 0 4px 15px rgba(46, 204, 113, 0.4); border-radius: 20px; font-weight: 900; letter-spacing: 1px;" onclick="createRoom()">✨ إنشاء غرفة جديدة</button>
-                    <div style="margin:20px 0;">
+                    <div style="margin:20px 0; border-top: 1px solid #636e72; padding-top: 20px;">
                         <input id="join_code" placeholder="رمز الغرفة (مثال: ABCD)" style="text-transform:uppercase">
                         <button onclick="joinRoom()">دخول غرفة</button>
                     </div>
@@ -1953,13 +1982,18 @@ HTML_TEMPLATE = """
                 </div>`;
 
             isCreatingRoom = true;
+            const category = document.getElementById('create_category')?.value || 'أكلات';
+            const winLimit = parseInt(document.getElementById('create_win_limit')?.value || '10');
+
             try {
                 const res = await fetch('/api/online/create', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         user_id: currentUser.user_id.toString(), // إرسال كـ string لضمان الدقة
-                        player_name: currentUser.player_name || "لاعب مجهول"
+                        player_name: currentUser.player_name || "لاعب مجهول",
+                        category: category,
+                        win_limit: winLimit
                     })
                 });
 
