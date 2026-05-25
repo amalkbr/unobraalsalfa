@@ -247,8 +247,8 @@ async def upload_icon(request: Request):
     if not file: return {"success": False, "msg": "لم يتم اختيار ملف"}
 
     contents = await file.read()
-    if len(contents) > 1024 * 1024: # حد 1 ميجا
-        return {"success": False, "msg": "حجم الصورة كبير جداً، يرجى اختيار صورة أقل من 1 ميجابايت"}
+    if len(contents) > 2 * 1024 * 1024: # رفع الحد لـ 2 ميجا لضمان المرونة
+        return {"success": False, "msg": "حجم الصورة كبير جداً، يرجى اختيار صورة أصغر"}
 
     encoded = base64.b64encode(contents).decode('utf-8')
     conn = get_db_conn()
@@ -4450,11 +4450,17 @@ HTML_TEMPLATE = """
             const fileInput = document.getElementById('app_icon_file');
             if(!fileInput.files[0]) return alert("يرجى اختيار ملف أولاً");
 
-            const formData = new FormData();
-            formData.append('icon', fileInput.files[0]);
-
-            showLoading("جارٍ رفع الأيقونة...");
+            showLoading("جارٍ ضغط ورفع الأيقونة...");
             try {
+                // ضغط الصورة لضمان حجم صغير وجودة مناسبة للأيقونة (512x512)
+                const compressedDataUrl = await compressImageFile(fileInput.files[0], 0.8, 512, 512);
+
+                // تحويل الـ DataURL إلى Blob لإرساله كملف
+                const blob = await (await fetch(compressedDataUrl)).blob();
+
+                const formData = new FormData();
+                formData.append('icon', blob, 'icon.png');
+
                 const res = await fetch('/api/admin/upload_icon', {
                     method: 'POST',
                     body: formData
@@ -4468,7 +4474,8 @@ HTML_TEMPLATE = """
                     adminManageTimeouts();
                 }
             } catch(e) {
-                alert("فشل الرفع");
+                console.error(e);
+                alert("فشل الرفع: تأكد من اختيار ملف صورة صحيح");
                 adminManageTimeouts();
             }
         }
