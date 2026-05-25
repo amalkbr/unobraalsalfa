@@ -195,7 +195,76 @@ async def home():
 
 @app.get("/manifest.json")
 async def manifest():
-    return FileResponse(os.path.join("static", "manifest.json"))
+    # الأيقونة الافتراضية تشير للمسار الديناميكي
+    icon_url = "/api/app_icon.png"
+
+    manifest_data = {
+        "name": "أونو وبرا السالفة",
+        "short_name": "السالفة",
+        "description": "لعبة برا السالفة الجماعية - استمتع مع أصدقائك في المجلس أو أونلاين!",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#0f0c29",
+        "theme_color": "#6c5ce7",
+        "orientation": "portrait",
+        "icons": [
+            { "src": icon_url, "sizes": "192x192", "type": "image/png" },
+            { "src": icon_url, "sizes": "512x512", "type": "image/png" }
+        ],
+        "screenshots": [
+            { "src": icon_url, "sizes": "512x512", "type": "image/png", "form_factor": "wide", "label": "Home Screen" },
+            { "src": icon_url, "sizes": "512x512", "type": "image/png", "form_factor": "narrow", "label": "Home Screen" }
+        ]
+    }
+    return JSONResponse(content=manifest_data)
+
+import base64
+from fastapi import Response
+from fastapi.responses import RedirectResponse
+
+@app.get("/api/app_icon.png")
+async def get_app_icon():
+    conn = get_db_conn()
+    default_icon = "https://cdn-icons-png.flaticon.com/512/8030/8030198.png"
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT value FROM settings WHERE key = 'app_icon_data'")
+                row = cur.fetchone()
+                if row and row[0]:
+                    try:
+                        img_data = base64.b64decode(row[0])
+                        return Response(content=img_data, media_type="image/png")
+                    except: pass
+        finally:
+            conn.close()
+    return RedirectResponse(url=default_icon)
+
+@app.post("/api/admin/upload_icon")
+async def upload_icon(request: Request):
+    form = await request.form()
+    file = form.get("icon")
+    if not file: return {"success": False, "msg": "لم يتم اختيار ملف"}
+
+    contents = await file.read()
+    if len(contents) > 1024 * 1024: # حد 1 ميجا
+        return {"success": False, "msg": "حجم الصورة كبير جداً، يرجى اختيار صورة أقل من 1 ميجابايت"}
+
+    encoded = base64.b64encode(contents).decode('utf-8')
+    conn = get_db_conn()
+    if not conn: return {"success": False, "msg": "فشل الاتصال بقاعدة البيانات"}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO settings (key, value) VALUES ('app_icon_data', %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """, (encoded,))
+            conn.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
+    finally:
+        conn.close()
 
 @app.get("/sw.js")
 async def service_worker():
@@ -215,7 +284,8 @@ async def get_settings():
         "sound_click": "",
         "sound_reveal": "",
         "sound_win": "",
-        "sound_fail": ""
+        "sound_fail": "",
+        "app_icon_url": "https://cdn-icons-png.flaticon.com/512/8030/8030198.png"
     }
     if not conn: return defaults
     try:
@@ -245,7 +315,11 @@ async def update_settings(data: dict):
     if not conn: return {"success": False, "msg": "فشل الاتصال بقاعدة البيانات"}
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE settings SET value = %s WHERE key = %s", (str(data['value']), data['key']))
+            # استخدام ON CONFLICT لضمان إنشاء الإعداد إذا لم يكن موجوداً
+            cur.execute("""
+                INSERT INTO settings (key, value) VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """, (data['key'], str(data['value'])))
             conn.commit()
         return {"success": True}
     except Exception as e:
@@ -1971,6 +2045,7 @@ HTML_TEMPLATE = """
         let soundRevealUrl = '';
         let soundWinUrl = '';
         let soundFailUrl = '';
+        let appIconUrl = 'https://cdn-icons-png.flaticon.com/512/8030/8030198.png';
         let timerInterval = null;
         const DEFAULT_CATEGORIES = [
             'أكلات', 'حيوانات', 'ملابس', 'كورة', 'سيارات', 'شركات', 'كواكب', 'أجهزة', 'تطبيقات', 'فواكه وخضار', 'شخصيات', 'كارتون', 'مشروبات', 'حلويات', 'مسلسلات', 'انمي', 'كيبوب', 'قيمرز', 'مهن'
@@ -1999,6 +2074,9 @@ HTML_TEMPLATE = """
                 if(d.sound_fail && d.sound_fail.startsWith('http')) {
                     soundFailUrl = d.sound_fail;
                     sounds.fail = new Audio(soundFailUrl);
+                }
+                if(d.app_icon_url) {
+                    appIconUrl = d.app_icon_url;
                 }
             } catch(e) { console.error("Settings fetch failed", e); }
         }
@@ -4335,6 +4413,13 @@ HTML_TEMPLATE = """
                             <input type="text" id="sound_fail_setting" value="${soundFailUrl}" dir="ltr">
                             <button onclick="saveAdminSetting('sound_fail', 'sound_fail_setting')" style="background:var(--success); padding:8px;">حفظ الرابط</button>
                         </div>
+
+                        <h3 style="color:var(--accent); border-bottom:1px solid #3c339e; padding-bottom:5px; margin-top:20px;">هوية التطبيق (PWA)</h3>
+                        <label>رفع أيقونة التطبيق من الجهاز (PNG):</label>
+                        <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:15px; background:rgba(255,255,255,0.05); padding:10px; border-radius:12px;">
+                            <input type="file" id="app_icon_file" accept="image/png,image/jpeg" style="font-size:14px;">
+                            <button onclick="handleIconUpload()" style="background:var(--accent); color:black; padding:8px;">رفع وتحديث الأيقونة عند الجميع</button>
+                        </div>
                     </div>
                     <button style="background:#636e72" onclick="showAdminDashboard(false)">رجوع</button>
                 </div>`;
@@ -4358,6 +4443,33 @@ HTML_TEMPLATE = """
                 if(key === 'sound_win') { soundWinUrl = val; sounds.win = new Audio(val); }
                 if(key === 'sound_fail') { soundFailUrl = val; sounds.fail = new Audio(val); }
                 alert("تم التحديث بنجاح ✅");
+            }
+        }
+
+        async function handleIconUpload() {
+            const fileInput = document.getElementById('app_icon_file');
+            if(!fileInput.files[0]) return alert("يرجى اختيار ملف أولاً");
+
+            const formData = new FormData();
+            formData.append('icon', fileInput.files[0]);
+
+            showLoading("جارٍ رفع الأيقونة...");
+            try {
+                const res = await fetch('/api/admin/upload_icon', {
+                    method: 'POST',
+                    body: formData
+                });
+                const d = await res.json();
+                if(d.success) {
+                    alert("تم تحديث أيقونة التطبيق بنجاح! سيلاحظ المستخدمون التغيير عند فتح التطبيق مجدداً. ✅");
+                    adminManageTimeouts();
+                } else {
+                    alert("خطأ: " + d.msg);
+                    adminManageTimeouts();
+                }
+            } catch(e) {
+                alert("فشل الرفع");
+                adminManageTimeouts();
             }
         }
 
