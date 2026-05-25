@@ -1940,7 +1940,7 @@ HTML_TEMPLATE = """
         let game = null;
         let p_votes = {};
         let totalScores = {}; // نقاط الجلسة
-        let winLimit = 10;
+        let winLimit = 5;
         let isStartingGame = false; // قفل لمنع تداخل تحديث الواجهات
         let questionTimeout = 30;
         let voteTimeout = 10;
@@ -2136,6 +2136,7 @@ HTML_TEMPLATE = """
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'none';
             game = null;
             isStartingGame = false;
+            winLimit = 5;
             window.pNamesSave = []; // تصفير قائمة اللاعبين عند العودة للقائمة
             totalScores = {}; // ريست للنقاط عند العودة للقائمة
             document.getElementById('main-ui').innerHTML = `
@@ -3370,6 +3371,7 @@ HTML_TEMPLATE = """
                 btn.innerHTML = '<span class="shuffling" style="font-size:20px; margin:0;">🌀</span> جاري التحميل...';
             }
             window.pNamesSave = selected;
+            winLimit = 5; // القيمة الأساسية هي 5 دائماً
             setTimeout(() => navigateTo('setup', {step: 3}), 500);
         }
 
@@ -3418,8 +3420,10 @@ HTML_TEMPLATE = """
 
                 updateSelectedCount();
             } else if(step === 3) {
-                // عرض صفحة اختيار عدد الفوز أولاً في الاوفلاين
-                const currentWinLimit = winLimit || 10;
+                // عرض صفحة اختيار عدد الفوز في الاوفلاين
+                // نضمن أن الخيار التلقائي هو 5
+                if (winLimit === 10 || !winLimit) winLimit = 5;
+                const currentWinLimit = winLimit;
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
                         <h2>🏆 هدف الفوز</h2>
@@ -3470,8 +3474,11 @@ HTML_TEMPLATE = """
         function selectWinLimit(el, val) {
             document.querySelectorAll('.win-opt').forEach(opt => opt.classList.remove('selected'));
             el.classList.add('selected');
-            document.getElementById('win_limit_val').value = val;
+            const input = document.getElementById('win_limit_val');
+            if(input) input.value = val;
             winLimit = val;
+            // حفظ في window أيضاً للتأكيد الإضافي
+            window.winLimit = val;
         }
 
         function selectCat(el, name) {
