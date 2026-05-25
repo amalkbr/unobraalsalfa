@@ -3041,7 +3041,10 @@ HTML_TEMPLATE = """
         }
 
         function changePCount(delta) {
-            let val = parseInt(localStorage.getItem('pCount') || 3) + delta;
+            let current = parseInt(localStorage.getItem('pCount') || 3);
+            if (isNaN(current) || current < 3) current = 3;
+            let val = current + delta;
+
             if(val >= 3 && val <= 20) {
                 localStorage.setItem('pCount', val);
 
@@ -3169,7 +3172,7 @@ HTML_TEMPLATE = """
         async function showSetup(step, push = true) {
             if(push) history.pushState({screen: 'setup', step}, "");
             if(step === 1) {
-                let savedCount = localStorage.getItem('pCount') || 3;
+                let savedCount = Math.max(3, parseInt(localStorage.getItem('pCount') || 3));
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
                         <h2>عدد اللاعبين</h2>
