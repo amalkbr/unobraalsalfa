@@ -1197,27 +1197,17 @@ async def get_categories():
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT name, image_url as image FROM categories ORDER BY display_order ASC, name ASC")
             cats = cur.fetchall()
+
+            # If categories table is empty, seed it
             if not cats:
-                default_cats = ["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"]
+                default_cats = list(CATEGORIES.keys())
                 for i, c in enumerate(default_cats):
                     cur.execute("INSERT INTO categories (name, display_order) VALUES (%s, %s) ON CONFLICT DO NOTHING", (c, i))
                 conn.commit()
                 cur.execute("SELECT name, image_url as image FROM categories ORDER BY display_order ASC, name ASC")
                 cats = cur.fetchall()
-            return cats
-    except Exception as e:
-        print(f"Error in api_categories: {e}")
-        return []
-    finally: conn.close()
-            # إذا الجدول فارغ، نعبئه بالبيانات الافتراضية
-            if not cats:
-                default_cats = ["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"]
-                for i, c in enumerate(default_cats):
-                    cur.execute("INSERT INTO categories (name, display_order) VALUES (%s, %s) ON CONFLICT DO NOTHING", (c, i))
-                conn.commit()
-                cur.execute("SELECT * FROM categories ORDER BY display_order ASC, name ASC")
-                cats = cur.fetchall()
-            # الترحيل: إذا كانت قاعدة البيانات فارغة من الكلمات، انقل الكلمات الافتراضية إليها
+
+            # Migrate words if words table is empty
             cur.execute("SELECT COUNT(*) FROM words")
             if cur.fetchone()['count'] == 0:
                 for cat, word_list in CATEGORIES.items():
@@ -1226,7 +1216,11 @@ async def get_categories():
                 conn.commit()
 
             return cats
-    finally: conn.close()
+    except Exception as e:
+        print(f"Error in get_categories: {e}")
+        return []
+    finally:
+        if conn: conn.close()
 
 @app.post("/api/admin/category/add")
 async def add_category(data: dict):
@@ -1976,15 +1970,14 @@ HTML_TEMPLATE = """
         function showCreateStep1() {
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
-                    <h1>إنشاء غرفة - الخطوة ١</h1>
-                    <h3 style="margin-bottom:20px; color:var(--accent);">حدد عدد نقاط الفوز:</h3>
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:25px;">
-                        ${[5, 10, 15, 20, 30].map(v => `
-                            <button class="win-opt ${createData.win_limit == v ? 'selected' : ''}"
-                                    style="margin:0; padding:20px; font-size:20px;"
-                                    onclick="createData.win_limit=${v}; showCreateStep2()">
-                                ${v} نقطة
-                            </button>
+                    <h1>إنشاء غرفة</h1>
+                    <h3 style="margin-bottom:20px; color:var(--accent);">حدد نقاط الفوز:</h3>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin-bottom:25px;">
+                        ${[5, 10, 15, 20, 30, 50].map(v => `
+                            <div class="win-opt ${createData.win_limit == v ? 'selected' : ''}"
+                                 onclick="createData.win_limit=${v}; showCreateStep2()">
+                                ${v}
+                            </div>
                         `).join('')}
                     </div>
                     <button style="background:#636e72" onclick="showOnlineMenu(false)">رجوع</button>
@@ -1995,15 +1988,24 @@ HTML_TEMPLATE = """
             const cachedCats = getCachedCategories();
             let cats = (cachedCats && cachedCats.length) ? cachedCats : DEFAULT_CATEGORIES.map(name => ({ name }));
 
-            let h = `
+            document.getElementById('main-ui').innerHTML = `
                 <div class="card" style="max-width:95%;">
-                    <h1>إنشاء غرفة - الخطوة ٢</h1>
-                    <h3 style="margin-bottom:10px; color:var(--accent);">اختر فئة الأسئلة:</h3>
-                    <div class="cat-grid" id="create-cat-grid">`;
-
-            cats.forEach(cat => {
-                h += `
-                    <div class="cat-card" onclick="createData.category='${cat.name}'; createRoom()">
+                    <h1>إنشاء غرفة</h1>
+                    <h3 style="margin-bottom:10px; color:var(--accent);">اختر الفئة:</h3>
+                    <div class="cat-grid" id="create-cat-grid">
+                        ${cats.map(cat => `
+                            <div class="cat-card" onclick="createData.category='${cat.name}'; createRoom()">
+                                <div class="cat-image-wrapper">
+                                    <div class="image-placeholder">🖼️</div>
+                                    <img src="${cat.image || ''}" onload="this.style.opacity=1; this.previousElementSibling.style.display='none'">
+                                </div>
+                                <span>${cat.name}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button style="background:#636e72" onclick="showCreateStep1()">رجوع</button>
+                </div>`;
+        }
                         <div class="cat-image-wrapper">
                             <div class="image-placeholder">⏳</div>
                             <img data-src="${cat.image || ''}" alt="${cat.name}" onload="this.style.opacity=1; this.previousElementSibling.style.display='none';">
@@ -2396,11 +2398,11 @@ HTML_TEMPLATE = """
                     <div class="card">
                         <h2 style="color:var(--accent)">تصويت: نقاط الفوز 🎯</h2>
                         <p style="margin-bottom:20px;">أهلاً بك في الغرفة ${room.room_code}. اختر عدد النقاط الذي تفضله للفوز:</p>
-                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:25px;">
-                            ${[5, 10, 15, 20, 30].map(v => `
-                                <button class="win-opt" style="margin:0; padding:20px; font-size:20px;" onclick="submitLobbyVote('limit', ${v})">
-                                    ${v} نقطة
-                                </button>
+                        <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-bottom:25px;">
+                            ${[5, 10, 15, 20, 30, 50].map(v => `
+                                <div class="win-opt" onclick="submitLobbyVote('limit', ${v})">
+                                    ${v}
+                                </div>
                             `).join('')}
                         </div>
                         <button style="background:#636e72" onclick="leaveRoom()">خروج من الغرفة</button>
@@ -2423,12 +2425,20 @@ HTML_TEMPLATE = """
                     h += `
                         <div class="cat-card" onclick="submitLobbyVote('cat', '${cat.name}')">
                             <div class="cat-image-wrapper">
-                                <div class="image-placeholder">⏳</div>
-                                <img data-src="${cat.image || ''}" alt="${cat.name}" onload="this.style.opacity=1; this.previousElementSibling.style.display='none';">
+                                <div class="image-placeholder">🖼️</div>
+                                <img src="${cat.image || ''}" onload="this.style.opacity=1; this.previousElementSibling.style.display='none'">
                             </div>
                             <span>${cat.name}</span>
                         </div>`;
                 });
+
+                h += `</div>
+                        <button style="background:#636e72" onclick="submitLobbyVote('limit', null)">الرجوع لاختيار النقاط</button>
+                    </div>`;
+
+                document.getElementById('main-ui').innerHTML = h;
+                return;
+            }
 
                 h += `</div>
                         <button style="background:#636e72" onclick="submitLobbyVote('limit', null)">الرجوع لاختيار النقاط</button>
