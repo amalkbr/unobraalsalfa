@@ -186,7 +186,12 @@ def init_db():
 init_db()
 
 @app.get("/", response_class=HTMLResponse)
-async def home(): return HTML_TEMPLATE
+async def home():
+    response = HTMLResponse(content=HTML_TEMPLATE)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 @app.get("/manifest.json")
 async def manifest():
@@ -4346,8 +4351,23 @@ HTML_TEMPLATE = """
         let deferredPrompt;
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js')
-                    .then(reg => console.log('SW Registered', reg))
+                navigator.serviceWorker.register('/sw.js?v=10')
+                    .then(reg => {
+                        console.log('SW Registered', reg);
+                        reg.onupdatefound = () => {
+                            const installingWorker = reg.installing;
+                            installingWorker.onstatechange = () => {
+                                if (installingWorker.state === 'installed') {
+                                    if (navigator.serviceWorker.controller) {
+                                        showToast("✨ تحديث جديد متوفر! جاري التحديث...", "success");
+                                        setTimeout(() => {
+                                            window.location.reload();
+                                        }, 2000);
+                                    }
+                                }
+                            };
+                        };
+                    })
                     .catch(err => console.log('SW Failed', err));
             });
         }

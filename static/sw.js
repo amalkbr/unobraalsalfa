@@ -1,5 +1,5 @@
-const CACHE_NAME = 'alsalfa-v9';
-const DYNAMIC_CACHE = 'alsalfa-dynamic-v9';
+const CACHE_NAME = 'alsalfa-v10';
+const DYNAMIC_CACHE = 'alsalfa-dynamic-v10';
 const ASSETS = [
   '/',
   '/manifest.json',
@@ -41,12 +41,29 @@ self.addEventListener('fetch', (event) => {
 
   if (request.method !== 'GET') return;
 
+  // Network First for the root and manifest to ensure updates are picked up immediately
+  if (url.pathname === '/' || url.pathname === '/manifest.json') {
+    event.respondWith(
+      fetch(request)
+        .then(networkResponse => {
+          if (networkResponse && networkResponse.status === 200) {
+            const cacheCopy = networkResponse.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(request, cacheCopy));
+          }
+          return networkResponse;
+        })
+        .catch(() => caches.match(request))
+    );
+    return;
+  }
+
   // Skip favicon errors
   if (request.url.includes('favicon.ico')) {
     return;
   }
 
-  if (ASSETS.some(asset => request.url.endsWith(asset))) {
+  // Cache First for known static assets (like fonts, icons)
+  if (ASSETS.some(asset => asset !== '/' && asset !== '/manifest.json' && request.url.endsWith(asset))) {
     event.respondWith(
       caches.match(request).then(cached => cached || fetch(request))
     );
@@ -68,12 +85,13 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Default: Network First, falling back to cache
   event.respondWith(
     fetch(request)
       .then(networkResponse => {
-        if (networkResponse && networkResponse.status === 200 && url.pathname.startsWith('/api/')) {
-          const cacheCopy = networkResponse.clone();
-          caches.open(DYNAMIC_CACHE).then(cache => cache.put(request, cacheCopy));
+        if (networkResponse && networkResponse.status === 200) {
+          // We don't cache everything by default here to avoid bloat,
+          // but we could if we wanted to.
         }
         return networkResponse;
       })
