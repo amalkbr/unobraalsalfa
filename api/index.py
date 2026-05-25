@@ -1613,8 +1613,10 @@ HTML_TEMPLATE = """
             gap: 8px;
             margin: 10px 0;
             max-height: 350px;
-            overflow-y: auto;
+            overflow-y: scroll;
+            scrollbar-gutter: stable;
             padding: 5px;
+            min-height: 200px;
         }
         .cat-card {
             background: rgba(255,255,255,0.03);
@@ -3670,13 +3672,16 @@ HTML_TEMPLATE = """
         }
 
         async function renderCategorySelection(cats, fromCache = false, isFallback = false) {
+            const selectedCat = document.getElementById('selected_cat')?.value;
+            const currentWinLimit = document.getElementById('win_limit_val')?.value || "10";
+
             const thumbs = await getCachedCategoryThumbnails();
             const catsHtml = cats.map(c => {
                 const thumbnail = thumbs[c.name];
-                // Use .image if .image_url is missing (compatibility with different data sources)
                 const imageUrl = c.image_url || c.image;
+                const isSelected = selectedCat === c.name;
                 return `
-                <div class="cat-card" data-cat-name="${c.name}">
+                <div class="cat-card ${isSelected ? 'selected' : ''}" data-cat-name="${c.name}">
                     ${imageUrl ? `
                         <div class="cat-image-wrapper">
                             <div class="image-placeholder">⌛</div>
@@ -3686,20 +3691,40 @@ HTML_TEMPLATE = """
                 </div>`;
             }).join('');
 
-            document.getElementById('main-ui').innerHTML = `
+            const mainUi = document.getElementById('main-ui');
+            const existingGrid = mainUi.querySelector('.cat-grid');
+            const existingCard = mainUi.querySelector('.card');
+
+            // تحديث ذكي لتجنب الارتجاف (jitter/pulsing)
+            if (existingGrid && document.getElementById('selected_cat')) {
+                // إذا كانت القائمة موجودة، نحدث المحتوى فقط
+                if (existingGrid.dataset.lastCount != cats.length) {
+                    existingGrid.innerHTML = catsHtml;
+                    existingGrid.dataset.lastCount = cats.length;
+                    document.querySelectorAll('.cat-card').forEach(card => {
+                        card.addEventListener('click', () => selectCat(card, card.dataset.catName));
+                    });
+                    loadCategoryImages();
+                }
+                // منع تكرار أنيميشن الدخول عند التحديث التلقائي
+                if (existingCard) existingCard.style.animation = 'none';
+                return;
+            }
+
+            mainUi.innerHTML = `
                 <div class="card">
                     <h2>اختر نوع السالفة</h2>
-                    <div class="cat-grid">${catsHtml}</div>
-                    <input type="hidden" id="selected_cat">
+                    <div class="cat-grid" data-last-count="${cats.length}">${catsHtml}</div>
+                    <input type="hidden" id="selected_cat" value="${selectedCat || ''}">
 
                     <p style="margin-top:20px; font-weight:bold;">حد الفوز (نقاط):</p>
                     <div style="display: flex; gap: 10px; justify-content: center; margin-bottom: 20px;">
-                        <div class="win-opt" onclick="selectWinLimit(this, 5)">5</div>
-                        <div class="win-opt selected" onclick="selectWinLimit(this, 10)">10</div>
-                        <div class="win-opt" onclick="selectWinLimit(this, 15)">15</div>
-                        <div class="win-opt" onclick="selectWinLimit(this, 20)">20</div>
+                        <div class="win-opt ${currentWinLimit == '5' ? 'selected' : ''}" onclick="selectWinLimit(this, 5)">5</div>
+                        <div class="win-opt ${currentWinLimit == '10' ? 'selected' : ''}" onclick="selectWinLimit(this, 10)">10</div>
+                        <div class="win-opt ${currentWinLimit == '15' ? 'selected' : ''}" onclick="selectWinLimit(this, 15)">15</div>
+                        <div class="win-opt ${currentWinLimit == '20' ? 'selected' : ''}" onclick="selectWinLimit(this, 20)">20</div>
                     </div>
-                    <input type="hidden" id="win_limit_val" value="10">
+                    <input type="hidden" id="win_limit_val" value="${currentWinLimit}">
 
                     <button class="btn-yellow" onclick="startGameFinal(this)">ابدأ اللعب الآن</button>
                 </div>`;
@@ -3707,6 +3732,9 @@ HTML_TEMPLATE = """
             document.querySelectorAll('.cat-card').forEach(card => {
                 card.addEventListener('click', () => selectCat(card, card.dataset.catName));
             });
+
+            loadCategoryImages();
+        }
 
             loadCategoryImages();
             if (fromCache) {
