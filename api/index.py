@@ -2817,9 +2817,6 @@ HTML_TEMPLATE = """
                 </div>
             `);
         }
-                    <button style="background:#636e72" onclick="leaveRoom()">خروج من الغرفة</button>
-                </div>`);
-        }
 
         async function leaveRoom() {
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'none';
