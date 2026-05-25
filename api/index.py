@@ -195,8 +195,10 @@ async def home():
 
 @app.get("/manifest.json")
 async def manifest():
-    # الأيقونة الافتراضية تشير للمسار الديناميكي
-    icon_url = "/api/app_icon.png"
+    # إضافة طابع زمني (Timestamp) لإجبار المتصفح على تحديث الأيقونة
+    import time
+    version = int(time.time())
+    icon_url = f"/api/app_icon.png?v={version}"
 
     manifest_data = {
         "name": "أونو وبرا السالفة",
@@ -216,7 +218,10 @@ async def manifest():
             { "src": icon_url, "sizes": "512x512", "type": "image/png", "form_factor": "narrow", "label": "Home Screen" }
         ]
     }
-    return JSONResponse(content=manifest_data)
+    response = JSONResponse(content=manifest_data)
+    # منع التخزين المؤقت لملف المانيفست
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
 
 import base64
 from fastapi import Response

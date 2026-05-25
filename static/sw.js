@@ -1,10 +1,8 @@
-const CACHE_NAME = 'alsalfa-v10';
-const DYNAMIC_CACHE = 'alsalfa-dynamic-v10';
+const CACHE_NAME = 'alsalfa-v11';
+const DYNAMIC_CACHE = 'alsalfa-dynamic-v11';
 const ASSETS = [
   '/',
-  '/manifest.json',
-  'https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap',
-  'https://cdn-icons-png.flaticon.com/512/8030/8030198.png'
+  '/manifest.json'
 ];
 
 self.addEventListener('install', (event) => {
