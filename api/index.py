@@ -2853,6 +2853,10 @@ HTML_TEMPLATE = """
         }
 
         function showShareChoice(text, toastMsg) {
+            // نستخدم متغيرات عالمية مؤقتة لتجنب مشاكل الـ escaping في الـ HTML attributes
+            window._tempShareText = text;
+            window._tempShareToast = toastMsg;
+
             const overlay = document.createElement('div');
             overlay.style = "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:20000; display:flex; align-items:center; justify-content:center; padding:20px; box-sizing:border-box; backdrop-filter:blur(5px);";
             overlay.className = "share-overlay";
@@ -2861,7 +2865,7 @@ HTML_TEMPLATE = """
                     <h2 style="margin-bottom:20px; font-size:20px;">ارسال الدعوة 💬</h2>
                     <p style="font-size:14px; color:#aaa; margin-bottom:20px;">كيف تود مشاركة الرابط مع أصدقائك؟</p>
 
-                    <button onclick="this.parentElement.parentElement.remove(); copyToClipboard('${text.replace(/\n/g, '\\n').replace(/'/g, "\\'")}', '${toastMsg}')" style="background:var(--primary); margin-bottom:12px; display:flex; align-items:center; justify-content:center; gap:10px;">
+                    <button onclick="handleCopyClick(this)" style="background:var(--primary); margin-bottom:12px; display:flex; align-items:center; justify-content:center; gap:10px;">
                         <span>📋 نسخ النص</span>
                     </button>
 
@@ -2880,15 +2884,20 @@ HTML_TEMPLATE = """
                     try {
                         await navigator.share({
                             title: 'برا السالفة',
-                            text: text
+                            text: window._tempShareText
                         });
                     } catch (err) {
-                        copyToClipboard(text, toastMsg);
+                        copyToClipboard(window._tempShareText, window._tempShareToast);
                     }
                 } else {
-                    copyToClipboard(text, toastMsg);
+                    copyToClipboard(window._tempShareText, window._tempShareToast);
                 }
             };
+        }
+
+        function handleCopyClick(btn) {
+            btn.parentElement.parentElement.remove();
+            copyToClipboard(window._tempShareText, window._tempShareToast);
         }
 
         function copyInviteLink() {
