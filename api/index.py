@@ -1546,6 +1546,61 @@ HTML_TEMPLATE = """
             box-sizing: border-box;
             position: relative;
         }
+        /* Admin Dashboard Improvements */
+        .admin-wide-card {
+            max-width: 900px !important;
+            width: 98% !important;
+            padding: 30px 20px !important;
+        }
+        .admin-content-box {
+            background: rgba(0,0,0,0.3);
+            padding: 20px;
+            border-radius: 20px;
+            margin: 20px 0;
+            text-align: right;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .admin-section-title {
+            color: var(--accent);
+            border-bottom: 2px solid var(--primary);
+            padding-bottom: 8px;
+            margin-bottom: 20px;
+            font-size: 1.2rem;
+        }
+        .admin-setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        .admin-input-group {
+            display: flex;
+            gap: 10px;
+            flex: 1;
+            width: 100%;
+        }
+        .admin-input-group input {
+            flex: 1;
+            margin: 0 !important;
+        }
+        .admin-save-btn {
+            width: 100px !important;
+            background: var(--success) !important;
+            margin: 0 !important;
+            padding: 8px !important;
+        }
+        .admin-upload-box {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            width: 100%;
+            background: rgba(255,255,255,0.05);
+            padding: 15px;
+            border-radius: 12px;
+        }
         .card::before {
             content: '';
             position: absolute;
@@ -4382,51 +4437,65 @@ HTML_TEMPLATE = """
 
         function adminManageTimeouts() {
             document.getElementById('main-ui').innerHTML = `
-                <div class="card">
+                <div class="card admin-wide-card">
                     <h2>⏱️ إعدادات المهل والأصوات</h2>
-                    <div style="background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; margin:20px 0; text-align:right; max-height:450px; overflow-y:auto;">
-                        <h3 style="color:var(--accent); border-bottom:1px solid #3c339e; padding-bottom:5px;">المهل الزمنية (بالثواني)</h3>
-                        <label>وقت مهلة السؤال:</label>
-                        <div style="display:flex; gap:10px; margin-bottom:15px;">
-                            <input type="number" id="timeout_setting" value="${questionTimeout}">
-                            <button onclick="saveAdminSetting('question_timeout', 'timeout_setting')" style="width:80px; background:var(--success)">حفظ</button>
+                    <div class="admin-content-box">
+                        <h3 class="admin-section-title">المهل الزمنية (بالثواني)</h3>
+                        <div class="admin-setting-row">
+                            <label>وقت مهلة السؤال:</label>
+                            <div class="admin-input-group">
+                                <input type="number" id="timeout_setting" value="${questionTimeout}">
+                                <button onclick="saveAdminSetting('question_timeout', 'timeout_setting')" class="admin-save-btn">حفظ</button>
+                            </div>
                         </div>
-                        <label>وقت مهلة التصويت:</label>
-                        <div style="display:flex; gap:10px; margin-bottom:15px;">
-                            <input type="number" id="vote_timeout_setting" value="${voteTimeout}">
-                            <button onclick="saveAdminSetting('vote_timeout', 'vote_timeout_setting')" style="width:80px; background:var(--success)">حفظ</button>
-                        </div>
-
-                        <h3 style="color:var(--accent); border-bottom:1px solid #3c339e; padding-bottom:5px; margin-top:20px;">روابط الأصوات (URL)</h3>
-                        <label>صوت النقر/التالي:</label>
-                        <div style="display:flex; flex-direction:column; gap:5px; margin-bottom:15px;">
-                            <input type="text" id="sound_click_setting" value="${soundClickUrl}" dir="ltr">
-                            <button onclick="saveAdminSetting('sound_click', 'sound_click_setting')" style="background:var(--success); padding:8px;">حفظ الرابط</button>
-                        </div>
-                        <label>صوت كشف الدور:</label>
-                        <div style="display:flex; flex-direction:column; gap:5px; margin-bottom:15px;">
-                            <input type="text" id="sound_reveal_setting" value="${soundRevealUrl}" dir="ltr">
-                            <button onclick="saveAdminSetting('sound_reveal', 'sound_reveal_setting')" style="background:var(--success); padding:8px;">حفظ الرابط</button>
-                        </div>
-                        <label>صوت الفوز:</label>
-                        <div style="display:flex; flex-direction:column; gap:5px; margin-bottom:15px;">
-                            <input type="text" id="sound_win_setting" value="${soundWinUrl}" dir="ltr">
-                            <button onclick="saveAdminSetting('sound_win', 'sound_win_setting')" style="background:var(--success); padding:8px;">حفظ الرابط</button>
-                        </div>
-                        <label>صوت الخطأ/الفشل:</label>
-                        <div style="display:flex; flex-direction:column; gap:5px; margin-bottom:15px;">
-                            <input type="text" id="sound_fail_setting" value="${soundFailUrl}" dir="ltr">
-                            <button onclick="saveAdminSetting('sound_fail', 'sound_fail_setting')" style="background:var(--success); padding:8px;">حفظ الرابط</button>
+                        <div class="admin-setting-row">
+                            <label>وقت مهلة التصويت:</label>
+                            <div class="admin-input-group">
+                                <input type="number" id="vote_timeout_setting" value="${voteTimeout}">
+                                <button onclick="saveAdminSetting('vote_timeout', 'vote_timeout_setting')" class="admin-save-btn">حفظ</button>
+                            </div>
                         </div>
 
-                        <h3 style="color:var(--accent); border-bottom:1px solid #3c339e; padding-bottom:5px; margin-top:20px;">هوية التطبيق (PWA)</h3>
-                        <label>رفع أيقونة التطبيق من الجهاز (PNG):</label>
-                        <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:15px; background:rgba(255,255,255,0.05); padding:10px; border-radius:12px;">
-                            <input type="file" id="app_icon_file" accept="image/png,image/jpeg" style="font-size:14px;">
-                            <button onclick="handleIconUpload()" style="background:var(--accent); color:black; padding:8px;">رفع وتحديث الأيقونة عند الجميع</button>
+                        <h3 class="admin-section-title">روابط الأصوات (URL)</h3>
+                        <div class="admin-setting-row full-width">
+                            <label>صوت النقر/التالي:</label>
+                            <div class="admin-input-group">
+                                <input type="text" id="sound_click_setting" value="${soundClickUrl}" dir="ltr">
+                                <button onclick="saveAdminSetting('sound_click', 'sound_click_setting')" class="admin-save-btn">حفظ</button>
+                            </div>
+                        </div>
+                        <div class="admin-setting-row full-width">
+                            <label>صوت كشف الدور:</label>
+                            <div class="admin-input-group">
+                                <input type="text" id="sound_reveal_setting" value="${soundRevealUrl}" dir="ltr">
+                                <button onclick="saveAdminSetting('sound_reveal', 'sound_reveal_setting')" class="admin-save-btn">حفظ</button>
+                            </div>
+                        </div>
+                        <div class="admin-setting-row full-width">
+                            <label>صوت الفوز:</label>
+                            <div class="admin-input-group">
+                                <input type="text" id="sound_win_setting" value="${soundWinUrl}" dir="ltr">
+                                <button onclick="saveAdminSetting('sound_win', 'sound_win_setting')" class="admin-save-btn">حفظ</button>
+                            </div>
+                        </div>
+                        <div class="admin-setting-row full-width">
+                            <label>صوت الخطأ/الفشل:</label>
+                            <div class="admin-input-group">
+                                <input type="text" id="sound_fail_setting" value="${soundFailUrl}" dir="ltr">
+                                <button onclick="saveAdminSetting('sound_fail', 'sound_fail_setting')" class="admin-save-btn">حفظ</button>
+                            </div>
+                        </div>
+
+                        <h3 class="admin-section-title">هوية التطبيق (PWA)</h3>
+                        <div class="admin-setting-row full-width">
+                            <label>أيقونة التطبيق (PNG):</label>
+                            <div class="admin-upload-box">
+                                <input type="file" id="app_icon_file" accept="image/png,image/jpeg">
+                                <button onclick="handleIconUpload()" class="admin-upload-btn">تحديث الأيقونة عند الجميع</button>
+                            </div>
                         </div>
                     </div>
-                    <button style="background:#636e72" onclick="showAdminDashboard(false)">رجوع</button>
+                    <button style="background:#636e72; margin-top:20px;" onclick="showAdminDashboard(false)">رجوع</button>
                 </div>`;
         }
 
