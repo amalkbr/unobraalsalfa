@@ -1288,9 +1288,18 @@ async def add_word(data: dict):
     if not conn: return {"success": False, "msg": "Database connection failed"}
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (data['category'], data['word']))
+            category = data.get('category')
+            raw_word = data.get('word', '')
+            # تقسيم النص إلى أسطر وتصفيف الكلمات الفارغة
+            words = [w.strip() for w in raw_word.split('\n') if w.strip()]
+
+            if not words:
+                return {"success": False, "msg": "لم يتم إدخال كلمات صالحة"}
+
+            for w in words:
+                cur.execute("INSERT INTO words (category, word) VALUES (%s, %s)", (category, w))
             conn.commit()
-        return {"success": True}
+        return {"success": True, "added_count": len(words)}
     except Exception as e:
         print(f"Error in add_word: {e}")
         return {"success": False, "msg": str(e)}
@@ -4840,12 +4849,12 @@ HTML_TEMPLATE = """
 
                 let h = `<h2>📝 كلمات قسم: ${catName}</h2>
                     <div id="word-form-container" class="admin-content-box" style="margin-top:0;">
-                        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                        <div style="display:flex; flex-direction:column; gap:15px;">
                             <input id="word_id" type="hidden">
-                            <input id="new_word_val" placeholder="أدخل الكلمة هنا..." style="flex:2; min-width:200px;">
-                            <div style="display:flex; gap:10px; flex:1; min-width:150px;">
-                                <button id="word-save-btn" style="margin:0; background:var(--success);" onclick="addWordToCat(${catEscaped})">إضافة</button>
-                                <button id="word-cancel-btn" style="background:#636e72; display:none; margin:0;" onclick="resetWordForm(${catEscaped})">إلغاء</button>
+                            <textarea id="new_word_val" placeholder="أدخل الكلمات هنا... كل كلمة في سطر منفصل لإضافة مجموعة كبيرة مرة واحدة" style="width:100%; min-height:120px; padding:15px; border-radius:15px; background:rgba(0,0,0,0.2); color:white; border:1px solid rgba(255,255,255,0.1); font-size:1.1rem; resize:vertical;"></textarea>
+                            <div style="display:flex; gap:10px;">
+                                <button id="word-save-btn" style="margin:0; background:var(--success); flex:1;" onclick="addWordToCat(${catEscaped})">➕ إضافة للقسم</button>
+                                <button id="word-cancel-btn" style="background:#636e72; display:none; margin:0;" onclick="resetWordForm(${catEscaped})">إلغاء التعديل</button>
                             </div>
                         </div>
                     </div>
