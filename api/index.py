@@ -1445,21 +1445,25 @@ HTML_TEMPLATE = """
             font-family: 'Cairo', sans-serif;
             background: radial-gradient(circle at center, #1a1a2e 0%, #050505 100%);
             color: white;
-            margin: 0;
+            margin: 0; padding: 0;
             min-height: 100vh;
-            overflow-x: hidden;
+            display: flex; justify-content: center; align-items: flex-start;
+            direction: rtl; overflow-x: hidden;
+            padding-top: 20px;
         }
         .flex-center { display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction: column; }
-        .container { width: 98%; text-align: center; padding: 5px; box-sizing: border-box; }
+        .container { width: 100%; text-align: center; padding: 10px; box-sizing: border-box; }
         .card {
             background: var(--card);
-            padding: 24px 16px;
-            border-radius: 24px;
-            box-shadow: 0 0 20px rgba(0, 210, 255, 0.15), inset 0 0 15px rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(0, 210, 255, 0.3);
-            backdrop-filter: blur(10px);
+            padding: 20px 12px;
+            border-radius: 28px;
+            box-shadow: 0 0 30px rgba(0, 210, 255, 0.2);
+            border: 1px solid rgba(0, 210, 255, 0.4);
+            backdrop-filter: blur(15px);
             animation: fadeIn 0.3s ease;
-            width: 100%;
+            width: 98%;
+            max-width: 500px;
+            margin: 0 auto;
             box-sizing: border-box;
             position: relative;
         }
@@ -1628,43 +1632,37 @@ HTML_TEMPLATE = """
         .cat-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
-            gap: 15px;
+            gap: 12px;
             margin: 10px 0;
-            max-height: 450px;
-            overflow-y: scroll;
-            scrollbar-gutter: stable;
-            padding: 10px;
-            min-height: 200px;
+            max-height: 60vh;
+            overflow-y: auto;
+            padding: 5px;
         }
         .cat-card {
-            background: rgba(255,255,255,0.05);
-            border-radius: 18px;
-            padding: 10px;
+            background: rgba(255,255,255,0.07);
+            border-radius: 20px;
+            padding: 8px;
             cursor: pointer;
             border: 2px solid rgba(255,255,255,0.1);
-            transition: 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            transition: 0.3s;
             display: flex;
             flex-direction: column;
             align-items: center;
-            min-height: 160px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.4);
         }
         .cat-card:hover {
-            transform: translateY(-5px) scale(1.02);
-            background: rgba(0, 210, 255, 0.1);
+            transform: scale(1.03);
             border-color: var(--primary);
-            box-shadow: 0 8px 20px rgba(0, 210, 255, 0.2);
         }
         .cat-card.selected {
             border-color: var(--accent);
-            background: rgba(0, 255, 136, 0.15);
-            box-shadow: 0 0 15px rgba(0, 255, 136, 0.4);
+            background: rgba(0, 255, 136, 0.1);
         }
         .cat-card img {
             width: 100%;
-            height: 120px;
+            height: 140px;
             object-fit: cover;
-            border-radius: 12px;
+            border-radius: 15px;
             margin-bottom: 8px;
         }
         .cat-card span {
