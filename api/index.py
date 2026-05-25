@@ -410,11 +410,12 @@ async def create_room(data: dict):
             """, (room_code, room_code, user_id, user_id, category, win_limit))
 
             cur.execute("""
-                INSERT INTO room_players (room_code, room_id, user_id, player_name, is_ready, join_order, score)
-                VALUES (%s, %s, %s, %s, TRUE, 1, 0)
+                INSERT INTO room_players (room_code, room_id, user_id, player_name, is_ready, join_order, score, vote_limit, vote_cat)
+                VALUES (%s, %s, %s, %s, TRUE, 1, 0, %s, %s)
                 ON CONFLICT (room_code, user_id) DO UPDATE
-                SET is_ready = TRUE, join_order = 1, player_name = EXCLUDED.player_name
-            """, (room_code, room_code, user_id, player_name))
+                SET is_ready = TRUE, join_order = 1, player_name = EXCLUDED.player_name,
+                    vote_limit = EXCLUDED.vote_limit, vote_cat = EXCLUDED.vote_cat
+            """, (room_code, room_code, user_id, player_name, win_limit, category))
 
             conn.commit()
         return {"success": True, "room_code": room_code}
@@ -1194,8 +1195,20 @@ async def get_categories():
     if not conn: return []
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM categories ORDER BY display_order ASC, name ASC")
+            cur.execute("SELECT name, image_url as image FROM categories ORDER BY display_order ASC, name ASC")
             cats = cur.fetchall()
+            if not cats:
+                default_cats = ["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"]
+                for i, c in enumerate(default_cats):
+                    cur.execute("INSERT INTO categories (name, display_order) VALUES (%s, %s) ON CONFLICT DO NOTHING", (c, i))
+                conn.commit()
+                cur.execute("SELECT name, image_url as image FROM categories ORDER BY display_order ASC, name ASC")
+                cats = cur.fetchall()
+            return cats
+    except Exception as e:
+        print(f"Error in api_categories: {e}")
+        return []
+    finally: conn.close()
             # إذا الجدول فارغ، نعبئه بالبيانات الافتراضية
             if not cats:
                 default_cats = ["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"]
@@ -1738,7 +1751,24 @@ HTML_TEMPLATE = """
             } catch(e) { console.error("Settings fetch failed", e); }
         }
 
-        function navigateTo(screen, data = {}, push = true) {
+        function saveCachedCategories(cats) {
+            localStorage.setItem('cachedCategories', JSON.stringify(cats));
+        }
+
+        function getCachedCategories() {
+            const data = localStorage.getItem('cachedCategories');
+            return data ? JSON.parse(data) : null;
+        }
+
+        async function prefetchCategories() {
+            try {
+                const res = await fetch('/api/categories');
+                if (res.ok) {
+                    const cats = await res.json();
+                    saveCachedCategories(cats);
+                }
+            } catch(e) {}
+        }
             lastRenderedHTML = "";
             if (push) {
                 history.pushState({ screen, ...data }, "");
@@ -2448,56 +2478,58 @@ HTML_TEMPLATE = """
                 const pListContainer = document.getElementById('lobby-players-list');
                 if (pListContainer) pListContainer.innerHTML = pList;
 
-                // Update my voting buttons
-                const limitBtns = document.querySelectorAll('.limit-btn');
-                limitBtns.forEach(b => {
-                    if(b.getAttribute('data-val') == me.vote_limit) b.classList.add('selected'); else b.classList.remove('selected');
-                });
-                const catBtns = document.querySelectorAll('.cat-btn');
-                catBtns.forEach(b => {
-                    if(b.getAttribute('data-val') == me.vote_cat) b.classList.add('selected'); else b.classList.remove('selected');
-                });
-
+                // تحديث حالة الأزرار للمضيف
+                const startBtn = document.getElementById('start-game-btn');
+                if (startBtn) {
+                    const allReady = players.every(p => p.vote_limit && p.vote_cat);
+                    startBtn.disabled = !allReady || players.length < 3;
+                    startBtn.style.opacity = startBtn.disabled ? '0.5' : '1';
+                    startBtn.innerText = players.length < 3 ? 'بانتظار لاعبين (3 على الأقل)' :
+                                       (!allReady ? 'بانتظار تصويت الجميع...' : 'ابدأ اللعب الآن! 🚀');
+                }
                 return;
             }
 
-            // Categories list - aligned with backend CATEGORIES keys
-            const categories = ["أكلات", "حيوانات", "كورة", "أجهزة", "سيارات", "تطبيقات", "انمي", "مسلسلات", "مهن"];
+            const allReady = players.every(p => p.vote_limit && p.vote_cat);
+            const isHost = room.host_id == currentUser.user_id;
 
-            document.getElementById('main-ui').innerHTML = `
-                <div class="card" id="lobby-card" style="max-width:500px;">
-                    <h2 style="margin-bottom:5px;">غرفة الانتظار</h2>
-                    <span id="lobby-room-code" style="color:var(--accent); font-size:32px; font-weight:900; letter-spacing:2px; display:block; margin-bottom:10px;">${room.room_code}</span>
-
-                    <div style="display:flex; gap:8px; justify-content:center; margin-bottom:20px;">
-                        <button class="btn-sm" onclick="copyRoomCode()">📋 نسخ الرمز</button>
-                        <button class="btn-sm" style="background:var(--primary)" onclick="copyInviteLink()">🔗 الرابط</button>
-                    </div>
-
-                    <div style="background:rgba(255,255,255,0.05); padding:15px; border-radius:15px; margin-bottom:20px; text-align:right;">
-                        <h4 style="margin:0 0 10px 0; color:var(--accent);">⚙️ إعداداتك المفضلة:</h4>
-
-                        <p style="font-size:13px; margin:10px 0 5px 0;">عدد نقاط الفوز:</p>
-                        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:5px;">
-                            ${[5, 10, 15, 20].map(v => `<button class="limit-btn ${me.vote_limit == v ? 'selected' : ''}" data-val="${v}" style="padding:8px; font-size:12px; margin:0;" onclick="submitLobbyVote('limit', ${v})">${v}</button>`).join('')}
-                        </div>
-
-                        <p style="font-size:13px; margin:15px 0 5px 0;">الفئة:</p>
-                        <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:5px;">
-                            ${categories.map(c => `<button class="cat-btn ${me.vote_cat == c ? 'selected' : ''}" data-val="${c}" style="padding:8px; font-size:11px; margin:0;" onclick="submitLobbyVote('cat', '${c}')">${c}</button>`).join('')}
+            let h = `
+                <div class="card" id="lobby-card">
+                    <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 20px; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.1);">
+                        <span style="color: #a29bfe; font-size: 14px; display: block; margin-bottom: 5px;">رمز الغرفة</span>
+                        <div style="font-size: 36px; font-weight: 900; letter-spacing: 5px; color: var(--accent);">${room.room_code}</div>
+                        <div style="display:flex; gap:8px; justify-content:center; margin-top:10px;">
+                            <button class="btn-sm" onclick="copyRoomCode()">📋 نسخ الرمز</button>
+                            <button class="btn-sm" style="background:var(--primary)" onclick="copyInviteLink()">🔗 الرابط</button>
                         </div>
                     </div>
 
-                    <h4 style="text-align:right; margin:10px 0;">👥 اللاعبون المتواجدون:</h4>
-                    <div id="lobby-players-list" style="margin:10px 0;">${pList}</div>
-
-                    <div style="margin-top:20px; display:flex; flex-direction:column; gap:10px;">
-                        ${room.host_id == currentUser.user_id ?
-                            `<button id="start-btn" onclick="startOnlineGame()" style="background:var(--success)">بدء اللعبة 🎮</button>` :
-                            '<div class="qa-typing-status">⏳ بانتظار المضيف لبدء اللعبة...</div>'}
-                        <button style="background:#636e72; padding:10px;" onclick="leaveRoom()">خروج من الغرفة</button>
+                    <div style="text-align: right; margin-bottom: 15px;">
+                        <h3 style="margin:0;">اللاعبين في الغرفة</h3>
                     </div>
+
+                    <div id="lobby-players-list" style="margin-bottom: 25px; display: flex; flex-direction: column; gap: 8px;">
+                        ${pList}
+                    </div>`;
+
+            if (isHost) {
+                h += `
+                    <button id="start-game-btn"
+                            style="background: linear-gradient(135deg, #2ecc71, #27ae60);"
+                            ${(!allReady || players.length < 3) ? 'disabled style="opacity:0.5"' : ''}
+                            onclick="startOnlineGame()">
+                        ${players.length < 3 ? 'بانتظار لاعبين (3 على الأقل)' : (!allReady ? 'بانتظار تصويت الجميع...' : 'ابدأ اللعب الآن! 🚀')}
+                    </button>`;
+            } else {
+                h += `<p style="color: #9aa0b4; font-size: 14px; margin-bottom: 20px;">
+                        ${!allReady ? '⏳ ننتظر بقية اللاعبين يخلصون تصويت...' : '✅ الكل جاهز! ننتظر المضيف يبدأ اللعبة...'}
+                      </p>`;
+            }
+
+            h += `<button style="background:#636e72" onclick="leaveRoom()">خروج</button>
                 </div>`;
+
+            document.getElementById('main-ui').innerHTML = h;
         }
 
         async function submitLobbyVote(type, value) {
