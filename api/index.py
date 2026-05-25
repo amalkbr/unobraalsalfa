@@ -1607,28 +1607,43 @@ HTML_TEMPLATE = """
             background: rgba(255,255,255,0.07);
             border-color: var(--primary);
         }
-        .cat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 20px 0; max-height: 400px; overflow-y: auto; padding: 10px; }
+        .cat-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin: 10px 0;
+            max-height: 350px;
+            overflow-y: auto;
+            padding: 5px;
+        }
         .cat-card {
             background: rgba(255,255,255,0.03);
-            border-radius: 20px;
-            padding: 12px;
+            border-radius: 12px;
+            padding: 6px;
             cursor: pointer;
             border: 1px solid rgba(255,255,255,0.08);
-            transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: 0.2s ease;
             display: flex;
             flex-direction: column;
             align-items: center;
-            min-height: 170px;
+            min-height: 90px;
         }
         .cat-card:hover {
-            transform: translateY(-5px);
-            background: rgba(0, 210, 255, 0.05);
+            transform: translateY(-2px);
+            background: rgba(0, 210, 255, 0.08);
             border-color: var(--primary);
         }
         .cat-card.selected {
             border-color: var(--accent);
-            background: rgba(0, 255, 136, 0.1);
-            box-shadow: 0 0 20px rgba(0, 255, 136, 0.2);
+            background: rgba(0, 255, 136, 0.15);
+            box-shadow: 0 0 12px rgba(0, 255, 136, 0.3);
+        }
+        .cat-card img {
+            width: 100%;
+            height: 55px;
+            object-fit: cover;
+            border-radius: 8px;
+            margin-bottom: 4px;
         }
         .cat-image-wrapper { position: relative; width: 100%; }
         .image-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #1a1538; border-radius: 12px; color: #9aa0b4; font-size: 18px; pointer-events: none; }
@@ -1646,7 +1661,7 @@ HTML_TEMPLATE = """
             color: white;
             border-color: white;
         }
-        .cat-card span { font-size: 12px; font-weight: bold; }
+        .cat-card span { font-size: 10px; font-weight: bold; text-align: center; line-height: 1.2; }
         .loading-spinner {
             width: 48px;
             height: 48px;
@@ -2508,13 +2523,20 @@ HTML_TEMPLATE = """
 
             const limitCard = document.getElementById('voting-limit-card');
             if (limitCard) {
+                // Check if we need to update to avoid visual flickering/re-pulsing
+                const currentTimer = document.getElementById('voting-limit-timer');
+                if (currentTimer) currentTimer.innerText = `⏱️ الوقت المتبقي: ${timeLeft} ثانية`;
+
                 const buttons = limitCard.querySelectorAll('.win-opt');
                 buttons.forEach(btn => {
                     const val = parseInt(btn.getAttribute('data-value'));
                     const isSelected = myVote == val;
-                    if (isSelected) btn.classList.add('selected'); else btn.classList.remove('selected');
+                    if (isSelected) {
+                        if(!btn.classList.contains('selected')) btn.classList.add('selected');
+                    } else {
+                        btn.classList.remove('selected');
+                    }
                 });
-                startOnlineCountdown(timeLeft, 'voting-limit-timer', (t) => `⏱️ الوقت المتبقي للتصويت: ${t} ثانية`);
                 return;
             }
 
@@ -2541,14 +2563,21 @@ HTML_TEMPLATE = """
 
             const catCard = document.getElementById('voting-cat-card');
             if (catCard) {
+                const currentTimer = document.getElementById('voting-cat-timer');
+                if (currentTimer) currentTimer.innerText = `⏱️ الوقت المتبقي: ${timeLeft} ثانية`;
+
                 const items = catCard.querySelectorAll('.vote-item');
                 items.forEach(btn => {
                     const cat = btn.getAttribute('data-value');
                     const isSelected = myVote == cat;
-                    btn.style.background = isSelected ? 'var(--success)' : '';
-                    btn.innerHTML = `${cat} ${isSelected ? '✅' : ''}`;
+                    if (isSelected) {
+                        btn.style.background = 'var(--success)';
+                        if (!btn.innerHTML.includes('✅')) btn.innerHTML = `${cat} ✅`;
+                    } else {
+                        btn.style.background = '';
+                        btn.innerHTML = cat;
+                    }
                 });
-                startOnlineCountdown(timeLeft, 'voting-cat-timer', (t) => `⏱️ الوقت المتبقي للتصويت: ${t} ثانية`);
                 return;
             }
 
@@ -3644,12 +3673,14 @@ HTML_TEMPLATE = """
             const thumbs = await getCachedCategoryThumbnails();
             const catsHtml = cats.map(c => {
                 const thumbnail = thumbs[c.name];
+                // Use .image if .image_url is missing (compatibility with different data sources)
+                const imageUrl = c.image_url || c.image;
                 return `
                 <div class="cat-card" data-cat-name="${c.name}">
-                    ${c.image_url ? `
+                    ${imageUrl ? `
                         <div class="cat-image-wrapper">
                             <div class="image-placeholder">⌛</div>
-                            <img src="${thumbnail || c.image_url}" alt="${c.name}">
+                            <img src="${thumbnail || imageUrl}" alt="${c.name}">
                         </div>` : '<div class="no-img">؟</div>'}
                     <span>${c.name}</span>
                 </div>`;
