@@ -3734,19 +3734,19 @@ HTML_TEMPLATE = """
             });
 
             loadCategoryImages();
-        }
 
-            loadCategoryImages();
-            if (fromCache) {
-                const notice = document.createElement('div');
-                notice.style = 'margin-top:14px; color:#a9a9a9; font-size:14px;';
-                notice.textContent = 'تم عرض الفئات من الكاش المحلي، ويتم تحميل الصور تدريجياً.';
-                document.querySelector('.card').appendChild(notice);
-            } else if (isFallback) {
-                const notice = document.createElement('div');
-                notice.style = 'margin-top:14px; color:#a9a0c2; font-size:14px;';
-                notice.textContent = 'يتم عرض الفئات الأساسية أولاً، والصور تُحمّل في الخلفية.';
-                document.querySelector('.card').appendChild(notice);
+            // إظهار تنبيهات التحميل إذا لزم الأمر
+            if (fromCache || isFallback) {
+                const existingNotice = document.querySelector('.cache-notice');
+                if (!existingNotice) {
+                    const notice = document.createElement('div');
+                    notice.className = 'cache-notice';
+                    notice.style = 'margin-top:14px; color:#a9a9a9; font-size:14px;';
+                    notice.textContent = fromCache ?
+                        'تم عرض الفئات من الكاش المحلي، ويتم تحميل الصور تدريجياً.' :
+                        'يتم عرض الفئات الأساسية أولاً، والصور تُحمّل في الخلفية.';
+                    document.querySelector('.card')?.appendChild(notice);
+                }
             }
         }
 
