@@ -496,7 +496,7 @@ async def online_vote(data: dict):
     try:
         room_code = data['room_code'].upper()
         user_id = data['user_id']
-        vote_type = data['type'] # 'limit' or 'category'
+        vote_type = data['type'] # 'limit' or 'cat'
         val = data['value']
 
         with conn.cursor() as cur:
@@ -514,20 +514,34 @@ async def start_online_game(data: dict):
     if not conn: return {"success": False, "msg": "لا يوجد اتصال بقاعدة البيانات"}
     try:
         room_code = data['room_code'].upper()
-        with conn.cursor() as cur:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT host_id FROM rooms WHERE room_code = %s", (room_code,))
             r = cur.fetchone()
             if not r: return {"success": False, "msg": "الغرفة غير موجودة"}
-            if r[0] != data['user_id']: return {"success": False, "msg": "فقط المضيف يمكنه البدء"}
+            if r['host_id'] != int(data['user_id']): return {"success": False, "msg": "فقط المضيف يمكنه البدء"}
 
             # التأكد من عدد اللاعبين
             cur.execute("SELECT COUNT(*) FROM room_players WHERE room_code = %s", (room_code,))
-            if cur.fetchone()[0] < 3: return {"success": False, "msg": "يجب وجود 3 لاعبين على الأقل"}
+            if cur.fetchone()['count'] < 3: return {"success": False, "msg": "يجب وجود 3 لاعبين على الأقل"}
 
-            # الانتقال لمرحلة التصويت على النقاط
-            game_data = {"phase_start": time.time()}
-            cur.execute("UPDATE rooms SET status = 'voting_limit', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+            # حساب نتائج التصويت في اللوبي
+            # 1. نقاط الفوز
+            cur.execute("SELECT vote_limit, COUNT(*) as c FROM room_players WHERE room_code = %s AND vote_limit IS NOT NULL GROUP BY vote_limit ORDER BY c DESC LIMIT 1", (room_code,))
+            res_limit = cur.fetchone()
+            win_limit = res_limit['vote_limit'] if res_limit else 10
+
+            # 2. الفئة
+            cur.execute("SELECT vote_cat, COUNT(*) as c FROM room_players WHERE room_code = %s AND vote_cat IS NOT NULL GROUP BY vote_cat ORDER BY c DESC LIMIT 1", (room_code,))
+            res_cat = cur.fetchone()
+            category = res_cat['vote_cat'] if res_cat else "عامة"
+
+            # تحديث الغرفة والبدء فوراً
+            cur.execute("UPDATE rooms SET win_limit = %s, category = %s, status = 'roles_prep' WHERE room_code = %s", (win_limit, category, room_code))
             conn.commit()
+
+        # البدء الفعلي (توزيع الأدوار)
+        await prepare_round(room_code)
+
         return {"success": True}
     except Exception as e:
         print(f"Error in start_online_game: {e}")
@@ -544,6 +558,7 @@ async def submit_vote(data: dict):
         user_id = int(data['user_id'])
         vote_type = data['type'] # 'limit' or 'cat'
         val = data['value']
+        is_lobby = data.get('is_lobby', False)
 
         should_prepare = False
         with conn.cursor() as cur:
@@ -552,30 +567,28 @@ async def submit_vote(data: dict):
             else:
                 cur.execute("UPDATE room_players SET vote_cat = %s WHERE room_code = %s AND user_id = %s", (val, room_code, user_id))
 
-            # التحقق هل الجميع صوتوا؟
-            cur.execute(f"SELECT COUNT(*) FROM room_players WHERE room_code = %s AND vote_{vote_type} IS NULL", (room_code,))
-            if cur.fetchone()[0] == 0:
-                # حساب النتيجة
-                cur.execute(f"SELECT vote_{vote_type}, COUNT(*) as c FROM room_players WHERE room_code = %s GROUP BY vote_{vote_type} ORDER BY c DESC LIMIT 1", (room_code,))
-                winner = cur.fetchone()[0]
+            # إذا لم نكن في اللوبي، نكمل المنطق القديم للانتقال التلقائي
+            if not is_lobby:
+                cur.execute(f"SELECT COUNT(*) FROM room_players WHERE room_code = %s AND vote_{vote_type} IS NULL", (room_code,))
+                if cur.fetchone()[0] == 0:
+                    cur.execute(f"SELECT vote_{vote_type}, COUNT(*) as c FROM room_players WHERE room_code = %s GROUP BY vote_{vote_type} ORDER BY c DESC LIMIT 1", (room_code,))
+                    winner = cur.fetchone()[0]
 
-                if vote_type == 'limit':
-                    cur.execute("SELECT game_data FROM rooms WHERE room_code = %s", (room_code,))
-                    g_row = cur.fetchone()
-                    g_data = g_row[0] if g_row and g_row[0] else {}
-                    g_data['phase_start'] = time.time()
-                    cur.execute("UPDATE rooms SET win_limit = %s, status = 'voting_cat', game_data = %s WHERE room_code = %s", (winner, json.dumps(g_data), room_code))
-                else:
-                    cur.execute("UPDATE rooms SET category = %s, status = 'roles_prep' WHERE room_code = %s", (winner, room_code))
-                    should_prepare = True
+                    if vote_type == 'limit':
+                        cur.execute("SELECT game_data FROM rooms WHERE room_code = %s", (room_code,))
+                        g_row = cur.fetchone()
+                        g_data = g_row[0] if g_row and g_row[0] else {}
+                        g_data['phase_start'] = time.time()
+                        cur.execute("UPDATE rooms SET win_limit = %s, status = 'voting_cat', game_data = %s WHERE room_code = %s", (winner, json.dumps(g_data), room_code))
+                    else:
+                        cur.execute("UPDATE rooms SET category = %s, status = 'roles_prep' WHERE room_code = %s", (winner, room_code))
+                        should_prepare = True
 
             conn.commit()
 
-        # Commit and close first before calling prepare_round to prevent deadlocks and connection leaks!
-        conn.close()
-        conn = None
-
-        if should_prepare:
+        if should_prepare and not is_lobby:
+            conn.close()
+            conn = None
             await prepare_round(room_code)
 
         return {"success": True}
@@ -611,6 +624,10 @@ async def prepare_round(room_code):
             active_players = [p for p in players if not p['red_card']]
             if len(active_players) < 3:
                  active_players = players
+
+            other = [w for w in words if w != correct]
+            guesses = random.sample(other, min(len(other), 6)) + [correct]
+            random.shuffle(guesses)
 
             # Initial asker is the first active player
             current_asker = active_players[0]
@@ -835,7 +852,7 @@ async def get_room(room_code: str):
                 cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
                 room = cur.fetchone()
 
-            cur.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
+            cur.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card, vote_limit, vote_cat FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
             players = cur.fetchall()
 
         # Commit and close connection first to prevent nested deadlocks!
@@ -851,7 +868,7 @@ async def get_room(room_code: str):
                 with conn_new.cursor(cursor_factory=RealDictCursor) as cur_new:
                     cur_new.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
                     room = cur_new.fetchone()
-                    cur_new.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
+                    cur_new.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card, vote_limit, vote_cat FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
                     players = cur_new.fetchall()
             finally:
                 conn_new.close()
@@ -863,7 +880,7 @@ async def get_room(room_code: str):
                 with conn_new.cursor(cursor_factory=RealDictCursor) as cur_new:
                     cur_new.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
                     room = cur_new.fetchone()
-                    cur_new.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
+                    cur_new.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card, vote_limit, vote_cat FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
                     players = cur_new.fetchall()
             finally:
                 conn_new.close()
@@ -2261,37 +2278,105 @@ HTML_TEMPLATE = """
                 return;
             }
             const {room, players} = window.roomData;
+            const me = players.find(p => p.user_id == currentUser.user_id);
+
             let pList = players.map(p => {
                 let cards = "";
                 if(p.red_card) cards = " 🟥";
                 else if(p.yellow_cards > 0) cards = " " + "🟨".repeat(p.yellow_cards);
-                return `<div class="score-item"><span>${p.player_name}${cards}</span> ${p.is_ready ? '✅' : '⏳'}</div>`;
+
+                let voteInfo = "";
+                if(p.vote_limit || p.vote_cat) {
+                    voteInfo = `<div style="font-size:10px; color:var(--accent); margin-top:2px;">
+                        ${p.vote_limit ? `🎯 ${p.vote_limit} ن` : ''}
+                        ${p.vote_cat ? `📁 ${p.vote_cat}` : ''}
+                    </div>`;
+                }
+
+                return `<div class="score-item" style="flex-direction:column; align-items:flex-start; padding:8px 12px;">
+                    <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+                        <span>${p.player_name}${cards}</span>
+                        <span>${(p.vote_limit && p.vote_cat) ? '✅' : '⏳'}</span>
+                    </div>
+                    ${voteInfo}
+                </div>`;
             }).join('');
 
-            // التحقق مما إذا كانت بطاقة الانتظار معروضة بالفعل لتحديث قائمة اللاعبين فقط وتفادي النبض/الرمش
             const lobbyCard = document.getElementById('lobby-card');
+            // If already rendered, just update the player list and voting sections to avoid full refresh
             if (lobbyCard && currentRoom && currentRoom.trim().toUpperCase() === room.room_code.trim().toUpperCase()) {
                 const pListContainer = document.getElementById('lobby-players-list');
-                if (pListContainer && pListContainer.innerHTML !== pList) {
-                    pListContainer.innerHTML = pList;
-                }
+                if (pListContainer) pListContainer.innerHTML = pList;
+
+                // Update my voting buttons
+                const limitBtns = document.querySelectorAll('.limit-btn');
+                limitBtns.forEach(b => {
+                    if(b.getAttribute('data-val') == me.vote_limit) b.classList.add('selected'); else b.classList.remove('selected');
+                });
+                const catBtns = document.querySelectorAll('.cat-btn');
+                catBtns.forEach(b => {
+                    if(b.getAttribute('data-val') == me.vote_cat) b.classList.add('selected'); else b.classList.remove('selected');
+                });
+
                 return;
             }
 
+            // Categories list - aligned with backend CATEGORIES keys
+            const categories = ["أكلات", "حيوانات", "كورة", "أجهزة", "سيارات", "تطبيقات", "انمي", "مسلسلات", "مهن"];
+
             document.getElementById('main-ui').innerHTML = `
-                <div class="card" id="lobby-card">
-                    <h2>رمز الغرفة</h2>
-                    <span id="lobby-room-code" style="color:var(--accent); font-size:38px; font-weight:900; letter-spacing:2px; display:block; margin:10px 0;">${room.room_code}</span>
-                    <div style="display:flex; gap:10px; justify-content:center; margin-bottom:20px;">
-                        <button style="background:var(--accent); color:var(--card); font-size:14px; padding:10px 15px; margin:0;" onclick="copyRoomCode()">📋 نسخ الرمز</button>
-                        <button style="background:var(--primary); font-size:14px; padding:10px 15px; margin:0;" onclick="copyInviteLink()">🔗 نسخ الرابط</button>
+                <div class="card" id="lobby-card" style="max-width:500px;">
+                    <h2 style="margin-bottom:5px;">غرفة الانتظار</h2>
+                    <span id="lobby-room-code" style="color:var(--accent); font-size:32px; font-weight:900; letter-spacing:2px; display:block; margin-bottom:10px;">${room.room_code}</span>
+
+                    <div style="display:flex; gap:8px; justify-content:center; margin-bottom:20px;">
+                        <button class="btn-sm" onclick="copyRoomCode()">📋 نسخ الرمز</button>
+                        <button class="btn-sm" style="background:var(--primary)" onclick="copyInviteLink()">🔗 الرابط</button>
                     </div>
-                    <div id="lobby-players-list" style="margin:10px 0; text-align:right;">${pList}</div>
-                    ${room.host_id == currentUser.user_id ? `
-                        <button onclick="startOnlineGame()">بدء اللعبة</button>` :
-                        '<p>بانتظار المضيف لبدء اللعبة...</p>'}
-                    <button style="background:#636e72" onclick="leaveRoom()">خروج</button>
+
+                    <div style="background:rgba(255,255,255,0.05); padding:15px; border-radius:15px; margin-bottom:20px; text-align:right;">
+                        <h4 style="margin:0 0 10px 0; color:var(--accent);">⚙️ إعداداتك المفضلة:</h4>
+
+                        <p style="font-size:13px; margin:10px 0 5px 0;">عدد نقاط الفوز:</p>
+                        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:5px;">
+                            ${[5, 10, 15, 20].map(v => `<button class="limit-btn ${me.vote_limit == v ? 'selected' : ''}" data-val="${v}" style="padding:8px; font-size:12px; margin:0;" onclick="submitLobbyVote('limit', ${v})">${v}</button>`).join('')}
+                        </div>
+
+                        <p style="font-size:13px; margin:15px 0 5px 0;">الفئة:</p>
+                        <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:5px;">
+                            ${categories.map(c => `<button class="cat-btn ${me.vote_cat == c ? 'selected' : ''}" data-val="${c}" style="padding:8px; font-size:11px; margin:0;" onclick="submitLobbyVote('cat', '${c}')">${c}</button>`).join('')}
+                        </div>
+                    </div>
+
+                    <h4 style="text-align:right; margin:10px 0;">👥 اللاعبون المتواجدون:</h4>
+                    <div id="lobby-players-list" style="margin:10px 0;">${pList}</div>
+
+                    <div style="margin-top:20px; display:flex; flex-direction:column; gap:10px;">
+                        ${room.host_id == currentUser.user_id ?
+                            `<button id="start-btn" onclick="startOnlineGame()" style="background:var(--success)">بدء اللعبة 🎮</button>` :
+                            '<div class="qa-typing-status">⏳ بانتظار المضيف لبدء اللعبة...</div>'}
+                        <button style="background:#636e72; padding:10px;" onclick="leaveRoom()">خروج من الغرفة</button>
+                    </div>
                 </div>`;
+        }
+
+        async function submitLobbyVote(type, value) {
+            try {
+                await fetch('/api/online/submit_vote', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        room_code: currentRoom,
+                        user_id: currentUser.user_id,
+                        type: type,
+                        value: value,
+                        is_lobby: true // Hint to backend to stay in waiting status
+                    })
+                });
+                await updateRoomState();
+            } catch (e) {
+                console.error("Lobby vote failed", e);
+            }
         }
 
         function copyInviteLink() {
