@@ -2145,7 +2145,9 @@ HTML_TEMPLATE = """
                     <p style="color: #a29bfe; margin-bottom: 30px; font-size: 16px;">اكتشف الجاسوس قبل فوات الأوان!</p>
                     <button onclick="navigateTo('online_menu')" style="margin-bottom: 15px;">🌐 لعب أونلاين</button>
                     <button style="background: linear-gradient(45deg, #e056fd, #be2edd); margin-bottom: 15px;" onclick="navigateTo('setup', {step: 1})">🏠 لعب أوفلاين (مجلس)</button>
-                    <p style="margin-top: 10px; font-size: 14px; color: #888; opacity: 0.8;">تصميم ابو الاكبر</p>
+                    <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.08);">
+                        <p style="font-size: 20px; font-weight: 900; background: linear-gradient(to right, #f1c40f, #f39c12); -webkit-background-clip: text; -webkit-text-fill-color: transparent; drop-shadow: 0 2px 4px rgba(0,0,0,0.3); margin: 0; letter-spacing: 1px;">✨ تصميم ابو الاكبر ✨</p>
+                    </div>
                 </div>`;
         }
 
