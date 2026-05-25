@@ -2440,47 +2440,12 @@ HTML_TEMPLATE = """
                 return;
             }
 
-                h += `</div>
-                        <button style="background:#636e72" onclick="submitLobbyVote('limit', null)">الرجوع لاختيار النقاط</button>
-                    </div>`;
-
-                document.getElementById('main-ui').innerHTML = h;
-
-                setTimeout(() => {
-                    const imgs = document.querySelectorAll('#vote-cat-grid img');
-                    imgs.forEach(img => {
-                        if (img.dataset.src) img.src = img.dataset.src;
-                        else {
-                            img.style.display = 'none';
-                            img.previousElementSibling.innerText = '❓';
-                        }
-                    });
-                }, 50);
-
-                return;
-            }
-
-            let pList = players.map(p => {
-                let cards = "";
-                if(p.red_card) cards = " 🟥";
-                else if(p.yellow_cards > 0) cards = " " + "🟨".repeat(p.yellow_cards);
-
-                let voteInfo = "";
-                if(p.vote_limit || p.vote_cat) {
-                    voteInfo = `<div style="font-size:10px; color:var(--accent); margin-top:2px;">
-                        ${p.vote_limit ? `🎯 ${p.vote_limit} ن` : ''}
-                        ${p.vote_cat ? `📁 ${p.vote_cat}` : ''}
-                    </div>`;
-                }
-
-                return `<div class="score-item" style="flex-direction:column; align-items:flex-start; padding:8px 12px;">
+                return `<div class="score-item" style="padding:12px 15px; align-items:center;">
                     <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
-                        <span>${p.player_name}${cards}</span>
-                        <span>${(p.vote_limit && p.vote_cat) ? '✅' : '⏳'}</span>
+                        <span style="font-weight:bold; font-size:18px;">${p.player_name}${cards}</span>
+                        <span style="font-size:20px;">${(p.vote_limit && p.vote_cat) ? '✅' : '⏳'}</span>
                     </div>
-                    ${voteInfo}
                 </div>`;
-            }).join('');
 
             const lobbyCard = document.getElementById('lobby-card');
             // If already rendered, just update the player list and voting sections to avoid full refresh
@@ -2503,8 +2468,10 @@ HTML_TEMPLATE = """
             const allReady = players.every(p => p.vote_limit && p.vote_cat);
             const isHost = room.host_id == currentUser.user_id;
 
-            let h = `
-                <div class="card" id="lobby-card">
+            let h = `<div class="card" id="lobby-card">`;
+
+            if (isHost) {
+                h += `
                     <div style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 20px; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.1);">
                         <span style="color: #a29bfe; font-size: 14px; display: block; margin-bottom: 5px;">رمز الغرفة</span>
                         <div style="font-size: 36px; font-weight: 900; letter-spacing: 5px; color: var(--accent);">${room.room_code}</div>
@@ -2512,8 +2479,13 @@ HTML_TEMPLATE = """
                             <button class="btn-sm" onclick="copyRoomCode()">📋 نسخ الرمز</button>
                             <button class="btn-sm" style="background:var(--primary)" onclick="copyInviteLink()">🔗 الرابط</button>
                         </div>
-                    </div>
+                    </div>`;
+            } else {
+                h += `<h1 style="margin-bottom:10px; font-size:28px;">🕵️ بانتظار البداية</h1>
+                      <div style="color:var(--accent); font-weight:bold; margin-bottom:20px;">تم الانضمام للغرفة بنجاح</div>`;
+            }
 
+            h += `
                     <div style="text-align: right; margin-bottom: 15px;">
                         <h3 style="margin:0;">اللاعبين في الغرفة</h3>
                     </div>
