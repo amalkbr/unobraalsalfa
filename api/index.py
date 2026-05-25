@@ -1554,8 +1554,8 @@ HTML_TEMPLATE = """
         }
         /* Admin Dashboard Improvements */
         .admin-wide-card {
-            max-width: 900px !important;
-            width: 98% !important;
+            max-width: 1600px !important;
+            width: 96% !important;
             padding: 30px 20px !important;
         }
         .admin-content-box {
@@ -4613,24 +4613,24 @@ HTML_TEMPLATE = """
                 const players = await res.json();
                 let h = `<h2>👥 قائمة اللاعبين</h2>
                     <div class="admin-content-box" style="background:transparent; padding:0; margin-top:10px;">
-                        <div class="admin-players-list" style="max-height:65vh; overflow-y:auto; padding:10px; display:flex; flex-direction:column; gap:12px;">`;
+                        <div class="admin-grid" style="max-height:75vh; overflow-y:auto; padding:10px;">`;
 
                 players.sort((a,b) => (b.total_wins || 0) - (a.total_wins || 0));
 
                 players.forEach(p => {
-                    h += `<div class="admin-item-card" style="flex-direction:row; justify-content:space-between; align-items:center; padding:15px 20px; border-radius:20px; background:rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.05);">
-                        <div style="display:flex; align-items:center; gap:18px;">
-                            <div style="width:52px; height:52px; border-radius:15px; background:linear-gradient(135deg, var(--primary), var(--accent)); display:flex; align-items:center; justify-content:center; font-size:1.3rem; color:#050505; font-weight:900; box-shadow: 0 4px 12px rgba(0, 210, 255, 0.2);">
+                    h += `<div class="admin-item-card" style="padding:15px; border-radius:20px; background:rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.05); transition: 0.3s ease;">
+                        <div style="display:flex; align-items:center; gap:15px; margin-bottom:12px;">
+                            <div style="width:48px; height:48px; border-radius:12px; background:linear-gradient(135deg, var(--primary), var(--accent)); display:flex; align-items:center; justify-content:center; font-size:1.2rem; color:#050505; font-weight:900;">
                                 ${p.player_name.charAt(0).toUpperCase()}
                             </div>
-                            <div style="text-align:right">
-                                <div style="font-size:1.15rem; font-weight:bold; color:white;">${p.player_name}</div>
-                                <div style="font-size:0.85rem; color:var(--primary); opacity:0.7; font-family:monospace;">@${p.username_key}</div>
+                            <div style="text-align:right; flex:1; overflow:hidden;">
+                                <div style="font-size:1.1rem; font-weight:bold; color:white; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${p.player_name}</div>
+                                <div style="font-size:0.8rem; color:var(--primary); opacity:0.7; font-family:monospace;">@${p.username_key}</div>
                             </div>
                         </div>
-                        <div style="text-align:center; min-width:70px; background:rgba(255, 255, 255, 0.05); padding:8px 15px; border-radius:12px; border: 1px solid rgba(255,255,255,0.1);">
-                            <div style="font-size:0.7rem; opacity:0.6; margin-bottom:2px;">الفوز</div>
-                            <div style="font-size:1.4rem; font-weight:900; color:var(--success); line-height:1;">${p.total_wins || 0}</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.2); padding:10px 15px; border-radius:12px; border: 1px solid rgba(255,255,255,0.05);">
+                            <span style="font-size:0.85rem; opacity:0.7;">إجمالي الفوز</span>
+                            <b style="font-size:1.3rem; color:var(--success);">${p.total_wins || 0}</b>
                         </div>
                     </div>`;
                 });
@@ -4638,7 +4638,7 @@ HTML_TEMPLATE = """
                 if(players.length === 0) h += `<p style="text-align:center; padding:40px; opacity:0.5;">لا يوجد لاعبين مسجلين حالياً</p>`;
 
                 h += `</div></div><button style="margin-top:20px; background:#333;" onclick="showAdminDashboard(false)">🔙 العودة للوحة التحكم</button>`;
-                document.getElementById('main-ui').innerHTML = `<div class="card admin-wide-card" style="max-width:750px;">${h}</div>`;
+                document.getElementById('main-ui').innerHTML = `<div class="card admin-wide-card">${h}</div>`;
             } catch (err) {
                 console.error('Failed to load admin players:', err);
                 document.getElementById('main-ui').innerHTML = `
