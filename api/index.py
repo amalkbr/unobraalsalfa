@@ -1941,6 +1941,7 @@ HTML_TEMPLATE = """
         let p_votes = {};
         let totalScores = {}; // نقاط الجلسة
         let winLimit = 10;
+        let isStartingGame = false; // قفل لمنع تداخل تحديث الواجهات
         let questionTimeout = 30;
         let voteTimeout = 10;
         let spyGuessTimeout = 15;
@@ -2134,6 +2135,7 @@ HTML_TEMPLATE = """
             if(push) history.pushState({screen: 'menu'}, "");
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'none';
             game = null;
+            isStartingGame = false;
             window.pNamesSave = []; // تصفير قائمة اللاعبين عند العودة للقائمة
             totalScores = {}; // ريست للنقاط عند العودة للقائمة
             document.getElementById('main-ui').innerHTML = `
@@ -3415,7 +3417,7 @@ HTML_TEMPLATE = """
                 updateSelectedCount();
             } else if(step === 3) {
                 // عرض صفحة اختيار عدد الفوز أولاً في الاوفلاين
-                const currentWinLimit = window.winLimit || 10;
+                const currentWinLimit = winLimit || 10;
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
                         <h2>🏆 هدف الفوز</h2>
@@ -3436,6 +3438,10 @@ HTML_TEMPLATE = """
         }
 
         async function showOfflineCategoryStep() {
+            // التقاط قيمة هدف الفوز من الواجهة الحالية قبل مسحها
+            const winEl = document.getElementById('win_limit_val');
+            if (winEl) winLimit = parseInt(winEl.value);
+
             const cachedCats = getCachedCategories();
             if (cachedCats && cachedCats.length) {
                 await renderCategorySelection(cachedCats, true);
@@ -3449,7 +3455,8 @@ HTML_TEMPLATE = """
                 const res = await fetch('/api/categories');
                 if (res.ok) {
                     const cats = await res.json();
-                    if (cats && cats.length) {
+                    // التأكد من أننا لا نزال في مرحلة الإعداد ولم تبدأ اللعبة فعلياً
+                    if (cats && cats.length && !isStartingGame && !game) {
                         saveCachedCategories(cats);
                         await renderCategorySelection(cats);
                         prefetchCategoryImages(cats);
@@ -3462,7 +3469,7 @@ HTML_TEMPLATE = """
             document.querySelectorAll('.win-opt').forEach(opt => opt.classList.remove('selected'));
             el.classList.add('selected');
             document.getElementById('win_limit_val').value = val;
-            window.winLimit = val;
+            winLimit = val;
         }
 
         function selectCat(el, name) {
@@ -3666,9 +3673,16 @@ HTML_TEMPLATE = """
         }
 
         async function renderCategorySelection(cats, fromCache = false, isFallback = false) {
+            // منع أي تحديث للواجهة إذا بدأت اللعبة أو كانت شاشة التحميل ظاهرة
+            if (isStartingGame || (game && game.players) || document.querySelector('.shuffling')) return;
+
             const selectedCat = document.getElementById('selected_cat')?.value;
 
             const thumbs = await getCachedCategoryThumbnails();
+
+            // فحص إضافي بعد الانتظار لأن الحالة قد تتغير أثناء جلب الصور
+            if (isStartingGame || (game && game.players) || document.querySelector('.shuffling')) return;
+
             const catsHtml = cats.map(c => {
                 const thumbnail = thumbs[c.name];
                 const imageUrl = c.image_url || c.image;
@@ -3769,21 +3783,27 @@ HTML_TEMPLATE = """
         }
 
         function startGameFinal(btn) {
-            const cat = document.getElementById('selected_cat').value;
+            const catEl = document.getElementById('selected_cat');
+            const cat = catEl ? catEl.value : "";
+
             if(!cat) return alert("اختر فئة أولاً!");
-            if(btn) {
-                btn.disabled = true;
-                btn.innerHTML = '<span class="shuffling" style="font-size:20px; margin:0;">🌀</span> جاري البدء...';
-            }
-            // استخدام winLimit العالمي المحفوظ بدلاً من البحث عن عنصر قد يكون حُذف من الـ DOM
-            if (!window.winLimit) {
-                const winEl = document.getElementById('win_limit_val');
-                window.winLimit = winEl ? parseInt(winEl.value) : 10;
-            }
+            if (isStartingGame) return;
+
+            isStartingGame = true; // تفعيل القفل فوراً
+
+            // استبدال الواجهة فوراً لضمان عدم تداخل أي تحديثات أخرى
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card" style="padding: 40px 20px;">
+                    <div class="shuffling" style="font-size: 50px; margin-bottom: 20px;">🌀</div>
+                    <h2 style="color: var(--accent);">جاري البدء...</h2>
+                    <p style="color: #aaa;">نجهز لك السالفة والمواضيع، لحظات من فضلك</p>
+                </div>`;
+
             start(cat);
         }
 
         async function start(category) {
+            isStartingGame = true;
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'block';
             const players = window.pNamesSave || [];
 
@@ -3794,13 +3814,30 @@ HTML_TEMPLATE = """
             });
             totalScores = updatedScores;
 
-            const res = await fetch('/api/game/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({players, category})});
-            game = await res.json();
-            game.players = players;
-            game.category = category; // حفظ الفئة للجولة القادمة
-            game.curr = 0;
-            game.qIdx = 0;
-            showRole();
+            try {
+                const res = await fetch('/api/game/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({players, category})
+                });
+
+                if (!res.ok) throw new Error("فشل الاتصال بالسيرفر");
+
+                const data = await res.json();
+                if (data.error) throw new Error(data.error);
+
+                game = data;
+                game.players = players;
+                game.category = category;
+                game.curr = 0;
+                game.qIdx = 0;
+                showRole();
+            } catch (err) {
+                console.error("Start Game Error:", err);
+                isStartingGame = false;
+                alert("حدث خطأ أثناء بدء اللعبة. يرجى المحاولة مرة أخرى.");
+                navigateTo('setup', {step: 3});
+            }
         }
 
         function showRole() {
