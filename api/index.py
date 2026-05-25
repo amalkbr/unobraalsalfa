@@ -837,35 +837,53 @@ async def get_room(room_code: str):
                     changed = True
 
             elif status == 'playing_questions':
-                q_idx = game_data.get('q_idx', 0)
-                q_seq = game_data.get('q_seq', [])
-                if q_idx < len(q_seq):
-                    curr_q = q_seq[q_idx]
-                    elapsed = time.time() - game_data.get('phase_start', time.time())
+                game_data = room.get('game_data') or {}
+                current_asker_id = game_data.get('current_asker_id')
+                current_q = game_data.get('current_q')
+                phase_start = game_data.get('phase_start')
 
-                    # 15s to ask, 20s to answer
-                    timeout = 15 if curr_q['status'] in ['pending', 'asking'] else 20
+                # Fetch question timeout from settings or default to 30
+                cur.execute("SELECT value FROM settings WHERE key = 'question_timeout'")
+                q_timeout_row = cur.fetchone()
+                q_timeout = int(q_timeout_row['value']) if q_timeout_row else 30
 
-                    if elapsed > timeout:
-                        target_user_id = curr_q['asker_id'] if curr_q['status'] in ['pending', 'asking'] else curr_q['ans_id']
-
-                        cur.execute("UPDATE room_players SET yellow_cards = yellow_cards + 1 WHERE room_code = %s AND user_id = %s", (room_code, target_user_id))
-                        cur.execute("SELECT yellow_cards FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, target_user_id))
-                        y_cards_row = cur.fetchone()
-                        if y_cards_row and y_cards_row['yellow_cards'] >= 2:
-                            cur.execute("UPDATE room_players SET red_card = TRUE WHERE room_code = %s AND user_id = %s", (room_code, target_user_id))
-
-                        curr_q['status'] = 'timeout'
-                        game_data['q_idx'] += 1
-                        game_data['phase_start'] = time.time()
-
-                        if game_data['q_idx'] >= len(q_seq):
-                            room['status'] = 'voting_spy'
-                            game_data['phase_start'] = time.time()
-                            cur.execute("UPDATE rooms SET status = 'voting_spy', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                            cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
-
+                # Check for absolute timeout to skip turns for absent players
+                if phase_start:
+                    elapsed = time.time() - phase_start
+                    if elapsed > q_timeout:
                         changed = True
+                        if not current_q:
+                            # Asker didn't choose a target
+                            cur.execute("UPDATE room_players SET yellow_cards = yellow_cards + 1 WHERE room_code = %s AND user_id = %s", (room_code, current_asker_id))
+                            # Move turn to next player
+                            cur.execute("SELECT user_id, player_name FROM room_players WHERE room_code = %s AND red_card = FALSE ORDER BY join_order ASC", (room_code,))
+                            active_players = cur.fetchall()
+                            if active_players:
+                                curr_idx = next((i for i, p in enumerate(active_players) if p['user_id'] == current_asker_id), 0)
+                                next_asker = active_players[(curr_idx + 1) % len(active_players)]
+
+                                game_data['current_asker_id'] = next_asker['user_id']
+                                game_data['current_asker_name'] = next_asker['player_name']
+                            game_data['phase_start'] = time.time()
+                        else:
+                            # Asking or Answering timeout
+                            target_id = current_q['asker_id'] if current_q['status'] == 'asking' else current_q['ans_id']
+                            cur.execute("UPDATE room_players SET yellow_cards = yellow_cards + 1 WHERE room_code = %s AND user_id = %s", (room_code, target_id))
+
+                            # Cancel current question and move turn to next asker
+                            cur.execute("SELECT user_id, player_name FROM room_players WHERE room_code = %s AND red_card = FALSE ORDER BY join_order ASC", (room_code,))
+                            active_players = cur.fetchall()
+                            if active_players:
+                                curr_idx = next((i for i, p in enumerate(active_players) if p['user_id'] == current_asker_id), 0)
+                                next_asker = active_players[(curr_idx + 1) % len(active_players)]
+
+                                game_data['current_asker_id'] = next_asker['user_id']
+                                game_data['current_asker_name'] = next_asker['player_name']
+                            game_data['current_q'] = None
+                            game_data['phase_start'] = time.time()
+
+                        # Check for red cards (2 yellows = red)
+                        cur.execute("UPDATE room_players SET red_card = TRUE WHERE room_code = %s AND yellow_cards >= 2", (room_code,))
 
             elif status == 'spy_reveal':
                 phase_start = game_data.get('phase_start')
@@ -1506,11 +1524,11 @@ HTML_TEMPLATE = """
         button:active { transform: scale(0.98); }
         button:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; }
         .btn-yellow {
-            background: linear-gradient(90deg, #00ff88, #00bd68) !important;
+            background: linear-gradient(90deg, #f1c40f, #f39c12) !important;
             color: #050505 !important;
-            box-shadow: 0 4px 15px rgba(0, 255, 136, 0.3) !important;
+            box-shadow: 0 4px 15px rgba(241, 196, 15, 0.3) !important;
         }
-        .btn-yellow:hover { box-shadow: 0 6px 20px rgba(0, 255, 136, 0.5) !important; }
+        .btn-yellow:hover { box-shadow: 0 6px 20px rgba(241, 196, 15, 0.5) !important; }
         .sidebar {
             position: fixed;
             right: -280px;
@@ -2071,14 +2089,40 @@ HTML_TEMPLATE = """
 
         function showAuth() {
             document.getElementById('main-ui').innerHTML = `
+                <div class="card" style="padding: 40px 20px;">
+                    <div style="font-size: 60px; margin-bottom: 20px;">🕵️</div>
+                    <h1 style="margin-bottom: 10px;">برا السالفة</h1>
+                    <p style="color: #a29bfe; margin-bottom: 30px;">سجل دخولك لتلعب مع أصدقائك أونلاين</p>
+
+                    <button onclick="showLogin()" style="margin-bottom: 15px; background: var(--primary);">تسجيل الدخول</button>
+                    <button onclick="showRegister()" style="background: var(--accent); color: #000;">إنشاء حساب جديد</button>
+
+                    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
+                         <p style="font-size: 16px; color: #f1c40f;">✨ تصميم ابو الاكبر ✨</p>
+                    </div>
+                </div>`;
+        }
+
+        function showLogin() {
+            document.getElementById('main-ui').innerHTML = `
                 <div class="card">
-                    <h1>🕵️ برا السالفة</h1>
-                    <input id="u_name" placeholder="اليوزر نيم">
-                    <input id="u_pass" type="password" placeholder="الباسوورد">
-                    <button onclick="login()">دخول</button>
-                    <hr style="border:0; border-top:1px solid #3c339e; margin:20px 0;">
-                    <input id="r_nick" placeholder="الاسم المستعار (يظهر للجميع)">
-                    <button style="background:#4834d4" onclick="register()">إنشاء حساب</button>
+                    <h2>تسجيل الدخول</h2>
+                    <input id="u_name" placeholder="اسم المستخدم">
+                    <input id="u_pass" type="password" placeholder="كلمة المرور">
+                    <button onclick="login()" style="background: var(--primary); margin-top: 10px;">دخول ✅</button>
+                    <button onclick="showAuth()" style="background: #636e72; margin-top: 10px;">رجوع</button>
+                </div>`;
+        }
+
+        function showRegister() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>إنشاء حساب جديد</h2>
+                    <input id="r_nick" placeholder="اسمك المستعار (يظهر للاعبين)">
+                    <input id="u_name" placeholder="اسم المستخدم (للجهاز)">
+                    <input id="u_pass" type="password" placeholder="كلمة المرور">
+                    <button onclick="register()" style="background: var(--accent); color: #000; margin-top: 10px;">إنشاء الحساب 🚀</button>
+                    <button onclick="showAuth()" style="background: #636e72; margin-top: 10px;">رجوع</button>
                 </div>`;
         }
 
@@ -2200,31 +2244,39 @@ HTML_TEMPLATE = """
                 <div class="card">
                     <h1>اللعب أونلاين</h1>
                     <button style="background: linear-gradient(135deg, #2ecc71, #27ae60); box-shadow: 0 4px 15px rgba(46, 204, 113, 0.4); border-radius: 20px; font-weight: 900; margin-bottom: 20px;" onclick="showCreateStep1()">✨ إنشاء غرفة جديدة</button>
-
-                    <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.1);">
-                        <h3 style="margin-top:0;">انضمام لغرفة</h3>
-                        <input id="join_code" placeholder="رمز الغرفة (مثال: ABCD)" style="text-transform:uppercase; text-align:center; font-size:24px; letter-spacing:4px;">
-                        <button onclick="joinRoom()" style="background:var(--primary);">دخول الآن 🚪</button>
-                    </div>
+                    <button style="background: var(--primary); margin-bottom: 20px;" onclick="showJoinInput()">🚪 انضمام لغرفة</button>
 
                     <button style="background:#636e72; margin-top:20px;" onclick="navigateTo('menu')">رجوع</button>
                 </div>`;
         }
 
+        function showJoinInput() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>انضمام لغرفة</h2>
+                    <p style="color:#aaa; margin-bottom:20px;">أدخل رمز الغرفة المكون من 4 أحرف</p>
+                    <input id="join_code" placeholder="رمز الغرفة (مثال: ABCD)" style="text-transform:uppercase; text-align:center; font-size:24px; letter-spacing:4px; margin-bottom:20px;">
+                    <button onclick="joinRoom()" style="background:var(--success);">دخول الآن 🚪</button>
+                    <button onclick="showOnlineMenu(false)" style="background:#636e72; margin-top:10px;">رجوع</button>
+                </div>`;
+        }
+
         function showCreateStep1() {
+            createData.win_limit = 5; // الافتراضي 5 كما طلب المستخدم
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>إنشاء غرفة</h1>
                     <h3 style="margin-bottom:20px; color:var(--accent);">حدد نقاط الفوز:</h3>
-                    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin-bottom:25px;">
-                        ${[5, 10, 15, 20, 30, 50].map(v => `
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:25px;">
+                        ${[5, 10, 15, 20].map(v => `
                             <div class="win-opt ${createData.win_limit == v ? 'selected' : ''}"
-                                 onclick="createData.win_limit=${v}; showCreateStep2()">
+                                 onclick="createData.win_limit=${v}; document.querySelectorAll('.win-opt').forEach(el=>el.classList.remove('selected')); this.classList.add('selected');">
                                 ${v}
                             </div>
                         `).join('')}
                     </div>
-                    <button style="background:#636e72" onclick="showOnlineMenu(false)">رجوع</button>
+                    <button onclick="showCreateStep2()" style="background:var(--success);">التالي: اختيار الفئة</button>
+                    <button style="background:#636e72; margin-top:10px;" onclick="showOnlineMenu(false)">رجوع</button>
                 </div>`;
         }
 
@@ -2787,8 +2839,9 @@ HTML_TEMPLATE = """
 
         function copyInviteLink() {
             const url = window.location.origin + '?join=' + currentRoom;
-            navigator.clipboard.writeText(url).then(() => {
-                showToast("🔗 تم نسخ رابط الدعوة! أرسله لأصدقائك.");
+            const text = `يالله تعال نلعب برا السالفه انقر ع الرابط\n${url}`;
+            navigator.clipboard.writeText(text).then(() => {
+                showToast("🔗 تم نسخ نص الدعوة مع الرابط!");
             });
         }
 
@@ -2848,10 +2901,13 @@ HTML_TEMPLATE = """
             updateMainUI(`
                 <div class="card">
                     <h3>أنت: <b style="color:var(--accent)">${currentUser.player_name}</b></h3>
-                    <div id="box" style="background:#0f0c29; padding:20px; border-radius:20px; margin:20px 0;">
-                        <h3>${isSpy ? '🕵️ أنت برة السالفة!' : '🤫 السالفة هي: ' + room.secret_word}</h3>
+                    <div id="box" style="background:#0f0c29; padding:40px 20px; border-radius:30px; margin:20px 0; border: 2px solid var(--accent); display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 200px;">
+                        <h2 style="font-size: 32px; margin-bottom: 20px; color: #fff; text-align: center;">
+                            ${isSpy ? '🕵️ أنت برة السالفة!' : '🤫 السالفة هي:'}
+                        </h2>
+                        ${isSpy ? '' : `<h1 style="font-size: 48px; color: var(--accent); text-align: center; margin: 0;">${room.secret_word}</h1>`}
                     </div>
-                    <button onclick="onlineAction('ready_role')">فهمت، جاهز</button>
+                    <button onclick="onlineAction('ready_role')" style="background: var(--success); font-size: 20px; padding: 15px;">فهمت، جاهز</button>
                 </div>`);
         }
 
@@ -3006,7 +3062,7 @@ HTML_TEMPLATE = """
             const activeCount = players.filter(p=>!p.red_card).length;
             const voteButtonHtml = hasOptedToVote ?
                 `<button disabled style="background:#3c339e; opacity:0.6; padding:8px; font-size:12px; width:auto; margin:0 auto;">✅ طلب تصويت (${readyToVote.length}/${activeCount})</button>` :
-                `<button onclick="confirmTransitionToVote()" style="background:rgba(249, 202, 36, 0.2); border:1px solid var(--accent); color:var(--accent); padding:8px 15px; font-size:12px; width:auto; margin:0 auto; border-radius:12px;">🗳️ إنهاء الأسئلة؟</button>`;
+                `<button class="btn-yellow" onclick="confirmTransitionToVote()" style="padding:8px 15px; font-size:12px; width:auto; margin:0 auto; border-radius:12px; font-weight: bold;">🗳️ إنهاء الأسئلة؟</button>`;
 
             // إظهار الكلمة السرية للاعبين اللي مو جواسيس
             const isSpy = room.spy_id == currentUser.user_id;
