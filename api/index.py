@@ -1627,43 +1627,49 @@ HTML_TEMPLATE = """
         }
         .cat-grid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 8px;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
             margin: 10px 0;
-            max-height: 350px;
+            max-height: 450px;
             overflow-y: scroll;
             scrollbar-gutter: stable;
-            padding: 5px;
+            padding: 10px;
             min-height: 200px;
         }
         .cat-card {
-            background: rgba(255,255,255,0.03);
-            border-radius: 12px;
-            padding: 6px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 18px;
+            padding: 10px;
             cursor: pointer;
-            border: 1px solid rgba(255,255,255,0.08);
-            transition: 0.2s ease;
+            border: 2px solid rgba(255,255,255,0.1);
+            transition: 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
             display: flex;
             flex-direction: column;
             align-items: center;
-            min-height: 90px;
+            min-height: 160px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
         }
         .cat-card:hover {
-            transform: translateY(-2px);
-            background: rgba(0, 210, 255, 0.08);
+            transform: translateY(-5px) scale(1.02);
+            background: rgba(0, 210, 255, 0.1);
             border-color: var(--primary);
+            box-shadow: 0 8px 20px rgba(0, 210, 255, 0.2);
         }
         .cat-card.selected {
             border-color: var(--accent);
             background: rgba(0, 255, 136, 0.15);
-            box-shadow: 0 0 12px rgba(0, 255, 136, 0.3);
+            box-shadow: 0 0 15px rgba(0, 255, 136, 0.4);
         }
         .cat-card img {
             width: 100%;
-            height: 55px;
+            height: 120px;
             object-fit: cover;
-            border-radius: 8px;
-            margin-bottom: 4px;
+            border-radius: 12px;
+            margin-bottom: 8px;
+        }
+        .cat-card span {
+            font-weight: bold;
+            font-size: 16px;
         }
         .cat-image-wrapper { position: relative; width: 100%; }
         .image-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #1a1538; border-radius: 12px; color: #9aa0b4; font-size: 18px; pointer-events: none; }
@@ -2088,11 +2094,20 @@ HTML_TEMPLATE = """
         }
 
         function showAuth() {
+            const pending = localStorage.getItem('pendingJoin');
+            const inviteNotice = pending ? `
+                <div style="background: rgba(0, 255, 136, 0.1); border: 1px solid var(--accent); padding: 15px; border-radius: 15px; margin-bottom: 25px; animation: pulse 2s infinite;">
+                    <p style="color: var(--accent); font-weight: bold; margin: 0;">🎮 وصلتك دعوة للعب!</p>
+                    <p style="font-size: 13px; margin: 5px 0 0 0;">سجل دخولك أو أنشئ حساباً بسرعة للانضمام للغرفة</p>
+                </div>` : '';
+
             document.getElementById('main-ui').innerHTML = `
                 <div class="card" style="padding: 40px 20px;">
                     <div style="font-size: 60px; margin-bottom: 20px;">🕵️</div>
                     <h1 style="margin-bottom: 10px;">برا السالفة</h1>
                     <p style="color: #a29bfe; margin-bottom: 30px;">سجل دخولك لتلعب مع أصدقائك أونلاين</p>
+
+                    ${inviteNotice}
 
                     <button onclick="showLogin()" style="margin-bottom: 15px; background: var(--primary);">تسجيل الدخول</button>
                     <button onclick="showRegister()" style="background: var(--accent); color: #000;">إنشاء حساب جديد</button>
@@ -2837,27 +2852,68 @@ HTML_TEMPLATE = """
             }
         }
 
+        function showShareChoice(text, toastMsg) {
+            const overlay = document.createElement('div');
+            overlay.style = "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:20000; display:flex; align-items:center; justify-content:center; padding:20px; box-sizing:border-box; backdrop-filter:blur(5px);";
+            overlay.className = "share-overlay";
+            overlay.innerHTML = `
+                <div class="card" style="max-width:320px; text-align:center; border-color:var(--accent);">
+                    <h2 style="margin-bottom:20px; font-size:20px;">ارسال الدعوة 💬</h2>
+                    <p style="font-size:14px; color:#aaa; margin-bottom:20px;">كيف تود مشاركة الرابط مع أصدقائك؟</p>
+
+                    <button onclick="this.parentElement.parentElement.remove(); copyToClipboard('${text.replace(/\n/g, '\\n').replace(/'/g, "\\'")}', '${toastMsg}')" style="background:var(--primary); margin-bottom:12px; display:flex; align-items:center; justify-content:center; gap:10px;">
+                        <span>📋 نسخ النص</span>
+                    </button>
+
+                    <button id="native-share-btn" style="background:var(--accent); color:#000; margin-bottom:12px; display:flex; align-items:center; justify-content:center; gap:10px;">
+                        <span>📤 مشاركة عبر التطبيقات</span>
+                    </button>
+
+                    <button onclick="this.parentElement.parentElement.remove()" style="background:#636e72; margin-top:10px; border-radius:12px; padding:10px;">إلغاء</button>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            document.getElementById('native-share-btn').onclick = async () => {
+                overlay.remove();
+                if (navigator.share) {
+                    try {
+                        await navigator.share({
+                            title: 'برا السالفة',
+                            text: text
+                        });
+                    } catch (err) {
+                        copyToClipboard(text, toastMsg);
+                    }
+                } else {
+                    copyToClipboard(text, toastMsg);
+                }
+            };
+        }
+
         function copyInviteLink() {
             const url = window.location.origin + '?join=' + currentRoom;
-            const text = `يالله تعال نلعب برا السالفه انقر ع الرابط\n${url}`;
-            navigator.clipboard.writeText(text).then(() => {
-                showToast("🔗 تم نسخ نص الدعوة مع الرابط!");
-            });
+            const text = `يالله تعال نلعب برا الساله الي مسويها ابو الاكبر بس ادخل للرابط\n${url}`;
+            showShareChoice(text, "🔗 تم نسخ رابط الدعوة!");
         }
 
         function copyRoomCode() {
             if (!currentRoom) return;
-            navigator.clipboard.writeText(currentRoom).then(() => {
-                showToast("📋 تم نسخ رمز الغرفة: " + currentRoom);
+            const text = `رمز الغرفة في لعبة برا السالفة هو: ${currentRoom}`;
+            showShareChoice(text, "📋 تم نسخ رمز الغرفة: " + currentRoom);
+        }
+
+        function copyToClipboard(text, toastMsg) {
+            navigator.clipboard.writeText(text).then(() => {
+                showToast(toastMsg);
             }).catch(err => {
-                console.error("Failed to copy code: ", err);
                 const tempInput = document.createElement("input");
-                tempInput.value = currentRoom;
+                tempInput.value = text;
                 document.body.appendChild(tempInput);
                 tempInput.select();
                 document.execCommand("copy");
                 document.body.removeChild(tempInput);
-                showToast("📋 تم نسخ رمز الغرفة: " + currentRoom);
+                showToast(toastMsg);
             });
         }
 
