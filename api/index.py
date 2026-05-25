@@ -1763,6 +1763,8 @@ HTML_TEMPLATE = """
                 }
             } catch(e) {}
         }
+
+        function navigateTo(screen, data = {}, push = true) {
             lastRenderedHTML = "";
             if (push) {
                 history.pushState({ screen, ...data }, "");
