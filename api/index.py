@@ -2134,6 +2134,7 @@ HTML_TEMPLATE = """
             if(push) history.pushState({screen: 'menu'}, "");
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'none';
             game = null;
+            window.pNamesSave = []; // تصفير قائمة اللاعبين عند العودة للقائمة
             totalScores = {}; // ريست للنقاط عند العودة للقائمة
             document.getElementById('main-ui').innerHTML = `
                 <div class="card" style="padding: 30px 20px;">
@@ -3267,32 +3268,35 @@ HTML_TEMPLATE = """
         }
 
         function togglePSelection(el, name) {
+            el.classList.toggle('selected');
             const icon = el.querySelector('.status-icon');
-            if(icon.innerText === '✅') {
-                icon.innerText = '⬜';
-            } else {
-                const targetN = parseInt(localStorage.getItem('pCount') || 3);
-                const currentCount = Array.from(document.querySelectorAll('.status-icon')).filter(i => i.innerText === '✅').length;
-                if(currentCount >= targetN) {
-                    alert("لقد اخترت العدد المطلوب فعلاً (" + targetN + ") لاعبين");
-                    return;
-                }
+            if (el.classList.contains('selected')) {
                 icon.innerText = '✅';
+                el.style.borderColor = 'var(--accent)';
+                el.style.background = 'rgba(0, 255, 136, 0.05)';
+            } else {
+                icon.innerText = '⬜';
+                el.style.borderColor = '';
+                el.style.background = '';
             }
             updateSelectedCount();
         }
 
         function updateSelectedCount() {
-            const count = Array.from(document.querySelectorAll('.status-icon')).filter(i => i.innerText === '✅').length;
+            const items = Array.from(document.querySelectorAll('#p_selection_list .score-item'));
+            window.pNamesSave = items.filter(el => el.querySelector('.status-icon').innerText === '✅')
+                                     .map(el => el.querySelector('span').innerText);
+
+            const count = window.pNamesSave.length;
             const counterEl = document.getElementById('selected_count');
             if(counterEl) counterEl.innerText = count;
 
-            const nextBtn = document.querySelector('button[onclick="confirmPlayersAndNext()"]');
+            const nextBtn = document.querySelector('.btn-yellow');
             if(nextBtn) {
-                const targetN = parseInt(localStorage.getItem('pCount') || 3);
-                nextBtn.disabled = (count !== targetN);
-                nextBtn.style.opacity = (count === targetN) ? "1" : "0.5";
+                nextBtn.disabled = (count < 3);
+                nextBtn.style.opacity = (count >= 3) ? "1" : "0.5";
             }
+            localStorage.setItem('pCount', count);
         }
 
         function addNewPlayerToList() {
@@ -3348,18 +3352,15 @@ HTML_TEMPLATE = """
         }
 
         function confirmPlayersAndNext(btn) {
-            const targetN = parseInt(localStorage.getItem('pCount'));
             const selected = Array.from(document.querySelectorAll('#p_selection_list .score-item'))
                 .filter(el => el.querySelector('.status-icon').innerText === '✅')
                 .map(el => el.querySelector('span').innerText);
 
-            if(selected.length !== targetN) {
-                if(confirm(`لقد اخترت ${selected.length} لاعبين، والمطلوب ${targetN}. هل تريد تغيير عدد اللاعبين إلى ${selected.length} والبدء؟`)) {
-                    localStorage.setItem('pCount', selected.length);
-                } else {
-                    return;
-                }
+            if (selected.length < 3) {
+                showError("يرجى اختيار 3 لاعبين على الأقل.", "تنبيه");
+                return;
             }
+
             if(btn) {
                 btn.disabled = true;
                 btn.innerHTML = '<span class="shuffling" style="font-size:20px; margin:0;">🌀</span> جاري التحميل...';
@@ -3370,86 +3371,91 @@ HTML_TEMPLATE = """
 
         async function showSetup(step, push = true) {
             if(push) history.pushState({screen: 'setup', step}, "");
-            if(step === 1) {
-                let savedCount = Math.max(3, parseInt(localStorage.getItem('pCount') || 3));
-                document.getElementById('main-ui').innerHTML = `
-                    <div class="card">
-                        <h2>عدد اللاعبين</h2>
-                        <div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin: 20px 0;">
-                            <button onclick="changePCount(-1)" style="width: 60px; margin:0; background:var(--error); font-size: 24px;">-</button>
-                            <input type="number" id="p_count" value="${savedCount}" min="3" style="text-align: center; width: 100px; margin:0; font-size: 24px; font-weight: bold;">
-                            <button onclick="changePCount(1)" style="width: 60px; margin:0; background:var(--success); font-size: 24px;">+</button>
-                        </div>
-                        <button class="btn-yellow" onclick="saveAndNext(this)">التالي</button>
-                        <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
-                    </div>`;
-            } else if(step === 2) {
-                const targetN = Math.max(3, parseInt(localStorage.getItem('pCount') || 3));
+            if(!window.pNamesSave) window.pNamesSave = [];
+
+            if(step === 1 || step === 2) {
+                // دمج اختيار عدد اللاعبين واختيارهم في صفحة واحدة
                 let savedPlayers = currentUser.saved_players || [];
 
                 let h = `<div id="p_selection_list" style="max-height: 300px; overflow-y: auto; margin-bottom: 20px; text-align: right;">`;
 
-                // عرض اللاعبين المخزنين أولاً مع خاصية الاختيار
                 savedPlayers.forEach((p, idx) => {
                     const name = typeof p === 'string' ? p : p.name;
-                    const isSelected = idx < targetN;
+                    const isSelected = window.pNamesSave.includes(name);
                     h += `
-                        <div class="score-item" style="cursor:pointer" onclick="togglePSelection(this, '${name.replace(/'/g, "\\'")}')">
+                        <div class="score-item ${isSelected ? 'selected' : ''}"
+                             style="cursor:pointer; ${isSelected ? 'border-color:var(--accent); background:rgba(0, 255, 136, 0.05);' : ''}"
+                             onclick="togglePSelection(this, '${name.replace(/'/g, "\\'")}')">
                             <span>${name}</span>
                             <span class="status-icon">${isSelected ? '✅' : '⬜'}</span>
                         </div>`;
                 });
                 h += `</div>`;
 
-                // حقل لإضافة لاعب جديد للقائمة
                 h += `
                     <div style="display:flex; gap:10px; margin-bottom:15px;">
                         <input id="new_p_name" placeholder="اسم لاعب جديد" style="margin:0">
                         <button onclick="addNewPlayerToList()" style="width:80px; margin:0; background:var(--success)">+</button>
                     </div>
 
-                    <div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin: 15px 0; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 20px; border: 1px solid #3c339e;">
-                        <button onclick="changePCount(-1)" style="width: 45px; height: 45px; margin:0; background:var(--error); font-size: 24px; display:flex; align-items:center; justify-content:center;">-</button>
-                        <div style="text-align: center; min-width: 100px;">
-                            <span style="display:block; font-size:12px; color:#aaa;">العدد المطلوب</span>
-                            <span id="required_n_display" style="font-size: 28px; font-weight: 900; color:var(--accent);">${targetN}</span>
-                        </div>
-                        <button onclick="changePCount(1)" style="width: 45px; height: 45px; margin:0; background:var(--success); font-size: 24px; display:flex; align-items:center; justify-content:center;">+</button>
-                    </div>
-
-                    <p id="selection_info" style="margin:10px 0; font-size:16px; color:white;">
-                        المختار: <span id="selected_count" style="color:var(--success); font-weight:bold;">0</span>
-                        من أصل
-                        <span id="required_n_summary" style="font-weight:bold;">${targetN}</span> لاعبين
+                    <p id="selection_info" style="margin:10px 0; font-size:18px; color:white; text-align:center; background:rgba(255,255,255,0.05); padding:10px; border-radius:15px;">
+                        عدد المختارين: <span id="selected_count" style="color:var(--accent); font-weight:bold; font-size:22px;">0</span>
                     </p>
-                    <button class="btn-yellow" onclick="confirmPlayersAndNext(this)">التالي</button>`;
+
+                    <button class="btn-yellow" onclick="confirmPlayersAndNext(this)">التالي: تحديد هدف الفوز</button>
+                    <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>`;
 
                 document.getElementById('main-ui').innerHTML = `
                     <div class="card">
-                        <h2>اختر اللاعبين</h2>
+                        <h2>من سيلعب؟ 👥</h2>
+                        <p style="font-size:13px; color:#aaa; margin-bottom:15px;">اختر اللاعبين من القائمة (3 على الأقل)</p>
                         ${h}
                     </div>`;
 
-                // تحديث العداد الأولي
                 updateSelectedCount();
             } else if(step === 3) {
-                const cachedCats = getCachedCategories();
-                if (cachedCats && cachedCats.length) {
-                    await renderCategorySelection(cachedCats, true);
-                    prefetchCategoryImages(cachedCats);
-                } else {
-                    const defaultCats = DEFAULT_CATEGORIES.map(name => ({ name }));
-                    await renderCategorySelection(defaultCats, false, true);
-                }
+                // عرض صفحة اختيار عدد الفوز أولاً في الاوفلاين
+                document.getElementById('main-ui').innerHTML = `
+                    <div class="card">
+                        <h2>🏆 هدف الفوز</h2>
+                        <p style="color: #9aa0b4; margin-bottom: 20px;">حدد عدد النقاط المطلوب للفوز بالسالفة</p>
 
-                try {
-                    const res = await fetch('/api/categories');
-                    if (res.ok) {
-                        const cats = await res.json();
-                        if (cats && cats.length) {
-                            saveCachedCategories(cats);
-                            await renderCategorySelection(cats);
-                            prefetchCategoryImages(cats);
+                        <div style="display: flex; gap: 10px; justify-content: center; margin-bottom: 30px;">
+                            <div class="win-opt" onclick="selectWinLimit(this, 5)">5</div>
+                            <div class="win-opt selected" onclick="selectWinLimit(this, 10)">10</div>
+                            <div class="win-opt" onclick="selectWinLimit(this, 15)">15</div>
+                            <div class="win-opt" onclick="selectWinLimit(this, 20)">20</div>
+                        </div>
+                        <input type="hidden" id="win_limit_val" value="10">
+
+                        <button class="btn-yellow" onclick="showOfflineCategoryStep()">التالي: اختيار الفئة</button>
+                        <button style="background:#636e72" onclick="navigateTo('setup', {step: 2})">رجوع</button>
+                    </div>`;
+            }
+        }
+
+        async function showOfflineCategoryStep() {
+            const cachedCats = getCachedCategories();
+            if (cachedCats && cachedCats.length) {
+                await renderCategorySelection(cachedCats, true);
+                prefetchCategoryImages(cachedCats);
+            } else {
+                const defaultCats = DEFAULT_CATEGORIES.map(name => ({ name }));
+                await renderCategorySelection(defaultCats, false, true);
+            }
+
+            try {
+                const res = await fetch('/api/categories');
+                if (res.ok) {
+                    const cats = await res.json();
+                    if (cats && cats.length) {
+                        saveCachedCategories(cats);
+                        await renderCategorySelection(cats);
+                        prefetchCategoryImages(cats);
+                    }
+                }
+            } catch (err) { console.error(err); }
+        }
                         } else if (!cachedCats || !cachedCats.length) {
                             showCategoryError();
                         }
@@ -3673,7 +3679,6 @@ HTML_TEMPLATE = """
 
         async function renderCategorySelection(cats, fromCache = false, isFallback = false) {
             const selectedCat = document.getElementById('selected_cat')?.value;
-            const currentWinLimit = document.getElementById('win_limit_val')?.value || "10";
 
             const thumbs = await getCachedCategoryThumbnails();
             const catsHtml = cats.map(c => {
@@ -3695,9 +3700,7 @@ HTML_TEMPLATE = """
             const existingGrid = mainUi.querySelector('.cat-grid');
             const existingCard = mainUi.querySelector('.card');
 
-            // تحديث ذكي لتجنب الارتجاف (jitter/pulsing)
             if (existingGrid && document.getElementById('selected_cat')) {
-                // إذا كانت القائمة موجودة، نحدث المحتوى فقط
                 if (existingGrid.dataset.lastCount != cats.length) {
                     existingGrid.innerHTML = catsHtml;
                     existingGrid.dataset.lastCount = cats.length;
@@ -3706,27 +3709,18 @@ HTML_TEMPLATE = """
                     });
                     loadCategoryImages();
                 }
-                // منع تكرار أنيميشن الدخول عند التحديث التلقائي
                 if (existingCard) existingCard.style.animation = 'none';
                 return;
             }
 
             mainUi.innerHTML = `
                 <div class="card">
-                    <h2>اختر نوع السالفة</h2>
+                    <h2>اختر نوع السالفة 📂</h2>
                     <div class="cat-grid" data-last-count="${cats.length}">${catsHtml}</div>
                     <input type="hidden" id="selected_cat" value="${selectedCat || ''}">
 
-                    <p style="margin-top:20px; font-weight:bold;">حد الفوز (نقاط):</p>
-                    <div style="display: flex; gap: 10px; justify-content: center; margin-bottom: 20px;">
-                        <div class="win-opt ${currentWinLimit == '5' ? 'selected' : ''}" onclick="selectWinLimit(this, 5)">5</div>
-                        <div class="win-opt ${currentWinLimit == '10' ? 'selected' : ''}" onclick="selectWinLimit(this, 10)">10</div>
-                        <div class="win-opt ${currentWinLimit == '15' ? 'selected' : ''}" onclick="selectWinLimit(this, 15)">15</div>
-                        <div class="win-opt ${currentWinLimit == '20' ? 'selected' : ''}" onclick="selectWinLimit(this, 20)">20</div>
-                    </div>
-                    <input type="hidden" id="win_limit_val" value="${currentWinLimit}">
-
-                    <button class="btn-yellow" onclick="startGameFinal(this)">ابدأ اللعب الآن</button>
+                    <button class="btn-yellow" onclick="startGameFinal(this)">ابدأ اللعب الآن 🚀</button>
+                    <button style="background:#636e72" onclick="navigateTo('setup', {step: 3})">رجوع</button>
                 </div>`;
 
             document.querySelectorAll('.cat-card').forEach(card => {
@@ -3734,8 +3728,8 @@ HTML_TEMPLATE = """
             });
 
             loadCategoryImages();
-
-            // إظهار تنبيهات التحميل إذا لزم الأمر
+        }
+  // إظهار تنبيهات التحميل إذا لزم الأمر
             if (fromCache || isFallback) {
                 const existingNotice = document.querySelector('.cache-notice');
                 if (!existingNotice) {
@@ -3799,8 +3793,15 @@ HTML_TEMPLATE = """
 
         async function start(category) {
             if(document.getElementById('global-exit-btn')) document.getElementById('global-exit-btn').style.display = 'block';
-            const players = window.pNamesSave;
-            if(Object.keys(totalScores).length === 0) players.forEach(p => totalScores[p] = 0);
+            const players = window.pNamesSave || [];
+
+            // تهيئة/تحديث النقاط: الاحتفاظ فقط باللاعبين المختارين حالياً في الجلسة
+            const updatedScores = {};
+            players.forEach(p => {
+                updatedScores[p] = totalScores[p] || 0;
+            });
+            totalScores = updatedScores;
+
             const res = await fetch('/api/game/start', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({players, category})});
             game = await res.json();
             game.players = players;
@@ -4577,6 +4578,7 @@ HTML_TEMPLATE = """
                 if(currentRoom) {
                     leaveRoom();
                 } else {
+                    window.pNamesSave = [];
                     totalScores = {};
                     showMenu();
                 }
