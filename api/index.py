@@ -4297,6 +4297,7 @@ HTML_TEMPLATE = """
                     </div>`;
                 return;
             }
+            const q = game.q_seq[game.qIdx];
             const userQTimeout = parseInt(localStorage.getItem('user_question_timeout')) || 30;
             const userDisabled = localStorage.getItem('user_timer_disabled') === 'true';
 
