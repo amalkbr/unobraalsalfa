@@ -4176,7 +4176,24 @@ HTML_TEMPLATE = """
 
         function startTimer(callback, customTime = null) {
             if(timerInterval) clearInterval(timerInterval);
-            let timeLeft = customTime || questionTimeout;
+
+            // تحقق من الإعدادات المحلية للمستخدم
+            const userDisabled = localStorage.getItem('user_timer_disabled') === 'true';
+            const userQTimeout = parseInt(localStorage.getItem('user_question_timeout')) || 30;
+            const userVTimeout = parseInt(localStorage.getItem('user_vote_timeout')) || 10;
+
+            if (userDisabled) {
+                const timerEl = document.getElementById('timer-display');
+                if(timerEl) timerEl.innerText = "∞";
+                return;
+            }
+
+            let timeLeft = customTime;
+            if (timeLeft === null) {
+                // تحديد الوقت التلقائي بناءً على السياق (هنا نفترض أنه سؤال إذا لم يحدد، أو نمرره يدوياً في الاستدعاءات)
+                timeLeft = userQTimeout;
+            }
+
             const timerEl = document.getElementById('timer-display');
             if(timerEl) timerEl.innerText = timeLeft;
 
@@ -4201,13 +4218,15 @@ HTML_TEMPLATE = """
                     </div>`;
                 return;
             }
-            const q = game.q_seq[game.qIdx];
+            const userQTimeout = parseInt(localStorage.getItem('user_question_timeout')) || 30;
+            const userDisabled = localStorage.getItem('user_timer_disabled') === 'true';
+
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <span class="q-badge">مرحلة إجبارية</span>
                         <div style="background:var(--error); padding:5px 15px; border-radius:10px; font-weight:bold;">
-                            ⏱️ <span id="timer-display">${questionTimeout}</span>
+                            ⏱️ <span id="timer-display">${userDisabled ? '∞' : userQTimeout}</span>
                         </div>
                     </div>
                     <div style="font-size:24px; margin:30px 0;"><b style="color:#a29bfe">${q.f}</b> يسأل <b style="color:#ff7675">${q.t}</b></div>
@@ -4217,16 +4236,19 @@ HTML_TEMPLATE = """
             startTimer(() => {
                 game.qIdx++;
                 showPhase1();
-            });
+            }, userQTimeout);
         }
 
         function showPhase2(asker, last = "") {
+            const userQTimeout = parseInt(localStorage.getItem('user_question_timeout')) || 30;
+            const userDisabled = localStorage.getItem('user_timer_disabled') === 'true';
+
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <span class="q-badge" style="background:var(--primary)">مرحلة الاختيار الحر</span>
                         <div style="background:var(--error); padding:5px 15px; border-radius:10px; font-weight:bold;">
-                            ⏱️ <span id="timer-display">${questionTimeout}</span>
+                            ⏱️ <span id="timer-display">${userDisabled ? '∞' : userQTimeout}</span>
                         </div>
                     </div>
                     <h3>دور <b style="color:var(--accent)">${asker}</b> يختار مين يسأل؟</h3>
@@ -4251,7 +4273,7 @@ HTML_TEMPLATE = """
                     timerEl.innerText = "0";
                     timerEl.parentElement.style.animation = "pulse 1s infinite";
                 }
-            });
+            }, userQTimeout);
         }
 
         function startVoting() { p_votes = {}; performVote(0); }
@@ -4259,16 +4281,24 @@ HTML_TEMPLATE = """
         function performVote(idx) {
             if(idx >= game.players.length) { showReveal(); return; }
             let list = game.players;
+
+            // جلب وقت التصويت من إعدادات المستخدم
+            const userVTimeout = parseInt(localStorage.getItem('user_vote_timeout')) || 10;
+            const userDisabled = localStorage.getItem('user_timer_disabled') === 'true';
+
+            let backBtn = idx === 0 ? `<button style="background:#636e72; margin-top:10px; border:1px solid #999;" onclick="clearInterval(timerInterval); showPhase1()">🔙 تراجع للأسئلة</button>` : "";
+
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                         <span>مرر لـ <b>${game.players[idx]}</b></span>
                         <div style="background:var(--error); padding:5px 15px; border-radius:10px; font-weight:bold;">
-                            ⏱️ <span id="timer-display">${voteTimeout}</span>
+                            ⏱️ <span id="timer-display">${userDisabled ? '∞' : userVTimeout}</span>
                         </div>
                     </div>
                     <p>صوت سراً: منو اللي برة السالفة؟</p>
                     <div id="vbox"></div>
+                    ${backBtn}
                 </div>`;
             list.forEach(p => {
                 let btn = document.createElement('button'); btn.className = 'vote-item'; btn.innerText = p;
@@ -4281,13 +4311,12 @@ HTML_TEMPLATE = """
             });
 
             startTimer(() => {
-                // اختيار لاعب عشوائي (غير الشخص نفسه) عند انتهاء الوقت
                 const me = game.players[idx];
                 const others = game.players.filter(p => p !== me);
                 const randomChoice = others[Math.floor(Math.random() * others.length)];
                 p_votes[me] = randomChoice;
                 performVote(idx+1);
-            }, voteTimeout);
+            }, userVTimeout);
         }
 
         function showReveal() {
@@ -4355,8 +4384,18 @@ HTML_TEMPLATE = """
             if (guessedWord === correctWord) {
                 playSound('win'); // صوت النجاح
             } else {
-                el.style.background = "var(--error)";
-                el.style.boxShadow = "0 0 20px var(--error)";
+                if (el) {
+                    el.style.background = "var(--error)";
+                    el.style.boxShadow = "0 0 20px var(--error)";
+                } else {
+                    // إذا انتهى الوقت ولم يضغط الجاسوس، نبرز الكلمة الخطأ التي تم اختيارها عشوائياً
+                    items.forEach(item => {
+                        if (item.innerText === guessedWord && guessedWord !== correctWord) {
+                            item.style.background = "var(--error)";
+                            item.style.boxShadow = "0 0 20px var(--error)";
+                        }
+                    });
+                }
                 playSound('fail'); // صوت الفشل
             }
 
@@ -4460,6 +4499,18 @@ HTML_TEMPLATE = """
         }
         function updateSidebar() { if(currentUser) {
             document.getElementById('user-display').innerText = currentUser.player_name;
+
+            // إضافة زر إعدادات الوقت للمستخدم في القائمة الجانبية
+            if (!document.getElementById('user-settings-btn')) {
+                let sbtn = document.createElement('button');
+                sbtn.id = 'user-settings-btn';
+                sbtn.innerText = "⚙️ إعدادات الوقت";
+                sbtn.style.background = "rgba(255,255,255,0.1)";
+                sbtn.style.marginTop = "10px";
+                sbtn.onclick = () => { toggleSidebar(); showUserSettings(); };
+                document.getElementById('sidebar').appendChild(sbtn);
+            }
+
             if(currentUser.username_key === 'admin') {
                 if(!document.getElementById('admin-btn')) {
                     let btn = document.createElement('button');
@@ -4505,24 +4556,8 @@ HTML_TEMPLATE = """
         function adminManageTimeouts() {
             document.getElementById('main-ui').innerHTML = `
                 <div class="card admin-wide-card">
-                    <h2>⏱️ إعدادات المهل والأصوات</h2>
+                    <h2>⏱️ إعدادات الأصوات والهوية</h2>
                     <div class="admin-content-box">
-                        <h3 class="admin-section-title">المهل الزمنية (بالثواني)</h3>
-                        <div class="admin-setting-row">
-                            <label>وقت مهلة السؤال:</label>
-                            <div class="admin-input-group">
-                                <input type="number" id="timeout_setting" value="${questionTimeout}">
-                                <button onclick="saveAdminSetting('question_timeout', 'timeout_setting')" class="admin-save-btn">حفظ</button>
-                            </div>
-                        </div>
-                        <div class="admin-setting-row">
-                            <label>وقت مهلة التصويت:</label>
-                            <div class="admin-input-group">
-                                <input type="number" id="vote_timeout_setting" value="${voteTimeout}">
-                                <button onclick="saveAdminSetting('vote_timeout', 'vote_timeout_setting')" class="admin-save-btn">حفظ</button>
-                            </div>
-                        </div>
-
                         <h3 class="admin-section-title">روابط الأصوات (URL)</h3>
                         <div class="admin-setting-row full-width">
                             <label>صوت النقر/التالي:</label>
@@ -4576,15 +4611,50 @@ HTML_TEMPLATE = """
             const d = await res.json();
             if(d.success) {
                 // تحديث القيم محلياً فوراً
-                if(key === 'question_timeout') questionTimeout = parseInt(val);
-                if(key === 'vote_timeout') voteTimeout = parseInt(val);
-                if(key === 'spy_guess_timeout') spyGuessTimeout = parseInt(val);
                 if(key === 'sound_click') { soundClickUrl = val; sounds.click = new Audio(val); }
                 if(key === 'sound_reveal') { soundRevealUrl = val; sounds.reveal = new Audio(val); }
                 if(key === 'sound_win') { soundWinUrl = val; sounds.win = new Audio(val); }
                 if(key === 'sound_fail') { soundFailUrl = val; sounds.fail = new Audio(val); }
                 alert("تم التحديث بنجاح ✅");
             }
+        }
+
+        function showUserSettings() {
+            const qTime = localStorage.getItem('user_question_timeout') || 30;
+            const vTime = localStorage.getItem('user_vote_timeout') || 10;
+            const isDisabled = localStorage.getItem('user_timer_disabled') === 'true';
+
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2 style="color:var(--accent); margin-bottom:20px;">⚙️ إعدادات الوقت الخاصة بك</h2>
+                    <p style="font-size:0.9rem; color:#aaa; margin-bottom:20px;">هذه الإعدادات تؤثر على جهازك فقط.</p>
+
+                    <div class="admin-content-box" style="background:rgba(255,255,255,0.05); padding:20px; border-radius:15px;">
+                        <div style="margin-bottom:15px;">
+                            <label style="display:block; margin-bottom:5px;">وقت السؤال (ثانية):</label>
+                            <input type="number" id="u_q_time" value="${qTime}" style="width:100%; padding:10px; border-radius:8px; border:1px solid #444; background:#222; color:white;">
+                        </div>
+                        <div style="margin-bottom:15px;">
+                            <label style="display:block; margin-bottom:5px;">وقت التصويت (ثانية):</label>
+                            <input type="number" id="u_v_time" value="${vTime}" style="width:100%; padding:10px; border-radius:8px; border:1px solid #444; background:#222; color:white;">
+                        </div>
+                        <div style="display:flex; align-items:center; gap:10px; margin-top:20px;">
+                            <input type="checkbox" id="u_t_disable" ${isDisabled ? 'checked' : ''} style="width:20px; height:20px;">
+                            <label for="u_t_disable">إيقاف المؤقت نهائياً</label>
+                        </div>
+                    </div>
+
+                    <button onclick="saveUserSettings()" style="margin-top:20px;">حفظ الإعدادات</button>
+                    <button style="background:#636e72; margin-top:10px;" onclick="navigateTo('menu')">إلغاء</button>
+                </div>`;
+        }
+
+        function saveUserSettings() {
+            localStorage.setItem('user_question_timeout', document.getElementById('u_q_time').value);
+            localStorage.setItem('user_vote_timeout', document.getElementById('u_v_time').value);
+            localStorage.setItem('user_timer_disabled', document.getElementById('u_t_disable').checked);
+            alert("تم حفظ إعداداتك الشخصية بنجاح ✅");
+            navigateTo('menu');
         }
 
         async function handleIconUpload() {
