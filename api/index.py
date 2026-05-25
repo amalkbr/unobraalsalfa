@@ -644,10 +644,24 @@ async def prepare_round(room_code):
             # Initial asker is the first active player
             current_asker = active_players[0]
 
+            # Generate automatic sequence if needed (everyone asks everyone)
+            # 1 asks 2, 2 asks 3... n asks 1, then 1 asks 3, etc.
+            auto_seq = []
+            p_ids = [p['user_id'] for p in active_players]
+            n = len(p_ids)
+            for shift in range(1, n):
+                for i in range(n):
+                    asker_id = p_ids[i]
+                    ans_id = p_ids[(i + shift) % n]
+                    auto_seq.append({'asker_id': asker_id, 'ans_id': ans_id})
+
             game_data = {
                 "word": correct,
                 "spy_id": spy_id,
-                "q_seq": [], # Will store history of questions
+                "q_seq": [], # History of completed questions
+                "auto_seq": auto_seq, # Pre-calculated sequence
+                "current_seq_idx": 0,
+                "distribution_mode": room.get('distribution_mode', 'auto'), # 'auto' or 'manual'
                 "current_asker_id": current_asker['user_id'],
                 "current_asker_name": current_asker['player_name'],
                 "ready_to_vote": [], # List of user_ids who clicked "Vote"
@@ -966,9 +980,16 @@ async def online_action(data: dict):
             elif action == "choose_target":
                 target_id = int(data['target_id'])
                 target_name = data['target_name']
-                if game_data.get('current_asker_id') == user_id and not game_data.get('current_q'):
+
+                # Check if it's manual mode and host or it's the asker's turn
+                is_host = room['host_id'] == int(user_id)
+                can_choose = (game_data.get('distribution_mode') == 'manual' and is_host) or \
+                            (game_data.get('distribution_mode') == 'auto' and game_data.get('current_asker_id') == user_id)
+
+                if can_choose and not game_data.get('current_q'):
                     game_data['current_q'] = {
-                        "asker_id": user_id, "asker_name": game_data['current_asker_name'],
+                        "asker_id": game_data['current_asker_id'],
+                        "asker_name": game_data['current_asker_name'],
                         "ans_id": target_id, "ans_name": target_name,
                         "status": "asking", "question": "", "answer": ""
                     }
@@ -1034,30 +1055,55 @@ async def online_action(data: dict):
                     # Add to history
                     if 'q_seq' not in game_data: game_data['q_seq'] = []
                     game_data['q_seq'].append(curr_q)
-
-                    # Next asker is the one who just answered
-                    next_asker_id = curr_q['ans_id']
-                    next_asker_name = curr_q['ans_name']
                     game_data['current_q'] = None
 
-                    # If the next asker already opted to vote, pick a random person who hasn't
-                    if next_asker_id in game_data.get('ready_to_vote', []):
-                        cur.execute("SELECT user_id, player_name FROM room_players WHERE room_code = %s AND red_card = FALSE", (room_code,))
-                        active_players = cur.fetchall()
-                        others = [p for p in active_players if p['user_id'] not in game_data['ready_to_vote']]
-                        if others:
-                            chosen = random.choice(others)
-                            next_asker_id = chosen['user_id']
-                            next_asker_name = chosen['player_name']
-                        else:
-                            # Everyone wants to vote
-                            game_data['phase_start'] = time.time()
-                            cur.execute("UPDATE rooms SET status = 'voting_spy', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                            conn.commit()
-                            return {"success": True}
+                    # Logic for next asker
+                    if game_data.get('distribution_mode') == 'auto':
+                        # Advance in pre-calculated sequence
+                        game_data['current_seq_idx'] = game_data.get('current_seq_idx', 0) + 1
+                        auto_seq = game_data.get('auto_seq', [])
 
-                    game_data['current_asker_id'] = next_asker_id
-                    game_data['current_asker_name'] = next_asker_name
+                        if game_data['current_seq_idx'] < len(auto_seq):
+                            next_pair = auto_seq[game_data['current_seq_idx']]
+                            game_data['current_asker_id'] = next_pair['asker_id']
+                            cur.execute("SELECT player_name FROM room_players WHERE user_id = %s", (next_pair['asker_id'],))
+                            game_data['current_asker_name'] = cur.fetchone()['player_name']
+
+                            # Automatically set the target (answerer) for auto mode
+                            cur.execute("SELECT player_name FROM room_players WHERE user_id = %s", (next_pair['ans_id'],))
+                            ans_name = cur.fetchone()['player_name']
+                            game_data['current_q'] = {
+                                "asker_id": next_pair['asker_id'], "asker_name": game_data['current_asker_name'],
+                                "ans_id": next_pair['ans_id'], "ans_name": ans_name,
+                                "status": "asking", "question": "", "answer": ""
+                            }
+                        else:
+                            # End of sequence, maybe go to voting or loop?
+                            # For now, let it be manual or just keep last asker
+                            pass
+                    else:
+                        # Manual mode: Next asker is the one who just answered
+                        next_asker_id = curr_q['ans_id']
+                        next_asker_name = curr_q['ans_name']
+
+                        # If the next asker already opted to vote, pick a random person who hasn't
+                        if next_asker_id in game_data.get('ready_to_vote', []):
+                            cur.execute("SELECT user_id, player_name FROM room_players WHERE room_code = %s AND red_card = FALSE", (room_code,))
+                            active_players = cur.fetchall()
+                            others = [p for p in active_players if p['user_id'] not in game_data['ready_to_vote']]
+                            if others:
+                                chosen = random.choice(others)
+                                next_asker_id = chosen['user_id']
+                                next_asker_name = chosen['player_name']
+                            else:
+                                game_data['phase_start'] = time.time()
+                                cur.execute("UPDATE rooms SET status = 'voting_spy', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                                conn.commit()
+                                return {"success": True}
+
+                        game_data['current_asker_id'] = next_asker_id
+                        game_data['current_asker_name'] = next_asker_name
+
                     game_data['phase_start'] = time.time()
                     cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
                 conn.commit()
@@ -2785,6 +2831,12 @@ HTML_TEMPLATE = """
                 if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight;
             }, 50);
             startOnlineCountdown(timeLeft, 'questions-timer', (t) => `⏱️ ${t} ثانية`);
+        }
+
+        function confirmTransitionToVote() {
+            if (confirm("هل أنت متأكد أنك تريد الانتقال لمرحلة التصويت على الجاسوس؟")) {
+                onlineAction('toggle_vote_ready');
+            }
         }
 
         async function submitOnlineQuestion() {
