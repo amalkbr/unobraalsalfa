@@ -1536,8 +1536,8 @@ HTML_TEMPLATE = """
         ::-webkit-scrollbar-thumb { background: rgba(0, 210, 255, 0.3); border-radius: 10px; border: 2px solid transparent; background-clip: content-box; }
         ::-webkit-scrollbar-thumb:hover { background: var(--primary); border-radius: 10px; border: 2px solid transparent; background-clip: content-box; }
 
-        .flex-center { display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction: column; }
-        .container { width: 100%; text-align: center; padding: 10px; box-sizing: border-box; }
+        .flex-center { width: 100%; display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction: column; }
+        .container { width: 100%; max-width: 100%; text-align: center; padding: 10px; box-sizing: border-box; }
         .card {
             background: var(--card);
             padding: 20px 12px;
@@ -1554,15 +1554,19 @@ HTML_TEMPLATE = """
         }
         /* Admin Dashboard Improvements */
         .admin-wide-card {
-            max-width: 1600px !important;
-            width: 96% !important;
-            padding: 30px 20px !important;
+            max-width: none !important;
+            width: 100% !important;
+            padding: 30px 15px !important;
+            margin: 0 !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            min-height: 100vh;
         }
         .admin-content-box {
             background: rgba(0,0,0,0.3);
-            padding: 20px;
-            border-radius: 20px;
-            margin: 20px 0;
+            padding: 30px;
+            border-radius: 25px;
+            margin: 25px 0;
             text-align: right;
             width: 100%;
             box-sizing: border-box;
@@ -1609,8 +1613,8 @@ HTML_TEMPLATE = """
         }
         .admin-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 15px;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
             width: 100%;
         }
         .admin-item-card {
@@ -2082,7 +2086,8 @@ HTML_TEMPLATE = """
 
         /* Responsive styling for larger screen devices */
         @media (min-width: 600px) {
-            .container { max-width: 850px; width: 95%; }
+            .container { max-width: 100%; width: 100%; padding: 0; }
+            .admin-wide-card { width: 100% !important; max-width: 100% !important; min-height: 100vh; padding: 40px !important; border-radius: 0 !important; margin: 0 !important; }
             .card { padding: 45px 35px; border-radius: 40px; }
             button { font-size: 22px; padding: 20px; border-radius: 22px; }
             input, select { font-size: 20px; padding: 20px; border-radius: 20px; }
@@ -4464,25 +4469,25 @@ HTML_TEMPLATE = """
             }
             document.getElementById('main-ui').innerHTML = `
                 <div class="card admin-wide-card">
-                    <h2>🛠️ لوحة التحكم الإدارية</h2>
-                    <div class="admin-grid" style="margin-top:20px;">
-                        <div class="admin-item-card" onclick="adminManagePlayers()" style="cursor:pointer; text-align:center; padding:30px;">
-                            <div style="font-size:3rem;">👥</div>
-                            <h3 style="margin:10px 0;">إدارة اللاعبين</h3>
-                            <p style="font-size:0.9rem; color:#aaa;">عرض وتتبع جميع اللاعبين المسجلين</p>
+                    <h2 style="font-size:2.5rem; margin-bottom:30px;">🛠️ لوحة التحكم الإدارية</h2>
+                    <div class="admin-grid">
+                        <div class="admin-item-card" onclick="adminManagePlayers()" style="cursor:pointer; text-align:center; padding:50px 30px; border-radius:30px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); transition:0.3s;">
+                            <div style="font-size:5rem; margin-bottom:20px;">👥</div>
+                            <h3 style="font-size:2rem; margin:15px 0; color:var(--accent);">إدارة اللاعبين</h3>
+                            <p style="font-size:1.1rem; color:#aaa; line-height:1.6;">عرض وتتبع جميع اللاعبين المسجلين وتحليل نشاطهم</p>
                         </div>
-                        <div class="admin-item-card" onclick="adminManageCategories()" style="cursor:pointer; text-align:center; padding:30px;">
-                            <div style="font-size:3rem;">📂</div>
-                            <h3 style="margin:10px 0;">الفئات والكلمات</h3>
-                            <p style="font-size:0.9rem; color:#aaa;">إضافة وتعديل الأقسام والكلمات التابعة لها</p>
+                        <div class="admin-item-card" onclick="adminManageCategories()" style="cursor:pointer; text-align:center; padding:50px 30px; border-radius:30px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); transition:0.3s;">
+                            <div style="font-size:5rem; margin-bottom:20px;">📂</div>
+                            <h3 style="font-size:2rem; margin:15px 0; color:var(--accent);">الفئات والكلمات</h3>
+                            <p style="font-size:1.1rem; color:#aaa; line-height:1.6;">إضافة وتعديل الأقسام والكلمات وتنظيم محتوى اللعبة</p>
                         </div>
-                        <div class="admin-item-card" onclick="adminManageTimeouts()" style="cursor:pointer; text-align:center; padding:30px;">
-                            <div style="font-size:3rem;">⏱️</div>
-                            <h3 style="margin:10px 0;">الإعدادات والهوية</h3>
-                            <p style="font-size:0.9rem; color:#aaa;">المهل الزمنية، الأصوات، وأيقونة PWA</p>
+                        <div class="admin-item-card" onclick="adminManageTimeouts()" style="cursor:pointer; text-align:center; padding:50px 30px; border-radius:30px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); transition:0.3s;">
+                            <div style="font-size:5rem; margin-bottom:20px;">⏱️</div>
+                            <h3 style="font-size:2rem; margin:15px 0; color:var(--accent);">الإعدادات والهوية</h3>
+                            <p style="font-size:1.1rem; color:#aaa; line-height:1.6;">التحكم في المهل الزمنية، الأصوات، وتحديث أيقونة PWA</p>
                         </div>
                     </div>
-                    <button style="background:#636e72; margin-top:30px;" onclick="navigateTo('menu')">🏠 العودة للقائمة الرئيسية</button>
+                    <button style="background:#333; margin-top:50px; width:auto; padding:15px 40px; font-size:1.2rem;" onclick="navigateTo('menu')">🏠 العودة للقائمة الرئيسية</button>
                 </div>`;
         }
 
@@ -4613,24 +4618,26 @@ HTML_TEMPLATE = """
                 const players = await res.json();
                 let h = `<h2>👥 قائمة اللاعبين</h2>
                     <div class="admin-content-box" style="background:transparent; padding:0; margin-top:10px;">
-                        <div class="admin-grid" style="max-height:75vh; overflow-y:auto; padding:10px;">`;
+                        <div class="admin-grid" style="max-height:80vh; overflow-y:auto; padding:10px;">`;
 
                 players.sort((a,b) => (b.total_wins || 0) - (a.total_wins || 0));
 
                 players.forEach(p => {
-                    h += `<div class="admin-item-card" style="padding:15px; border-radius:20px; background:rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.05); transition: 0.3s ease;">
-                        <div style="display:flex; align-items:center; gap:15px; margin-bottom:12px;">
-                            <div style="width:48px; height:48px; border-radius:12px; background:linear-gradient(135deg, var(--primary), var(--accent)); display:flex; align-items:center; justify-content:center; font-size:1.2rem; color:#050505; font-weight:900;">
-                                ${p.player_name.charAt(0).toUpperCase()}
+                    const safePlayerName = escapeHtml(p.player_name);
+                    const safeUsernameKey = escapeHtml(p.username_key);
+                    h += `<div class="admin-item-card" style="padding:20px; border-radius:20px; background:rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.05); transition: 0.3s ease;">
+                        <div style="display:flex; align-items:center; gap:15px; margin-bottom:15px;">
+                            <div style="width:55px; height:55px; border-radius:15px; background:linear-gradient(135deg, var(--primary), var(--accent)); display:flex; align-items:center; justify-content:center; font-size:1.4rem; color:#050505; font-weight:900; box-shadow: 0 5px 15px rgba(0, 210, 255, 0.3);">
+                                ${safePlayerName.charAt(0).toUpperCase()}
                             </div>
                             <div style="text-align:right; flex:1; overflow:hidden;">
-                                <div style="font-size:1.1rem; font-weight:bold; color:white; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${p.player_name}</div>
-                                <div style="font-size:0.8rem; color:var(--primary); opacity:0.7; font-family:monospace;">@${p.username_key}</div>
+                                <div style="font-size:1.2rem; font-weight:bold; color:white; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${safePlayerName}</div>
+                                <div style="font-size:0.9rem; color:var(--primary); opacity:0.8; font-family:monospace;">@${safeUsernameKey}</div>
                             </div>
                         </div>
-                        <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.2); padding:10px 15px; border-radius:12px; border: 1px solid rgba(255,255,255,0.05);">
-                            <span style="font-size:0.85rem; opacity:0.7;">إجمالي الفوز</span>
-                            <b style="font-size:1.3rem; color:var(--success);">${p.total_wins || 0}</b>
+                        <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.3); padding:12px 20px; border-radius:15px; border: 1px solid rgba(255,255,255,0.05);">
+                            <span style="font-size:0.9rem; opacity:0.7;">إجمالي الانتصارات</span>
+                            <b style="font-size:1.5rem; color:var(--success); text-shadow: 0 0 10px rgba(46, 204, 113, 0.3);">${p.total_wins || 0}</b>
                         </div>
                     </div>`;
                 });
