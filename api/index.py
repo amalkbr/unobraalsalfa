@@ -1990,24 +1990,15 @@ HTML_TEMPLATE = """
             const cachedCats = getCachedCategories();
             let cats = (cachedCats && cachedCats.length) ? cachedCats : DEFAULT_CATEGORIES.map(name => ({ name }));
 
-            document.getElementById('main-ui').innerHTML = `
+            let h = `
                 <div class="card" style="max-width:95%;">
                     <h1>إنشاء غرفة</h1>
                     <h3 style="margin-bottom:10px; color:var(--accent);">اختر الفئة:</h3>
-                    <div class="cat-grid" id="create-cat-grid">
-                        ${cats.map(cat => `
-                            <div class="cat-card" onclick="createData.category='${cat.name}'; createRoom()">
-                                <div class="cat-image-wrapper">
-                                    <div class="image-placeholder">🖼️</div>
-                                    <img src="${cat.image || ''}" onload="this.style.opacity=1; this.previousElementSibling.style.display='none'">
-                                </div>
-                                <span>${cat.name}</span>
-                            </div>
-                        `).join('')}
-                    </div>
-                    <button style="background:#636e72" onclick="showCreateStep1()">رجوع</button>
-                </div>`;
-        }
+                    <div class="cat-grid" id="create-cat-grid">`;
+
+            cats.forEach(cat => {
+                h += `
+                    <div class="cat-card" onclick="createData.category='${cat.name}'; createRoom()">
                         <div class="cat-image-wrapper">
                             <div class="image-placeholder">⏳</div>
                             <img data-src="${cat.image || ''}" alt="${cat.name}" onload="this.style.opacity=1; this.previousElementSibling.style.display='none';">
