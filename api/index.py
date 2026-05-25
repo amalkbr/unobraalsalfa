@@ -1924,36 +1924,90 @@ HTML_TEMPLATE = """
                 </div>`;
         }
 
+        let createData = { win_limit: 10, category: 'أكلات' };
+
         function showOnlineMenu(push = true) {
             if(push) history.pushState({screen: 'online_menu'}, "");
-            const categories = ["أكلات", "حيوانات", "كورة", "أجهزة", "سيارات", "تطبيقات", "انمي", "مسلسلات", "مهن"];
-            let catOptions = categories.map(c => `<option value="${c}">${c}</option>`).join('');
-
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
                     <h1>اللعب أونلاين</h1>
-                    <div style="margin-bottom: 20px; text-align: right; background: rgba(0,0,0,0.2); padding: 15px; border-radius: 15px;">
-                        <label style="display:block; margin-bottom:5px; font-weight:bold;">اختر التصنيف:</label>
-                        <select id="create_category" style="width:100%; margin-bottom:15px; padding:10px; border-radius:10px; background:#2d3436; color:white; border:1px solid #636e72;">
-                            ${catOptions}
-                        </select>
+                    <button style="background: linear-gradient(135deg, #2ecc71, #27ae60); box-shadow: 0 4px 15px rgba(46, 204, 113, 0.4); border-radius: 20px; font-weight: 900; margin-bottom: 20px;" onclick="showCreateStep1()">✨ إنشاء غرفة جديدة</button>
 
-                        <label style="display:block; margin-bottom:5px; font-weight:bold;">نقاط الفوز:</label>
-                        <select id="create_win_limit" style="width:100%; padding:10px; border-radius:10px; background:#2d3436; color:white; border:1px solid #636e72;">
-                            <option value="5">5 نقاط</option>
-                            <option value="10" selected>10 نقاط</option>
-                            <option value="15">15 نقطة</option>
-                            <option value="20">20 نقطة</option>
-                            <option value="30">30 نقطة</option>
-                        </select>
+                    <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.1);">
+                        <h3 style="margin-top:0;">انضمام لغرفة</h3>
+                        <input id="join_code" placeholder="رمز الغرفة (مثال: ABCD)" style="text-transform:uppercase; text-align:center; font-size:24px; letter-spacing:4px;">
+                        <button onclick="joinRoom()" style="background:var(--primary);">دخول الآن 🚪</button>
                     </div>
-                    <button id="btn-create-room" style="background: linear-gradient(135deg, #2ecc71, #27ae60); box-shadow: 0 4px 15px rgba(46, 204, 113, 0.4); border-radius: 20px; font-weight: 900; letter-spacing: 1px;" onclick="createRoom()">✨ إنشاء غرفة جديدة</button>
-                    <div style="margin:20px 0; border-top: 1px solid #636e72; padding-top: 20px;">
-                        <input id="join_code" placeholder="رمز الغرفة (مثال: ABCD)" style="text-transform:uppercase">
-                        <button onclick="joinRoom()">دخول غرفة</button>
-                    </div>
-                    <button style="background:#636e72" onclick="navigateTo('menu')">رجوع</button>
+
+                    <button style="background:#636e72; margin-top:20px;" onclick="navigateTo('menu')">رجوع</button>
                 </div>`;
+        }
+
+        function showCreateStep1() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h1>إنشاء غرفة - الخطوة ١</h1>
+                    <h3 style="margin-bottom:20px; color:var(--accent);">حدد عدد نقاط الفوز:</h3>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:25px;">
+                        ${[5, 10, 15, 20, 30].map(v => `
+                            <button class="win-opt ${createData.win_limit == v ? 'selected' : ''}"
+                                    style="margin:0; padding:20px; font-size:20px;"
+                                    onclick="createData.win_limit=${v}; showCreateStep2()">
+                                ${v} نقطة
+                            </button>
+                        `).join('')}
+                    </div>
+                    <button style="background:#636e72" onclick="showOnlineMenu(false)">رجوع</button>
+                </div>`;
+        }
+
+        async function showCreateStep2() {
+            const cachedCats = getCachedCategories();
+            let cats = (cachedCats && cachedCats.length) ? cachedCats : DEFAULT_CATEGORIES.map(name => ({ name }));
+
+            let h = `
+                <div class="card" style="max-width:95%;">
+                    <h1>إنشاء غرفة - الخطوة ٢</h1>
+                    <h3 style="margin-bottom:10px; color:var(--accent);">اختر فئة الأسئلة:</h3>
+                    <div class="cat-grid" id="create-cat-grid">`;
+
+            cats.forEach(cat => {
+                h += `
+                    <div class="cat-card" onclick="createData.category='${cat.name}'; createRoom()">
+                        <div class="cat-image-wrapper">
+                            <div class="image-placeholder">⏳</div>
+                            <img data-src="${cat.image || ''}" alt="${cat.name}" onload="this.style.opacity=1; this.previousElementSibling.style.display='none';">
+                        </div>
+                        <span>${cat.name}</span>
+                    </div>`;
+            });
+
+            h += `</div>
+                    <button style="background:#636e72" onclick="showCreateStep1()">رجوع للخلف</button>
+                </div>`;
+
+            document.getElementById('main-ui').innerHTML = h;
+
+            setTimeout(() => {
+                const imgs = document.querySelectorAll('#create-cat-grid img');
+                imgs.forEach(img => {
+                    if (img.dataset.src) img.src = img.dataset.src;
+                    else {
+                        img.style.display = 'none';
+                        img.previousElementSibling.innerText = '❓';
+                    }
+                });
+            }, 50);
+
+            if (!cachedCats || !cachedCats.length) {
+                try {
+                    const res = await fetch('/api/categories');
+                    if (res.ok) {
+                        const newCats = await res.json();
+                        saveCachedCategories(newCats);
+                    }
+                } catch(e){}
+            }
         }
 
         let isCreatingRoom = false;
@@ -1965,14 +2019,6 @@ HTML_TEMPLATE = """
                 return;
             }
 
-            const btn = document.getElementById('btn-create-room');
-            let originalText = "";
-            if (btn) {
-                originalText = btn.innerText;
-                btn.disabled = true;
-                btn.innerText = "جاري الإنشاء...";
-            }
-
             // عرض حالة تحميل بصرية جميلة فوراً حتى يعلم اللاعب ببدء العملية
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
@@ -1982,8 +2028,8 @@ HTML_TEMPLATE = """
                 </div>`;
 
             isCreatingRoom = true;
-            const category = document.getElementById('create_category')?.value || 'أكلات';
-            const winLimit = parseInt(document.getElementById('create_win_limit')?.value || '10');
+            const category = createData.category;
+            const winLimit = createData.win_limit;
 
             try {
                 const res = await fetch('/api/online/create', {
@@ -2313,6 +2359,66 @@ HTML_TEMPLATE = """
             }
             const {room, players} = window.roomData;
             const me = players.find(p => p.user_id == currentUser.user_id);
+
+            // المرحلة الأولى: اختيار نقاط الفوز (للانضمام)
+            if (!me.vote_limit) {
+                document.getElementById('main-ui').innerHTML = `
+                    <div class="card">
+                        <h2 style="color:var(--accent)">تصويت: نقاط الفوز 🎯</h2>
+                        <p style="margin-bottom:20px;">أهلاً بك في الغرفة ${room.room_code}. اختر عدد النقاط الذي تفضله للفوز:</p>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:25px;">
+                            ${[5, 10, 15, 20, 30].map(v => `
+                                <button class="win-opt" style="margin:0; padding:20px; font-size:20px;" onclick="submitLobbyVote('limit', ${v})">
+                                    ${v} نقطة
+                                </button>
+                            `).join('')}
+                        </div>
+                        <button style="background:#636e72" onclick="leaveRoom()">خروج من الغرفة</button>
+                    </div>`;
+                return;
+            }
+
+            // المرحلة الثانية: اختيار الفئة (للانضمام)
+            if (!me.vote_cat) {
+                const cachedCats = getCachedCategories();
+                let cats = (cachedCats && cachedCats.length) ? cachedCats : DEFAULT_CATEGORIES.map(name => ({ name }));
+
+                let h = `
+                    <div class="card" style="max-width:95%;">
+                        <h2 style="color:var(--accent)">تصويت: الفئة 📂</h2>
+                        <p style="margin-bottom:10px;">اختر الفئة التي تريد اللعب بها:</p>
+                        <div class="cat-grid" id="vote-cat-grid">`;
+
+                cats.forEach(cat => {
+                    h += `
+                        <div class="cat-card" onclick="submitLobbyVote('cat', '${cat.name}')">
+                            <div class="cat-image-wrapper">
+                                <div class="image-placeholder">⏳</div>
+                                <img data-src="${cat.image || ''}" alt="${cat.name}" onload="this.style.opacity=1; this.previousElementSibling.style.display='none';">
+                            </div>
+                            <span>${cat.name}</span>
+                        </div>`;
+                });
+
+                h += `</div>
+                        <button style="background:#636e72" onclick="submitLobbyVote('limit', null)">الرجوع لاختيار النقاط</button>
+                    </div>`;
+
+                document.getElementById('main-ui').innerHTML = h;
+
+                setTimeout(() => {
+                    const imgs = document.querySelectorAll('#vote-cat-grid img');
+                    imgs.forEach(img => {
+                        if (img.dataset.src) img.src = img.dataset.src;
+                        else {
+                            img.style.display = 'none';
+                            img.previousElementSibling.innerText = '❓';
+                        }
+                    });
+                }, 50);
+
+                return;
+            }
 
             let pList = players.map(p => {
                 let cards = "";
