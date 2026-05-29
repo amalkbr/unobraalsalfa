@@ -826,11 +826,11 @@ async def start_domino_game_endpoint(data: dict):
                 if i % 2 == 0: team_a.append(p)
                 else: team_b.append(p)
 
-            # تحديث الفرق في قاعدة البيانات لضمان الاستمرارية
+            # تحديث الفرق في قاعدة البيانات لضمان الاستمرارية (استخدام 0 و 1 لأن العمود من نوع integer)
             for p in team_a:
-                cur.execute("UPDATE room_players SET team = %s WHERE room_code = %s AND user_id = %s", ('A', room_code, p['user_id']))
+                cur.execute("UPDATE room_players SET team = %s WHERE room_code = %s AND user_id = %s", (0, room_code, p['user_id']))
             for p in team_b:
-                cur.execute("UPDATE room_players SET team = %s WHERE room_code = %s AND user_id = %s", ('B', room_code, p['user_id']))
+                cur.execute("UPDATE room_players SET team = %s WHERE room_code = %s AND user_id = %s", (1, room_code, p['user_id']))
 
             # إنشاء وتوزيع الأحجار
             all_tiles = [[i, j] for i in range(7) for j in range(i, 7)]
