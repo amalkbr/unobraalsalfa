@@ -148,7 +148,8 @@ def init_db():
                 # ضمان وجود الفهارس الضرورية
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_room_code ON rooms(room_code)",
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_room_players_code_user ON room_players(room_code, user_id)",
-                "CREATE TABLE IF NOT EXISTS announcements (id SERIAL PRIMARY KEY, text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+                "CREATE TABLE IF NOT EXISTS announcements (id SERIAL PRIMARY KEY, text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+                "CREATE TABLE IF NOT EXISTS feedback (id SERIAL PRIMARY KEY, announcement_id INTEGER REFERENCES announcements(id) ON DELETE CASCADE, user_id BIGINT, player_name TEXT, text TEXT, type TEXT, original_text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
             ]
 
             for step in migration_steps:
@@ -279,8 +280,65 @@ async def get_announcements():
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT * FROM announcements ORDER BY created_at DESC LIMIT 20")
-            return cur.fetchall()
+            announcements = cur.fetchall()
+
+            # Fetch feedback for each
+            for ann in announcements:
+                cur.execute("SELECT * FROM feedback WHERE announcement_id = %s ORDER BY created_at ASC", (ann['id'],))
+                ann['feedback'] = cur.fetchall()
+            return announcements
     except: return []
+    finally: conn.close()
+
+@app.post("/api/feedback/add")
+async def add_feedback(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO feedback (announcement_id, user_id, player_name, text, type)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (data['announcement_id'], data['user_id'], data['player_name'], data['text'], data['type']))
+            conn.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
+    finally: conn.close()
+
+@app.post("/api/feedback/update")
+async def update_feedback(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Check if it's a suggestion to keep original text
+            cur.execute("SELECT type, text, original_text FROM feedback WHERE id = %s", (data['id'],))
+            row = cur.fetchone()
+            if not row: return {"success": False}
+
+            if row['type'] == 'suggestion' and not row['original_text']:
+                # Save first text as original
+                cur.execute("UPDATE feedback SET text = %s, original_text = %s WHERE id = %s", (data['text'], row['text'], data['id']))
+            else:
+                cur.execute("UPDATE feedback SET text = %s WHERE id = %s", (data['text'], data['id']))
+            conn.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
+    finally: conn.close()
+
+@app.post("/api/feedback/delete")
+async def delete_feedback(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM feedback WHERE id = %s", (data['id'],))
+            conn.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
     finally: conn.close()
 
 @app.post("/api/admin/announcements/add")
@@ -2638,19 +2696,58 @@ HTML_TEMPLATE = """
                 const data = await res.json();
 
                 let html = `
-                    <div class="card" style="max-height: 80vh; overflow-y: auto;">
+                    <div class="card" style="max-height: 90vh; overflow-y: auto; width: 95%; max-width: 600px;">
                         <h2 style="color:var(--accent); margin-bottom:20px;">📢 آخر التحديثات والأخبار</h2>
                         <div id="announcements-list">`;
 
                 if (!data || data.length === 0) {
                     html += `<p style="color:#9aa0b4; margin:40px 0;">لا توجد تحديثات حالياً.</p>`;
                 } else {
-                    data.forEach(item => {
-                        const date = new Date(item.created_at).toLocaleString('ar-EG');
+                    data.forEach(ann => {
+                        const date = new Date(ann.created_at).toLocaleString('ar-EG');
                         html += `
-                            <div class="announcement-item">
-                                <div style="font-size:16px; color:white; line-height:1.5;">${item.text}</div>
+                            <div class="announcement-item" style="margin-bottom: 25px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 20px;">
+                                <div style="font-size:16px; color:white; line-height:1.5;">${ann.text}</div>
                                 <div class="announcement-date">${date}</div>
+
+                                <div style="display:flex; gap:10px; margin-top:15px;">
+                                    <button onclick="openFeedbackForm(${ann.id}, 'comment')" style="padding:5px 10px; font-size:12px; background:rgba(255,255,255,0.1); width:auto;">💬 تعليق</button>
+                                    <button onclick="openFeedbackForm(${ann.id}, 'suggestion')" style="padding:5px 10px; font-size:12px; background:rgba(241, 196, 15, 0.2); color:#f1c40f; width:auto;">💡 اقتراح</button>
+                                </div>
+
+                                <div id="feedback-form-${ann.id}" style="display:none; margin-top:15px; background:rgba(0,0,0,0.2); padding:10px; border-radius:10px;">
+                                    <textarea id="feedback-input-${ann.id}" style="width:100%; height:60px; background:#111; color:white; border:1px solid #444; border-radius:8px; padding:8px; font-size:14px;"></textarea>
+                                    <div style="display:flex; justify-content:flex-end; gap:5px; margin-top:5px;">
+                                        <button onclick="submitFeedback(${ann.id})" id="fb-submit-btn-${ann.id}" style="width:auto; padding:5px 15px; font-size:12px;">إرسال</button>
+                                        <button onclick="this.parentElement.parentElement.style.display='none'" style="width:auto; padding:5px 15px; font-size:12px; background:#636e72;">إلغاء</button>
+                                    </div>
+                                </div>
+
+                                <div class="feedback-section" style="margin-top:15px; padding-right:15px; border-right:2px solid rgba(255,255,255,0.05);">
+                                    ${(ann.feedback || []).map(fb => {
+                                        const isMyFb = currentUser && fb.user_id == currentUser.user_id;
+                                        const isSuggestion = fb.type === 'suggestion';
+                                        return `
+                                            <div class="fb-item" style="margin-bottom:10px; font-size:13px; background:rgba(255,255,255,0.03); padding:8px; border-radius:8px;">
+                                                <div style="display:flex; justify-content:space-between;">
+                                                    <b style="color:var(--accent)">${fb.player_name}:</b>
+                                                    <span style="font-size:10px; color:#777;">${isSuggestion ? '💡 اقتراح' : '💬 تعليق'}</span>
+                                                </div>
+                                                <div id="fb-text-${fb.id}" style="margin-top:5px; color:#ddd; text-align:right;">
+                                                    ${fb.original_text ? `<div style="color:#777; font-size:11px; text-decoration:line-through; margin-bottom:2px;">(قبل التعديل: ${fb.original_text})</div>` : ''}
+                                                    ${fb.original_text ? `<div style="color:var(--accent); font-size:11px; margin-bottom:2px;">(بعد التعديل):</div>` : ''}
+                                                    ${fb.text}
+                                                </div>
+                                                ${isMyFb ? `
+                                                    <div style="display:flex; gap:10px; margin-top:5px;">
+                                                        <a href="javascript:void(0)" onclick="editFeedback(${fb.id}, '${fb.text.replace(/'/g, "\\'")}', '${fb.type}')" style="color:#3498db; font-size:11px;">تعديل</a>
+                                                        ${!isSuggestion ? `<a href="javascript:void(0)" onclick="deleteFeedback(${fb.id})" style="color:#e74c3c; font-size:11px;">حذف</a>` : ''}
+                                                    </div>
+                                                ` : ''}
+                                            </div>
+                                        `;
+                                    }).join('')}
+                                </div>
                             </div>`;
                     });
                     localStorage.setItem('last_seen_announcement', data[0].id);
@@ -2668,6 +2765,66 @@ HTML_TEMPLATE = """
                 alert("فشل تحميل التحديثات");
                 navigateTo('menu');
             }
+        }
+
+        function openFeedbackForm(annId, type) {
+            const form = document.getElementById(`feedback-form-${annId}`);
+            const input = document.getElementById(`feedback-input-${annId}`);
+            const btn = document.getElementById(`fb-submit-btn-${annId}`);
+            form.style.display = 'block';
+            input.placeholder = type === 'comment' ? "اكتب تعليقك هنا..." : "اكتب اقتراحك هنا...";
+            btn.onclick = () => submitFeedback(annId, type);
+            input.focus();
+        }
+
+        async function submitFeedback(annId, type) {
+            const text = document.getElementById(`feedback-input-${annId}`).value.trim();
+            if(!text) return;
+            if(!currentUser) return alert("يرجى تسجيل الدخول أولاً");
+
+            try {
+                const res = await fetch('/api/feedback/add', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        announcement_id: annId,
+                        user_id: currentUser.user_id,
+                        player_name: currentUser.player_name,
+                        text: text,
+                        type: type
+                    })
+                });
+                const d = await res.json();
+                if(d.success) showAnnouncements();
+            } catch(e) { console.error(e); }
+        }
+
+        async function editFeedback(id, oldText, type) {
+            const newText = prompt("تعديل النص:", oldText);
+            if(newText === null || newText.trim() === "" || newText === oldText) return;
+
+            try {
+                const res = await fetch('/api/feedback/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ id, text: newText.trim() })
+                });
+                const d = await res.json();
+                if(d.success) showAnnouncements();
+            } catch(e) { console.error(e); }
+        }
+
+        async function deleteFeedback(id) {
+            if(!confirm("هل أنت متأكد من حذف التعليق؟")) return;
+            try {
+                const res = await fetch('/api/feedback/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ id })
+                });
+                const d = await res.json();
+                if(d.success) showAnnouncements();
+            } catch(e) { console.error(e); }
         }
 
         // --- Online Logic ---
