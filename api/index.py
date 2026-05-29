@@ -3200,6 +3200,8 @@ r(--primary);
             document.getElementById('main-ui').innerHTML = html;
         }
 
+        }
+
         let selectedTile = null;
         function selectDominoTile(tile) {
             selectedTile = tile;
