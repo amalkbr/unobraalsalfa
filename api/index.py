@@ -79,6 +79,47 @@ async def delete_feedback_api(data: dict):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+@app.post("/api/auth/register")
+async def register(data: dict):
+    try:
+        from database import get_db, RealDictCursor
+        username = data.get('username')
+        password = data.get('password')
+        name = data.get('name')
+        if not username or not password or not name:
+            return {"success": False, "msg": "يرجى ملء جميع الحقول"}
+
+        with get_db() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # التأكد من عدم وجود اليوزر
+                cur.execute("SELECT user_id FROM users WHERE username_key = %s", (username,))
+                if cur.fetchone():
+                    return {"success": False, "msg": "اسم المستخدم موجود مسبقاً"}
+
+                user_id = int(time.time() * 1000) # توليد ID مؤقت
+                cur.execute("INSERT INTO users (user_id, username_key, password_key, player_name, is_registered) VALUES (%s, %s, %s, %s, TRUE)",
+                            (user_id, username, password, name))
+                conn.commit()
+                return {"success": True, "user": {"id": user_id, "name": name, "username": username}}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
+
+@app.post("/api/auth/login")
+async def login(data: dict):
+    try:
+        from database import get_db, RealDictCursor
+        username = data.get('username')
+        password = data.get('password')
+        with get_db() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT user_id, player_name FROM users WHERE username_key = %s AND password_key = %s", (username, password))
+                user = cur.fetchone()
+                if user:
+                    return {"success": True, "user": {"id": user['user_id'], "name": user['player_name'], "username": username}}
+                return {"success": False, "msg": "خطأ في اسم المستخدم أو كلمة المرور"}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
+
 @app.get("/api/room/{room_code}")
 async def get_room_state(room_code: str):
     try:
@@ -174,10 +215,12 @@ HTML_TEMPLATE = """
             background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
             border-radius: 20px; padding: 20px 10px; cursor: pointer; transition: 0.3s;
             display: flex; flex-direction: column; align-items: center; gap: 10px;
+            position: relative; overflow: hidden;
         }
         .game-btn:hover { background: rgba(255,255,255,0.1); transform: translateY(-5px); border-color: var(--secondary); }
         .game-btn i { font-size: 2rem; color: var(--secondary); }
         .game-btn.locked { opacity: 0.5; cursor: not-allowed; }
+        .game-btn.locked::after { content: "قريباً"; position: absolute; top: 10px; right: -15px; background: #e74c3c; color: white; padding: 2px 20px; transform: rotate(45deg); font-size: 10px; }
 
         input {
             width: 100%; padding: 15px; border-radius: 15px; border: 1px solid rgba(255,255,255,0.1);
@@ -206,13 +249,42 @@ HTML_TEMPLATE = """
         @keyframes slideDown { from { transform: translateY(-20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
         /* Domino Board Styles */
-        .domino-board { background: #1a472a; border-radius: 20px; min-height: 180px; margin: 20px 0; padding: 15px; display: flex; align-items: center; justify-content: center; overflow-x: auto; gap: 5px; }
-        .tile {
-            width: 35px; height: 70px; background: #f0f0f0; border-radius: 4px; color: #222;
-            display: flex; flex-direction: column; border: 2px solid #333; flex-shrink: 0; cursor: pointer;
+        .domino-board {
+            background: #1a472a; border-radius: 20px; min-height: 400px;
+            margin: 20px 0; padding: 25px;
+            display: flex; flex-direction: column; gap: 15px;
+            overflow-y: auto; overflow-x: hidden;
+            box-shadow: inset 0 0 50px rgba(0,0,0,0.5);
         }
+        .domino-row {
+            display: flex; gap: 5px; align-items: center; justify-content: center;
+            width: 100%; transition: all 0.5s ease;
+        }
+        .domino-row.reverse { flex-direction: row-reverse; }
+
+        .tile {
+            background: white; color: black; border-radius: 6px;
+            display: flex; position: relative; font-weight: bold;
+            box-shadow: 2px 4px 8px rgba(0,0,0,0.4), inset -2px -2px 4px rgba(0,0,0,0.1);
+            border: 1px solid #ccc; transition: all 0.2s;
+            cursor: pointer; user-select: none;
+            flex-shrink: 0;
+        }
+        .tile:hover { transform: translateY(-3px); box-shadow: 2px 6px 12px rgba(0,0,0,0.5); }
         .tile.horizontal { width: 70px; height: 35px; flex-direction: row; }
-        .tile .half { flex: 1; display: flex; justify-content: center; align-items: center; font-weight: 900; font-size: 1.2rem; border: 0.5px solid #ddd; }
+        .tile.vertical { width: 35px; height: 70px; flex-direction: column; }
+
+        .tile .half {
+            flex: 1; display: flex; align-items: center; justify-content: center;
+            font-size: 1.2rem; position: relative; width: 100%; height: 100%;
+        }
+        .tile.horizontal .half:first-child { border-right: 2px solid #333; }
+        .tile.vertical .half:first-child { border-bottom: 2px solid #333; }
+
+        .tile.my-tile { margin: 5px; width: 45px; height: 90px; flex-direction: column; }
+        .tile.my-tile .half:first-child { border-bottom: 2px solid #333; border-right: none; }
+        .tile.disabled { filter: grayscale(1) opacity(0.5); cursor: not-allowed; }
+        .tile.playable { border: 2px solid var(--secondary); box-shadow: 0 0 15px var(--secondary); }
 
         .loading-overlay { position: fixed; inset: 0; background: rgba(15,12,41,0.8); display: none; justify-content: center; align-items: center; z-index: 3000; }
         .spinner { width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.1); border-top-color: var(--secondary); border-radius: 50%; animation: spin 1s linear infinite; }
@@ -273,11 +345,182 @@ HTML_TEMPLATE = """
     </main>
 
     <script>
-        let currentUser = { id: Math.floor(100000 + Math.random() * 900000), name: "لاعب" };
+        let currentUser = JSON.parse(localStorage.getItem('user')) || null;
         let currentRoom = null;
         let pollInterval = null;
 
-        function toggleSidebar() { document.getElementById('sidebar').classList.toggle('active'); }
+        window.onload = () => {
+            if(!currentUser) showAuth();
+            else showMenu();
+        };
+
+        function showAuth(mode = 'login') {
+            let h = `<h1>${mode === 'login' ? 'تسجيل الدخول' : 'إنشاء حساب'}</h1>`;
+            h += `<div style="margin-top:20px;">
+                    ${mode === 'register' ? '<input type="text" id="auth-name" placeholder="الاسم المستعار">' : ''}
+                    <input type="text" id="auth-user" placeholder="اسم المستخدم (Username)">
+                    <input type="password" id="auth-pass" placeholder="كلمة المرور">
+                    <button class="main-button" onclick="handleAuth('${mode}')">${mode === 'login' ? 'دخول' : 'تسجيل'}</button>
+                    <p style="margin-top:15px; cursor:pointer; color:var(--secondary);" onclick="showAuth('${mode === 'login' ? 'register' : 'login'}')">
+                        ${mode === 'login' ? 'ليس لديك حساب؟ سجل الآن' : 'لديك حساب بالفعل؟ سجل دخول'}
+                    </p>
+                  </div>`;
+            document.getElementById('app').innerHTML = h;
+        }
+
+        async function handleAuth(mode) {
+            const username = document.getElementById('auth-user').value;
+            const password = document.getElementById('auth-pass').value;
+            const name = document.getElementById('auth-name')?.value;
+
+            const url = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
+            const body = { username, password, name };
+
+            const data = await apiCall(url, body);
+            if(data.success) {
+                currentUser = data.user;
+                localStorage.setItem('user', JSON.stringify(currentUser));
+                showToast('أهلاً بك يا ' + currentUser.name, 'success');
+                showMenu();
+            }
+        }
+
+        function showMenu() {
+            document.getElementById('app').innerHTML = `
+                <h1>أونو وبرا السالفة</h1>
+                <p style="color: #aaa; margin-top: 5px;">أهلاً ${currentUser.name}</p>
+
+                <div class="menu-grid">
+                    <div class="game-btn" onclick="showRoomJoin('domino')">
+                        <i class="fas fa-th-large"></i>
+                        <span>دومينو</span>
+                    </div>
+                    <div class="game-btn" onclick="showSpyOptions()">
+                        <i class="fas fa-user-secret"></i>
+                        <span>برا السالفة</span>
+                    </div>
+                    <div class="game-btn locked" onclick="showToast('قريباً!', 'info')">
+                        <i class="fas fa-layer-group"></i>
+                        <span>أونو</span>
+                    </div>
+                    <div class="game-btn" onclick="logout()">
+                        <i class="fas fa-sign-out-alt"></i>
+                        <span>خروج</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function logout() {
+            localStorage.removeItem('user');
+            currentUser = null;
+            location.reload();
+        }
+
+        function showSpyOptions() {
+            document.getElementById('app').innerHTML = `
+                <h2>برا السالفة</h2>
+                <div class="menu-grid">
+                    <div class="game-btn" onclick="showRoomJoin('spy')">
+                        <i class="fas fa-globe"></i>
+                        <span>أونلاين</span>
+                    </div>
+                    <div class="game-btn" onclick="initSpyOffline()">
+                        <i class="fas fa-mobile-alt"></i>
+                        <span>أوفلاين (جهاز واحد)</span>
+                    </div>
+                </div>
+                <button class="secondary-button" onclick="showMenu()">العودة</button>
+            `;
+        }
+
+        function showRoomJoin(type) {
+            document.getElementById('app').innerHTML = `
+                <h2>غرفة ${type === 'domino' ? 'دومينو' : 'برا السالفة'}</h2>
+                <input type="text" id="room-code-input" placeholder="كود الغرفة للانضمام">
+                <button class="main-button" onclick="joinRoom('${type}')">انضمام للغرفة</button>
+                <div style="margin: 20px 0; color: #555;">أو</div>
+                <button class="secondary-button" onclick="createRoomForType('${type}')">إنشاء غرفة جديدة</button>
+                <button class="secondary-button" style="border:none;" onclick="showMenu()">إلغاء</button>
+            `;
+        }
+
+        async function createRoomForType(type) {
+            const url = type === 'domino' ? '/api/domino/create' : '/api/online/create';
+            const data = await apiCall(url, { user_id: currentUser.id, player_name: currentUser.name });
+            if(data.success) enterRoom(data.room_code);
+        }
+
+        async function joinRoom(type) {
+            const code = document.getElementById('room-code-input').value.toUpperCase();
+            if(!code) return showToast('برجاء إدخال كود الغرفة', 'error');
+            const data = await apiCall('/api/online/join', { room_code: code, user_id: currentUser.id, player_name: currentUser.name });
+            if(data.success) enterRoom(code);
+        }
+
+        function initSpyOffline() {
+            // منطق اللعب المحلي لبرا السالفة
+            const categories = {
+                "أماكن": ["مستشفى", "مدرسة", "حديقة", "مطعم", "فندق", "مطار", "سوق"],
+                "مهن": ["طبيب", "مهندس", "معلم", "شرطي", "طباخ", "طيار", "فنان"],
+                "أشياء": ["هاتف", "سيارة", "كتاب", "ساعة", "نظارة", "مفتاح", "تلفاز"]
+            };
+
+            document.getElementById('app').innerHTML = `
+                <h2>برا السالفة (أوفلاين)</h2>
+                <div style="margin-bottom:20px;">
+                    <label>عدد اللاعبين:</label>
+                    <input type="number" id="offline-players" value="3" min="3" max="10">
+                </div>
+                <div id="offline-setup">
+                    <button class="main-button" onclick="startOfflineReveal()">بدء اللعب</button>
+                </div>
+                <button class="secondary-button" onclick="showSpyOptions()">العودة</button>
+            `;
+        }
+
+        let offlineData = {};
+        function startOfflineReveal() {
+            const num = parseInt(document.getElementById('offline-players').value);
+            const categories = ["أماكن", "مهن", "أشياء"];
+            const cat = categories[Math.floor(Math.random() * categories.length)];
+            const words = ["مدرسة", "مستشفى", "سوق", "مطعم"]; // تبسيط
+            const word = words[Math.floor(Math.random() * words.length)];
+            const spyIdx = Math.floor(Math.random() * num);
+
+            offlineData = { num, cat, word, spyIdx, current: 0 };
+            showOfflineNextPlayer();
+        }
+
+        function showOfflineNextPlayer() {
+            if(offlineData.current >= offlineData.num) {
+                document.getElementById('app').innerHTML = `
+                    <h2>انتهى التوزيع!</h2>
+                    <p>الآن ابدأوا بالنقاش لمعرفة من برا السالفة.</p>
+                    <p>الفئة كانت: <b>${offlineData.cat}</b></p>
+                    <button class="main-button" onclick="showMenu()">إنهاء اللعبة</button>
+                `;
+                return;
+            }
+
+            document.getElementById('app').innerHTML = `
+                <h2>لاعب رقم ${offlineData.current + 1}</h2>
+                <p>مرر الجهاز إليك واضغط على الزر لرؤية الكلمة</p>
+                <button class="main-button" onclick="revealOfflineWord()">إظهار</button>
+            `;
+        }
+
+        function revealOfflineWord() {
+            const isSpy = offlineData.current === offlineData.spyIdx;
+            document.getElementById('app').innerHTML = `
+                <h2>لاعب رقم ${offlineData.current + 1}</h2>
+                <div class="reveal-card">
+                    ${isSpy ? '<h3>أنت برا السالفة! 🕵️</h3>' : `<h3>أنت داخل السالفة</h3><p>الكلمة هي: <b>${offlineData.word}</b></p>`}
+                    <p>الفئة: ${offlineData.cat}</p>
+                </div>
+                <button class="main-button" onclick="offlineData.current++; showOfflineNextPlayer()">فهمت</button>
+            `;
+        }
 
         function showToast(msg, type='info') {
             const container = document.getElementById('toast-container');
@@ -532,38 +775,73 @@ HTML_TEMPLATE = """
             const myHand = gd.hands[myId] || [];
 
             let h = `<div style="display:flex; justify-content:space-between; margin-bottom:15px; background:rgba(0,0,0,0.2); padding:10px; border-radius:12px;">
-                        <div style="color:var(--secondary); font-weight:bold;">A: ${gd.scores['0']}</div>
+                        <div style="color:var(--secondary); font-weight:bold;">فريق A: ${gd.scores['0']}</div>
                         <div style="color:#aaa;">جولة ${gd.round_count}</div>
-                        <div style="color:var(--accent); font-weight:bold;">B: ${gd.scores['1']}</div>
+                        <div style="color:var(--accent); font-weight:bold;">فريق B: ${gd.scores['1']}</div>
                      </div>`;
 
             if(gd.phase === 'round_end' || gd.phase === 'game_over') {
-                h += `<div style="background:rgba(108,92,231,0.1); padding:20px; border-radius:20px; border:1px solid var(--primary); margin-bottom:15px;">
-                        <h3 style="margin:0; color:var(--accent);">${gd.is_stalemate ? '🔒 قفلة (انتهى اللعب)' : '🎉 جولة رابحة!'}</h3>
+                h += `<div style="background:rgba(108,92,231,0.1); padding:20px; border-radius:20px; border:1px solid var(--primary); margin-bottom:15px; text-align:center;">
+                        <h3 style="margin:0; color:var(--accent);">${gd.is_stalemate ? '🔒 قفلة!' : '🎉 جولة رابحة!'}</h3>
                         <p style="margin:10px 0;">الفائز: فريق ${gd.round_winner_team === '0' ? 'A' : 'B'}</p>
-                        <p style="font-size:1.5rem; font-weight:900;">+${gd.round_points}</p>
+                        <p style="font-size:2rem; font-weight:900; color:white;">+${gd.round_points}</p>
                         ${room.host_id == currentUser.id ? `<button class="main-button" onclick="apiCall('/api/domino/next_round', {room_code:currentRoom, user_id:currentUser.id})">الجولة التالية</button>` : ''}
                       </div>`;
             }
 
+            // نظام الثعبان (Snake Layout)
             h += `<div class="domino-board">`;
-            if(!gd.board || gd.board.length === 0) h += `<p style="color:#4a6d54;">الساحة في انتظار أول قطعة...</p>`;
-            else gd.board.forEach(t => h += `<div class="tile ${t[0] != t[1] ? 'horizontal' : ''}"><div class="half">${t[0]}</div><div class="half">${t[1]}</div></div>`);
+            if(!gd.board || gd.board.length === 0) {
+                h += `<p style="color:#4a6d54; text-align:center; width:100%;">الساحة فارغة، ابدأ اللعب...</p>`;
+            } else {
+                const tilesPerRow = 5;
+                for (let i = 0; i < gd.board.length; i += tilesPerRow) {
+                    const rowTiles = gd.board.slice(i, i + tilesPerRow);
+                    const isReverse = (Math.floor(i / tilesPerRow) % 2 !== 0);
+                    h += `<div class="domino-row ${isReverse ? 'reverse' : ''}">`;
+                    rowTiles.forEach(t => {
+                        const isDouble = t[0] === t[1];
+                        h += `<div class="tile ${isDouble ? 'vertical' : 'horizontal'}">
+                                <div class="half">${t[0]}</div>
+                                <div class="half">${t[1]}</div>
+                              </div>`;
+                    });
+                    h += `</div>`;
+                }
+            }
             h += `</div>`;
 
-            h += `<div style="margin-bottom:15px; color:${isMyTurn ? 'var(--accent)' : '#aaa'};">
-                    ${isMyTurn ? '<i class="fas fa-star"></i> دورك الآن!' : `دور: ${players.find(p => p.user_id == gd.ordered_ids[gd.turn_index])?.player_name}`}
+            h += `<div style="margin-bottom:15px; text-align:center; font-weight:bold; color:${isMyTurn ? 'var(--accent)' : '#aaa'};">
+                    ${isMyTurn ? '✨ دورك الآن! اختر قطعة' : `دور: ${players.find(p => p.user_id == gd.ordered_ids[gd.turn_index])?.player_name}`}
                   </div>`;
 
-            h += `<div style="display:flex; overflow-x:auto; gap:8px; padding:10px; background:rgba(255,255,255,0.03); border-radius:15px; margin-bottom:15px;">`;
+            // يد اللاعب
+            h += `<div style="display:flex; overflow-x:auto; gap:10px; padding:15px; background:rgba(0,0,0,0.3); border-radius:20px; margin-bottom:15px; border:1px solid rgba(255,255,255,0.05);">`;
             myHand.forEach(t => {
                 const canL = gd.board.length === 0 || t[0] === gd.board[0][0] || t[1] === gd.board[0][0];
                 const canR = gd.board.length === 0 || t[0] === gd.board[gd.board.length-1][1] || t[1] === gd.board[gd.board.length-1][1];
-                h += `<div class="tile" onclick="handlePlay(${JSON.stringify(t)}, ${canL}, ${canR})"><div class="half">${t[0]}</div><div class="half">${t[1]}</div></div>`;
+                const playable = (canL || canR) && isMyTurn;
+
+                h += `<div class="tile my-tile ${playable ? 'playable' : 'disabled'}"
+                           onclick="${playable ? `handlePlay(${JSON.stringify(t)}, ${canL}, ${canR})` : ''}">
+                        <div class="half">${t[0]}</div>
+                        <div class="half">${t[1]}</div>
+                      </div>`;
             });
             h += `</div>`;
 
-            if(isMyTurn) h += `<button class="secondary-button" onclick="apiCall('/api/domino/draw', {room_code:currentRoom, user_id:currentUser.id})"><i class="fas fa-plus-circle"></i> سحب قطعة (${gd.boneyard?.length || 0})</button>`;
+            if(isMyTurn) {
+                const canPlayAny = myHand.some(t =>
+                    gd.board.length === 0 ||
+                    t[0] === gd.board[0][0] || t[1] === gd.board[0][0] ||
+                    t[0] === gd.board[gd.board.length-1][1] || t[1] === gd.board[gd.board.length-1][1]
+                );
+                if(!canPlayAny) {
+                    h += `<button class="main-button" style="background:var(--accent);" onclick="apiCall('/api/domino/draw', {room_code:currentRoom, user_id:currentUser.id})">
+                            سحب قطعة (${gd.boneyard?.length || 0})
+                          </button>`;
+                }
+            }
             return h;
         }
 
