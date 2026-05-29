@@ -226,6 +226,7 @@ async def domino_play_tile(data: dict):
                         can_play = any(t[0] in [lv, rv] or t[1] in [lv, rv] for h in game_data['hands'].values() for t in h)
                         if not can_play:
                             game_data['phase'] = 'round_end'
+                            game_data['is_stalemate'] = True
                             cur.execute("SELECT user_id, team FROM room_players WHERE room_code = %s", (room_code,))
                             p_teams = {str(r['user_id']): str(r['team']) for r in cur.fetchall()}
                             t_sums = {"0": 0, "1": 0}
