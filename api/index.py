@@ -2933,6 +2933,8 @@ HTML_TEMPLATE = """
             switch(screen) {
                 case 'auth': showAuth(); break;
                 case 'menu': showMenu(false); break;
+                case 'game_selection': showGameSelection(); break;
+                case 'bara_menu': showBaraMenu(); break;
                 case 'online_menu': showOnlineMenu(false); break;
                 case 'setup': showSetup(data.step, false); break;
                 case 'reports': showReports(false); break;
@@ -3231,6 +3233,7 @@ HTML_TEMPLATE = """
         }
 
         function showGameSelection() {
+            if(timerInterval) clearInterval(timerInterval);
             history.pushState({screen: 'game_selection'}, "");
             document.getElementById('main-ui').innerHTML = `
                 <div class="card" style="padding: 30px 20px;">
@@ -3242,12 +3245,9 @@ HTML_TEMPLATE = """
                     <h1 style="margin-bottom: 10px;">اختر اللعبة</h1>
                     <p style="color: #a29bfe; margin-bottom: 30px; font-size: 16px;">ماذا تحب أن تلعب اليوم؟</p>
 
-                    <button onclick="showMenu()" style="margin-bottom: 15px; background: linear-gradient(135deg, #6c5ce7, #a29bfe);">🕵️‍♂️ برا السالفة</button>
+                    <button onclick="showBaraMenu()" style="margin-bottom: 15px; background: linear-gradient(135deg, #6c5ce7, #a29bfe);">🕵️‍♂️ برا السالفة</button>
 
-                    <div style="position:relative;">
-                        <button onclick="showDominoMenu()" style="background: linear-gradient(135deg, #2d3436, #000); border: 1px solid #444;">🁔 دومينو (أونلاين)</button>
-                        <span style="position:absolute; top:-10px; right:-5px; background:var(--error); font-size:10px; padding:2px 6px; border-radius:10px;">قريباً</span>
-                    </div>
+                    <button onclick="showDominoMenu()" style="background: linear-gradient(135deg, #2d3436, #000); border: 1px solid #444;">🁔 دومينو (أونلاين)</button>
 
                     <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.08);">
                         <p style="font-size: 20px; color:#fff;">صُممت لكم بايدي ابو الاكبر   ❤️</p>
@@ -3465,9 +3465,38 @@ HTML_TEMPLATE = """
             game = null;
             isStartingGame = false;
             winLimit = 5;
-            window.pNamesSave = []; // تصفير قائمة اللاعبين عند العودة للقائمة
-            totalScores = {}; // ريست للنقاط عند العودة للقائمة
+            window.pNamesSave = [];
+            totalScores = {};
 
+            showGameSelection();
+        }
+
+        function showGameSelection() {
+            if(timerInterval) clearInterval(timerInterval);
+            history.pushState({screen: 'game_selection'}, "");
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card" style="padding: 30px 20px;">
+                    <button id="announcement-bell" class="bell-btn" onclick="showAnnouncements()">
+                        🔔
+                        <div class="bell-badge"></div>
+                    </button>
+                    <div style="font-size: 60px; margin-bottom: 20px;">🎮</div>
+                    <h1 style="margin-bottom: 10px;">اختر اللعبة</h1>
+                    <p style="color: #a29bfe; margin-bottom: 30px; font-size: 16px;">ماذا تحب أن تلعب اليوم؟</p>
+
+                    <button onclick="showBaraMenu()" style="margin-bottom: 15px; background: linear-gradient(135deg, #6c5ce7, #a29bfe);">🕵️‍♂️ برا السالفة</button>
+
+                    <button onclick="showDominoMenu()" style="background: linear-gradient(135deg, #2d3436, #000); border: 1px solid #444;">🁔 دومينو (أونلاين)</button>
+
+                    <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.08);">
+                        <p style="font-size: 20px; color:#fff;">صُممت لكم بايدي ابو الاكبر   ❤️</p>
+                    </div>
+                </div>`;
+            checkAnnouncements();
+        }
+
+        function showBaraMenu() {
+            history.pushState({screen: 'bara_menu'}, "");
             document.getElementById('main-ui').innerHTML = `
                 <div class="card" style="padding: 30px 20px;">
                     <button id="announcement-bell" class="bell-btn" onclick="showAnnouncements()">
@@ -3479,6 +3508,9 @@ HTML_TEMPLATE = """
                     <p style="color: #a29bfe; margin-bottom: 30px; font-size: 16px;">اكتشف الجاسوس قبل فوات الأوان!</p>
                     <button onclick="navigateTo('online_menu')" style="margin-bottom: 15px;">🌐 لعب أونلاين</button>
                     <button style="background: linear-gradient(45deg, #e056fd, #be2edd); margin-bottom: 15px;" onclick="navigateTo('setup', {step: 1})">🏠 لعب أوفلاين (مجلس)</button>
+
+                    <button style="background:#636e72; margin-top:20px;" onclick="showGameSelection()">رجوع</button>
+
                     <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.08);">
                         <p style="font-size: 20px; font-weight: 900; background: linear-gradient(to right, #f1c40f, #f39c12); -webkit-background-clip: text; -webkit-text-fill-color: transparent; drop-shadow: 0 2px 4px rgba(0,0,0,0.3); margin: 0; letter-spacing: 1px;">✨ تصميم ابو الاكبر ✨</p>
                     </div>
