@@ -99,40 +99,40 @@ def ensure_deck_from_discard(room_id, room):
 
 
 def calculate_points(hand):
-                      total = 0
-                      for card in hand:
-                          if any(x in card for x in ["🌈", "🔥", "💧", "🌊"]):
-                              total += 50
-                          elif any(x in card for x in ["🚫", "🔄", "⬆️2"]):
-                              total += 20
-                          else:
-                              try:
-                                  total += int(card.split()[-1])
-                              except:
-                                  total += 10
-                      return total
+    total = 0
+    for card in hand:
+        if any(x in card for x in ["🌈", "🔥", "💧", "🌊"]):
+            total += 50
+        elif any(x in card for x in ["🚫", "🔄", "+2"]):
+            total += 20
+        else:
+            try:
+                total += int(card.split()[-1])
+            except:
+                total += 10
+    return total
 
 ########## دوال التحقق من صحة الورقة واللعب ##########
 
 
 def check_validity(card, top_card, current_color):
-                      # color ANY = يمكنك لعب أي ورقة
-                      if current_color == "ANY":
-                          return True
-                      if "🌈" in card: # جوكر ألوان دائمًا مسموح
-                          return True
-                      if any(x in card for x in ["🔥", "💧", "🌊"]):
-                          return True
-                      parts = card.split()
-                      if len(parts) < 2: return False
-                      c_color, c_value = parts[0], parts[1]
-                      if c_color == current_color:
-                          return True
-                      top_parts = top_card.split()
-                      top_value = top_parts[1] if len(top_parts) > 1 else top_parts[0]
-                      if c_value == top_value:
-                          return True
-                      return False
+    # color ANY = يمكنك لعب أي ورقة
+    if current_color == "ANY":
+        return True
+    if "🌈" in card or "🔥" in card: # الجوكرات دائماً مسموحة
+        return True
+    if "💧" in card or "🌊" in card: # أوراق H2O الخاصة مسموحة دائماً
+        return True
+    parts = card.split()
+    if len(parts) < 2: return False
+    c_color, c_value = parts[0], parts[1]
+    if c_color == current_color:
+        return True
+    top_parts = top_card.split()
+    top_value = top_parts[1] if len(top_parts) > 1 else top_parts[0]
+    if c_value == top_value:
+        return True
+    return False
 
 ########## دالة فحص عدد وتكرار كل ورقة بيد لاعب أو بالدكة ########## 
 
@@ -189,14 +189,15 @@ async def challenge_timeout_2p(room_id, bot):
                           db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(opp_hand), opp_id), commit=True)
                           db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
 
-                          # إخطار الجميع (تُحذف بعد 5 ثواني) — لا ترسل للبوت
+                          # إخطار الجميع
+                          chosen_color = pending.get('chosen_color', 'ANY')
                           if opp_id != BOT_USER_ID:
-                              await _send_message_then_delete(bot, opp_id, "⏰ انتهى الوقت! تم قبول السحب تلقائياً (سحبت 4 ورقات).", delete_after_seconds=5)
+                              await _send_message_then_delete(bot, opp_id, f"⏰ انتهى الوقت! تم قبول السحب تلقائياً (سحبت 4 ورقات). اللون صار {chosen_color}.", delete_after_seconds=5)
                           if players[p_idx]['user_id'] != BOT_USER_ID:
-                              await _send_message_then_delete(bot, players[p_idx]['user_id'], "تم قبول السحب افتراضيًا. يمكنك اللعب الآن بأي لون.", delete_after_seconds=5)
+                              await _send_message_then_delete(bot, players[p_idx]['user_id'], f"تم قبول السحب افتراضيًا. اللون هو {chosen_color}. دورك!", delete_after_seconds=5)
 
-                          # تحديث move (الدور يرجع للاعب الأصلي، current_color='ANY' لتكون أي لون مسموحة)
-                          db_query("UPDATE rooms SET turn_index = %s, current_color = 'ANY' WHERE room_id = %s", (p_idx, room_id), commit=True)
+                          # تحديث move
+                          db_query("UPDATE rooms SET turn_index = %s, current_color = %s WHERE room_id = %s", (p_idx, chosen_color, room_id), commit=True)
 
                           # حذف بيانات التحدي المؤقتة
                           pending_color_data.pop(room_id, None)
@@ -1128,10 +1129,11 @@ async def bot_play_turn(room_id, bot):
             pending_color_data[room_id] = {
                 'card_played': card, 'p_idx': p_idx, 'opp_id': opp_id, 'p_name': p_name,
                 'type': 'challenge', 'prev_top_card': top_card, 'prev_color': current_color,
+                'chosen_color': chosen_color
             }
             kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"challenge_y_{room_id}"),
-                 InlineKeyboardButton(text="✅ أقبل السحب", callback_data=f"challenge_n_{room_id}")]
+                [InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"rs_y_{room_id}_{current_color}_{chosen_color}"),
+                 InlineKeyboardButton(text="✅ أقبل السحب", callback_data=f"rs_n_{room_id}_{chosen_color}")]
             ])
             try:
                 await bot.send_message(opp_id, f"🔥 {p_name} لعب جوكر +4 واختار اللون {chosen_color}! هل تريد التحدي؟", reply_markup=kb)
@@ -1328,18 +1330,7 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             }
             return await refresh_ui_2p(room_id, c.bot, alerts)
 
-        # جوكر +4 مسموح فقط إذا ما عندك أي ورقة تشتغل (لون أو رقم مطابق)
-        if "🔥" in card:
-            other_valid = [c for c in hand if c != card and "🔥" not in c and check_validity(c, room['top_card'], room['current_color'])]
-            if other_valid:
-                try:
-                    from i18n import t
-                    msg = t(c.from_user.id, "wild4_only_when_no_valid")
-                except Exception:
-                    msg = "⛔ جوكر +4 تقدر تلعبها فقط إذا ما عندك ورقة تشتغل! عندك ورقة مناسبة."
-                await c.answer(msg, show_alert=True)
-                return await refresh_ui_2p(room_id, c.bot)
-
+        # الجوكرات
         hand.pop(idx)
         was_uno_said = str(players[p_idx].get('said_uno', False)).lower() in ['true', '1', 'true']
         updated_said_uno = was_uno_said if len(hand) == 1 else False
@@ -1348,6 +1339,10 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
             (json.dumps(hand), updated_said_uno, c.from_user.id), commit=True)
         discard_pile = safe_load(room.get('discard_pile', '[]'))
         discard_pile.append(room['top_card'])
+
+        if "🌈" in card or "🔥" in card:
+            await handle_wild_color_card(c, state, room_id, p_idx, opp_id, p_name, hand, card, discard_pile, room)
+            return
 
         alerts = {}
 
@@ -1401,19 +1396,10 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
         db_query("UPDATE rooms SET top_card = %s, current_color = %s, discard_pile = %s WHERE room_id = %s",
             (card, new_color, json.dumps(discard_pile), room_id), commit=True)
 
-        if "🌈" in card:
-            await handle_wild_color_card(c, state, room_id, p_idx, opp_id, p_name, hand, card, discard_pile, room)
-            return
-        elif "🔥" in card:
-            await handle_wild_draw4_card(
-                c, state, room_id, p_idx, opp_id, p_name, card, discard_pile, hand, room
-            )
-            return
         if "🚫" in card or "🔄" in card:
             symbol = "🚫" if "🚫" in card else "🔄"
             next_turn = p_idx
-            db_query("UPDATE rooms SET top_card = %s, current_color = %s, discard_pile = %s, turn_index = %s WHERE room_id = %s",
-                (card, new_color, json.dumps(discard_pile), next_turn, room_id), commit=True)
+            db_query("UPDATE rooms SET turn_index = %s WHERE room_id = %s", (next_turn, room_id), commit=True)
             alerts[c.from_user.id] = f"{symbol} منعت الخصم! الدور بقى إلك."
             alerts[opp_id] = f"{symbol} {p_name} منعك من اللعب!"
         elif "💧" in card:
@@ -1524,6 +1510,7 @@ async def handle_color(c: types.CallbackQuery, state: FSMContext):
 
         if "🔥" in card:
             if opp_id == BOT_USER_ID:
+                # البوت دائماً يقبل السحب لتسهيل اللعبة
                 deck = ensure_deck_from_discard(room_id, room)
                 bot_hand = safe_load(players[(p_idx + 1) % 2]['hand'])
                 for _ in range(4):
@@ -1536,23 +1523,32 @@ async def handle_color(c: types.CallbackQuery, state: FSMContext):
                 db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, deck = %s WHERE room_id = %s",
                     (f"{card} {chosen_color}", chosen_color, p_idx, json.dumps(deck), room_id), commit=True)
                 await state.clear()
-                await _send_message_then_delete(c.bot, c.from_user.id, "🤖 البوت قبل السحب وسحب 4 ورقات. دورك!", delete_after_seconds=5)
+                await _send_message_then_delete(c.bot, c.from_user.id, f"🤖 البوت قبل السحب وسحب 4 ورقات. اللون صار {chosen_color}. دورك!", delete_after_seconds=5)
                 await refresh_ui_2p(room_id, c.bot)
                 return
+
+            pending_color_data[room_id] = {
+                'card_played': card,
+                'p_idx': p_idx,
+                'prev_color': prev_color,
+                'chosen_color': chosen_color,
+                'type': 'challenge'
+            }
             kb = [[
                 InlineKeyboardButton(text="🕵️‍♂️ أتحداك", callback_data=f"rs_y_{room_id}_{prev_color}_{chosen_color}"),
                 InlineKeyboardButton(text="✅ قبول", callback_data=f"rs_n_{room_id}_{chosen_color}")
             ]]
             await c.bot.send_message(
                 opp_id,
-                f"🚨 {p_name} لعب 🔥 +4 وغير اللون لـ {chosen_color}!",
+                f"🚨 {p_name} لعب 🔥 +4 وغير اللون لـ {chosen_color}!\nهل تريد التحدي؟ لديك 20 ثانية.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
             )
             cd_msg = await _send_message_then_delete(c.bot, opp_id, "⏳ باقي 20 ثانية للرد\n🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢", delete_after_seconds=5)
             if cd_msg:
                 challenge_countdown_msgs[room_id] = {'bot': c.bot, 'chat_id': opp_id, 'msg_id': cd_msg.message_id}
                 challenge_timers[room_id] = asyncio.create_task(challenge_timeout_2p(room_id, c.bot))
-            await c.message.edit_text("⏳ بانتظار الخصم...")
+
+            await c.message.edit_text(f"🎨 اخترت اللون {chosen_color}.\n⏳ بانتظار رد الخصم على +4...")
             await state.clear()
             return
 
@@ -1574,10 +1570,10 @@ async def handle_color(c: types.CallbackQuery, state: FSMContext):
             alerts[opp_id] = f"🎨 {p_name} اختار اللون {chosen_color} وسحبك {penalty} ورقة والدور رجع له!"
             alerts[c.from_user.id] = f"🎨 اخترت اللون {chosen_color} وسحب الخصم {penalty} ورقة!"
         else:
-            # جوكر ألوان (🌈): الدور يرجع للاعب نفسه (2 لاعب)
-            next_turn = p_idx
-            alerts[opp_id] = f"🎨 {p_name} اختار اللون {chosen_color} — دورك لاحقاً."
-            alerts[c.from_user.id] = f"🎨 اخترت اللون {chosen_color} والدور بقى إلك!"
+            # جوكر ألوان (🌈): الدور يمر للمنافس (تغيير من Skip لـ Pass)
+            next_turn = (p_idx + 1) % 2
+            alerts[opp_id] = f"🎨 {p_name} اختار اللون {chosen_color} — دورك هسة ✅"
+            alerts[c.from_user.id] = f"🎨 اخترت اللون {chosen_color} وانتقل الدور للمنافس."
 
         db_query("UPDATE rooms SET top_card = %s, current_color = %s, turn_index = %s, deck = %s WHERE room_id = %s",
             (f"{card} {chosen_color}", chosen_color, next_turn, json.dumps(deck), room_id), commit=True)
@@ -1874,10 +1870,11 @@ async def handle_challenge(c: types.CallbackQuery):
             chosen_col = parts[4]
             p_hand = safe_load(players[p_idx]['hand'])
             cheated = False
+            # فحص الغش: هل كان لدى اللاعب ورقة من نفس اللون الأصلي؟
             for card in p_hand:
                 if any(x in card for x in ["🌈", "🔥", "💧", "🌊"]):
                     continue
-                if check_validity(card, room['top_card'], prev_col):
+                if card.split()[0] == prev_col:
                     cheated = True
                     break
             if cheated:

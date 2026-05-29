@@ -6,7 +6,7 @@ import string
 import os
 import time
 import psycopg2
-from .database import get_db_conn, RealDictCursor
+from .database import get_db, RealDictCursor, get_db_conn
 from .domino import router as domino_router
 
 app = FastAPI()
@@ -40,10 +40,10 @@ CATEGORIES = {
 def init_db():
     global DB_INITIALIZED
     if DB_INITIALIZED: return
-    conn = get_db_conn()
-    if not conn: return
-    try:
-        with conn.cursor() as cur:
+    with get_db() as conn:
+        if not conn: return
+        try:
+            with conn.cursor() as cur:
             # 1. الأساسيات: جداول المستخدمين والغرف واللاعبين
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -182,9 +182,8 @@ def init_db():
             DB_INITIALIZED = True
     except Exception as e:
         print(f"Database initialization failed: {e}")
+        # Note: with get_db() handles release, but manual rollback is fine if conn exists
         if conn: conn.rollback()
-    finally:
-        if conn: conn.close()
 
 init_db()
 
@@ -276,36 +275,34 @@ async def upload_icon(request: Request):
 
 @app.get("/api/announcements")
 async def get_announcements():
-    conn = get_db_conn()
-    if not conn: return []
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM announcements ORDER BY created_at DESC LIMIT 20")
-            announcements = cur.fetchall()
+    with get_db() as conn:
+        if not conn: return []
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM announcements ORDER BY created_at DESC LIMIT 20")
+                announcements = cur.fetchall()
 
-            # Fetch feedback for each
-            for ann in announcements:
-                cur.execute("SELECT * FROM feedback WHERE announcement_id = %s ORDER BY created_at ASC", (ann['id'],))
-                ann['feedback'] = cur.fetchall()
-            return announcements
-    except: return []
-    finally: conn.close()
+                # Fetch feedback for each
+                for ann in announcements:
+                    cur.execute("SELECT * FROM feedback WHERE announcement_id = %s ORDER BY created_at ASC", (ann['id'],))
+                    ann['feedback'] = cur.fetchall()
+                return announcements
+        except: return []
 
 @app.post("/api/feedback/add")
 async def add_feedback(data: dict):
-    conn = get_db_conn()
-    if not conn: return {"success": False}
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO feedback (announcement_id, user_id, player_name, text, type)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (data['announcement_id'], data['user_id'], data['player_name'], data['text'], data['type']))
-            conn.commit()
-        return {"success": True}
-    except Exception as e:
-        return {"success": False, "msg": str(e)}
-    finally: conn.close()
+    with get_db() as conn:
+        if not conn: return {"success": False}
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO feedback (announcement_id, user_id, player_name, text, type)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (data['announcement_id'], data['user_id'], data['player_name'], data['text'], data['type']))
+                conn.commit()
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "msg": str(e)}
 
 @app.post("/api/feedback/update")
 async def update_feedback(data: dict):
@@ -3175,7 +3172,7 @@ r(--primary);
                                 <div class="domino-line"></div>
                                 <div class="domino-half">${tile[1]}</div>
                             </div>
-                          `).join('')
+                          `; }).join('')
                         )}
                     </div>
 
@@ -3198,8 +3195,6 @@ r(--primary);
                 </div>`;
 
             document.getElementById('main-ui').innerHTML = html;
-        }
-
         }
 
         let selectedTile = null;
