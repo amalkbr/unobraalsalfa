@@ -7,8 +7,10 @@ import os
 import time
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from .domino import router as domino_router
 
 app = FastAPI()
+app.include_router(domino_router)
 
 # --- Database Connection ---
 DB_INITIALIZED = False
