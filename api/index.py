@@ -573,17 +573,25 @@ async def create_domino_room_endpoint(data: dict):
         room_code = ''.join(random.choices(string.ascii_uppercase, k=4))
 
         with conn.cursor() as cur:
-            # محاولة إدخال مباشر لتسريع العملية (الأعمدة تم التأكد منها في init_db)
+            # 1. تحديد نوع عمود الفريق (نصي أم رقمي) لتجنب الأخطاء
+            cur.execute("SELECT data_type FROM information_schema.columns WHERE table_name = 'room_players' AND column_name = 'team'")
+            team_col = cur.fetchone()
+            team_val = 'A'
+            if team_col and 'int' in team_col[0].lower():
+                team_val = 0
+
+            # 2. إدخال الغرفة
             cur.execute("""
                 INSERT INTO rooms (room_code, room_id, host_id, creator_id, status, game_type, win_limit, max_players)
                 VALUES (%s, %s, %s, %s, 'lobby', 'domino', 101, %s)
                 ON CONFLICT (room_code) DO NOTHING
             """, (room_code, room_code, user_id, user_id, max_players))
 
+            # 3. إدخال اللاعب (المضيف)
             cur.execute("""
                 INSERT INTO room_players (room_code, room_id, user_id, player_name, join_order, team)
-                VALUES (%s, %s, %s, %s, 0, 'A')
-            """, (room_code, room_code, user_id, player_name))
+                VALUES (%s, %s, %s, %s, 0, %s)
+            """, (room_code, room_code, user_id, player_name, team_val))
 
             conn.commit()
         return {"success": True, "room_code": room_code}
@@ -3248,9 +3256,18 @@ HTML_TEMPLATE = """
         }
 
         async function submitCreateDomino(maxPlayers) {
-            console.log('Creating Domino Room...', maxPlayers);
             if (!currentUser) return alert("سجل دخولك أولاً");
-            showLoading("جاري إنشاء الطاولة...");
+
+            // إضافة شاشة التحميل بشكل يدوي إذا لم تكن موجودة برمجياً
+            const mainUi = document.getElementById('main-ui');
+            const originalContent = mainUi.innerHTML;
+            mainUi.innerHTML = `
+                <div class="card">
+                    <div class="spinner" style="margin: 20px auto;"></div>
+                    <h2 style="color:var(--accent)">جاري إنشاء الطاولة...</h2>
+                    <p>لحظات ويجهز رمز اللعب 🚀</p>
+                </div>`;
+
             try {
                 const res = await fetch('/api/domino/create', {
                     method: 'POST',
@@ -3261,19 +3278,21 @@ HTML_TEMPLATE = """
                         max_players: maxPlayers
                     })
                 });
+
+                if (!res.ok) throw new Error("Server response not ok");
                 const d = await res.json();
-                hideLoading();
-                console.log('Create result:', d);
+
                 if(d.success) {
                     currentRoom = d.room_code;
                     showDominoRoomInfo(d.room_code);
                 } else {
+                    mainUi.innerHTML = originalContent; // استعادة المحتوى السابق عند الفشل
                     alert(d.msg || "فشل إنشاء الغرفة");
                 }
             } catch(e) {
-                hideLoading();
+                mainUi.innerHTML = originalContent;
                 console.error('Fetch error:', e);
-                alert("تعذر الاتصال بالخادم. تأكد من اتصالك بالإنترنت.");
+                alert("تعذر الاتصال بالخادم. يرجى المحاولة مرة أخرى.");
             }
         }
 
