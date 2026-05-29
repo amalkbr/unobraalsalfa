@@ -3131,6 +3131,10 @@ HTML_TEMPLATE = """
             history.pushState({screen: 'game_selection'}, "");
             document.getElementById('main-ui').innerHTML = `
                 <div class="card" style="padding: 30px 20px;">
+                    <button id="announcement-bell" class="bell-btn" onclick="showAnnouncements()">
+                        🔔
+                        <div class="bell-badge"></div>
+                    </button>
                     <div style="font-size: 60px; margin-bottom: 20px;">🎮</div>
                     <h1 style="margin-bottom: 10px;">اختر اللعبة</h1>
                     <p style="color: #a29bfe; margin-bottom: 30px; font-size: 16px;">ماذا تحب أن تلعب اليوم؟</p>
@@ -3146,11 +3150,16 @@ HTML_TEMPLATE = """
                         <p style="font-size: 20px; color:#fff;">صُممت لكم بايدي ابو الاكبر   ❤️</p>
                     </div>
                 </div>`;
+            checkAnnouncements();
         }
 
         function showDominoMenu() {
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
+                    <button id="announcement-bell" class="bell-btn" onclick="showAnnouncements()">
+                        🔔
+                        <div class="bell-badge"></div>
+                    </button>
                     <h1>🁔 دومينو أونلاين</h1>
                     <p style="color:#aaa; margin-bottom:20px;">العب مع أصدقائك بنظام الفرق (2 لاعبين أو 4)</p>
 
@@ -3159,6 +3168,7 @@ HTML_TEMPLATE = """
 
                     <button style="background:#636e72; margin-top:20px;" onclick="showGameSelection()">رجوع</button>
                 </div>`;
+            checkAnnouncements();
         }
 
         function showMenu(push = true) {
