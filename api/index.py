@@ -790,13 +790,18 @@ async def prepare_round(room_code):
                     ans_id = p_ids[(i + shift) % n]
                     auto_seq.append({'asker_id': asker_id, 'ans_id': ans_id})
 
+            dist_mode = room.get('distribution_mode', 'auto')
+            # إذا كان عدد اللاعبين 3، نجعل نظام الأسئلة اختيارياً للكل بدلاً من التتابع التلقائي
+            if len(active_players) == 3:
+                dist_mode = 'manual'
+
             game_data = {
                 "word": correct,
                 "spy_id": spy_id,
                 "q_seq": [], # History of completed questions
                 "auto_seq": auto_seq, # Pre-calculated sequence
                 "current_seq_idx": 0,
-                "distribution_mode": room.get('distribution_mode', 'auto'), # 'auto' or 'manual'
+                "distribution_mode": dist_mode,
                 "current_asker_id": current_asker['user_id'],
                 "current_asker_name": current_asker['player_name'],
                 "ready_to_vote": [], # List of user_ids who clicked "Vote"
@@ -4607,7 +4612,9 @@ HTML_TEMPLATE = """
                     <button style="margin-top:20px; background: #ffec00; color: #1b1464; font-weight: 900; box-shadow: 0 0 20px rgba(255, 236, 0, 0.4);" onclick="clearInterval(timerInterval); startVoting()">بدء التصويت</button>
                 </div>`;
             game.players.forEach(p => {
-                if(p!==asker && p!==last) {
+                const isThreePlayers = game.players.length === 3;
+                // إذا كان العدد 3، نسمح بسؤال أي شخص (حتى لو هو اللي سألنا توه) لكسر "الدائرة"
+                if(p!==asker && (isThreePlayers ? true : p!==last)) {
                     let btn = document.createElement('button');
                     btn.className = 'vote-item';
                     btn.innerText = `اسأل ${p}`;
