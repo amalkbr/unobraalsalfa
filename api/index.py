@@ -4790,8 +4790,6 @@ HTML_TEMPLATE = """
                 alert("حدث خطأ أثناء محاولة بدء اللعبة");
             }
         }
-            } catch(e) { console.error(e); }
-        }
 
         function changePCount(delta) {
             let current = parseInt(localStorage.getItem('pCount') || 3);
