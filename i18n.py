@@ -110,8 +110,6 @@ TEXTS = {
         "btn_followers_list": "👥 يتابعونني",
         "btn_following_list": "👥 أتابعهم",
         "btn_friends": "👥 الأصدقاء",
-        "btn_calc": "🧮 حاسبة أونو",
-        "btn_rules": "📜 قوانين اللعب",
         "btn_leaderboard": "📊 الإحصائيات",
         "btn_bot_info": "ℹ️ معلومات البوت",
         "btn_change_lang": "🌍 تغيير اللغة",
@@ -120,44 +118,10 @@ TEXTS = {
         "badge_profile_label": "🏅 الشارة: {badge}",
         "choose_language": "🌍 **اختر اللغة:**",
         "menu_updated": "تم تحديث القائمة 🎮",
-        "invite_pending_room": "🎮 لديك دعوة للانضمام إلى غرفة! سجّل الدخول أو أنشئ حساباً ثم سيتم إدخالك للغرفة تلقائياً.",
-        "rules_text": (
-        "📜 **قوانين اللعب - أونو العراق 🇮🇶**\n\n"
-        "👉 _للشرح المختصر اضغط زر **التدريب** أدناه._\n\n"
-        "**أساسيات اللعبة**\n"
-        "• كل لاعب يسحب ٧ أوراق.\n"
-        "• الباقي من الورق يسمى «كومة السحب».\n"
-        "• أول ورقة تنزل يضعها البوت من كومة السحب.\n"
-        "• اللعب يكون مع عقارب الساعة.\n\n"
-        "**من يلعب أولاً؟**\n"
-        "• **اللعب العشوائي:** أول واحد يلعب هو من يرسل طلب لعب عشوائي أولاً.\n"
-        "• **وضع الغرف:** صاحب الغرفة يلعب أولاً ويبدأ اللعب.\n\n"
-        "**هدفك**\n"
-        "أن تخلص الأوراق التي في يدك كلها. الورقة التي تلعبها يجب أن تكون:\n"
-        "• إما نفس لون الورقة النازلة (حتى لو الرقم يختلف)،\n"
-        "• أو نفس الرقم النازل (حتى لو اللون يختلف).\n\n"
-        "**أوراق الأكشن**\n"
-        "• **لون معين +2:** في اللعب العشوائي الخصم يتعاقب بسحب ورقتين واللعب يرجع لك، ولازم تلعب نفس لونها. في وضع الغرف: الذي بعدك يتعاقب ويسحب ورقتين وينتقل اللعب للاعب الذي بعده، ولازم يلعب نفس لونها.\n"
-        "• **لون معين 🚫:** في اللعب العشوائي يرجع اللعب لك ولازم تلعب نفس لونها. في وضع الغرف: الذي بعدك يُمنع وينتقل الدور للي بعده، ولازم يلعب نفس لونها.\n"
-        "• **لون معين 🔄:** في الوضع العشوائي الدور يرجع لك ولازم تلعب نفس لونها. في وضع الغرف: اتجاه اللعب يتحول عكس عقارب الساعة.\n\n"
-        "**أوراق الجوكر**\n"
-        "• **جوكر 💧 +1:** في اللعب العشوائي يمكنك لعبها في أي وقت وعلى أي ورقة ولون ورقم؛ تجبر الخصم أن يسحب ورقة من كومة السحب ويعود الدور لك ويمكنك أن تلعب أي ورقة. في وضع الغرف: عند لعبها تختار لوناً، واللاعب التالي يسحب ورقة من كومة السحب ولا يلعب، وينتقل الدور للي بعده وهو مجبر أن يلعب باللون الذي اخترته.\n"
-        "• **جوكر 🌊 +2:** نفس الفكرة مع سحب ورقتين. في وضع الغرف: تختار لون، التالي يسحب ورقتين ولا يلعب، والدور للي بعده وهو مجبر أن يلعب باللون الذي اخترته.\n"
-        "• **🔥 +4:** مثل جوكر +1 و +2 إلا أن لها قانوناً خاصاً: **لا تلعب هذه الورقة إلا إذا لم يكن لديك ورقة أخرى صالحة للعب.** إذا لعبتها:\n"
-        "  - **اللعب العشوائي:** ينتظر خصمك إما يقبل السحب ويصمت ويعود الدور لك، أو يختار التحدي. **التحدي:** البوت يفحص أوراقك؛ إن كنت لعبتها فعلاً وليس لديك ورقة مناسبة يُعاقب اللاعب الآخر (يسحب ٦ ورقات كلياً) ويرجع اللعب لك. وإن كنت لعبتها وكان لديك ورقة مناسبة يُرجع البوت الورقة عليك ويسحبك ٦ ورقات عقوبة.\n"
-        "  - **وضع الغرف:** عند لعبها تختار لوناً، ونفس موضوع التحدي إلا أن الدور لا يعود لك بل ينتقل للي بعده وهو مجبر أن يلعب نفس اللون الذي اخترته.\n"
-        "• **ورقة 🌈:** في اللعب العشوائي والغرف تجبر اللاعب التالي أن يلعب بلون تختاره؛ عند لعبها عليك اختيار لون.\n\n"
-        "**ملاحظات**\n"
-        "• إن أُجبرت على اختيار لون وليس لديك ذلك اللون، يمكنك لعب ورقة جوكر إن كنت تملكها.\n"
-        "• إن لعبت ورقة خطأ يعاقبك البوت لمحاولة الغش، ويرجع الورقة لك ويرجع اللعب لك ويسحبك ورقة.\n"
-        "• لكل لاعب مهلة ٢٠ ثانية للعب.\n"
-        "• لكل لاعب مهلة ١٠ ثوانٍ لقرار السحب أو التحدي.\n"
-        "• يمكنك إرسال رسائل للاعبين وستُقرأ وتختفي خلال ٥ ثوانٍ.\n"
-        "• يمكن للاعبين التبليغ على لاعب أساء الأدب وسيُحظر أو يُعاقب."
-    ),
+        "invite_pending_room": "🎮 لديك دعوة للانضمام! سجّل الدخول أو أنشئ حساباً ثم سيتم إدخالك تلقائياً.",
         "btn_back_short": "🔙 عودة",
         "tutorial_title": "🎓 مرحباً! جولة سريعة على البوت",
-        "tutorial_body": "• **لعب عشوائي:** البوت يلاقي لك خصم وتبدأون.\n• **لعب مع الأصدقاء:** تنشئ غرفة أو تنضم بكود أو رابط.\n• **حسابي:** تعديل الاسم والإعدادات.\n• **قوانين اللعب:** قوانين أونو كاملة.\n\nاضغط «جرب الآن» لفتح القائمة والبدء!",
+        "tutorial_body": "• **برا السالفة:** لعبة ذكاء وتمويه جماعية.\n• **الدومنة:** العب دومنة أونلاين مع أصدقائك.\n• **حسابي:** تعديل الاسم والإعدادات.\n\nاضغط «جرب الآن» لفتح القائمة والبدء!",
         "tutorial_btn": "✅ جرب الآن",
         "training_offer_question": "🎓 **أهلاً بك!**\n\nهل تريد **التدريب** على اللعبة أم أنت تعرف أونو مسبقاً؟",
         "training_btn_yes": "📚 نعم، أريد التدريب",
@@ -230,26 +194,6 @@ TEXTS = {
             "• 👥 **الأصدقاء**: تابع أصدقائك والعب معهم.\n\n"
             "📊 **4) لوحة المتصدرين**\n"
             "• 📊 شوف ترتيبك بين اللاعبين في كل الألعاب.\n"
-        ),
-            "👥 **6) القائمة الاجتماعية**\n"
-            "• 📈 تشوف **المتابعين** و **اللي تتابعهم**.\n"
-            "• 🔍 تبحث عن لاعب وتفتح بروفايله.\n"
-            "• 🔕 تحكم بكتم دعوات لاعب (إذا ظهر الخيار).\n\n"
-            "🧮 **7) حاسبة نقاط أونو**\n"
-            "• تحسب النقاط بسهولة من داخل البوت.\n\n"
-            "📜 **8) قوانين اللعب**\n"
-            "• شرح كامل لقوانين اللعب + شرح أوراق الأكشن والجوكر.\n"
-            "• 🔥 جوكر +4 فيه **تحدي** والبوت يفحص إذا اللعب صحيح أو غش.\n\n"
-            "🏁 **9) بعد نهاية الجولة**\n"
-            "• 🔄 زر **لعب مرة أخرى** لدعوة نفس الفريق بسرعة.\n"
-            "• 📢 قد يظهر زر **نشر فوزك** (مع مجموع نقاطك) إذا ميزة النشر مفعلة.\n\n"
-            "👥 **10) مجتمع الأونو (القناة)**\n"
-            "إذا ميزة المجتمع مفعلة:\n"
-            "• 📢 تقدر **تنشر منشور بالقناة** (نص/صورة/فيديو…).\n"
-            "• 👤 تقدر تضيف زر \"حسابي\" تحت المنشور.\n"
-            "• 🎮 تقدر تضيف زر \"العب معي\" حتى أي شخص ينضم لك بسرعة.\n\n"
-            "🌍 **11) تغيير اللغة**\n"
-            "• 🇮🇶 عربي  • 🇬🇧 English  • 🇮🇷 فارسی\n\n"
             "──────────────\n"
             "📩 **اقتراحاتكم وملاحظاتكم نستقبلها عبر** @Branch"
         ),
@@ -428,8 +372,6 @@ TEXTS = {
         "btn_followers_list": "👥 Follow me",
         "btn_following_list": "👥 I follow",
         "btn_friends": "👥 Friends",
-        "btn_calc": "🧮 Uno Calculator",
-        "btn_rules": "📜 Rules",
         "btn_leaderboard": "📊 Statistics",
         "btn_bot_info": "ℹ️ Bot info",
         "btn_change_lang": "🌍 Change language",
@@ -442,7 +384,7 @@ TEXTS = {
         "rules_text": "📜 **Uno Iraq 🇮🇶 - Full Rules**\n\nThe goal is to get rid of all your cards first. When you have one card left, you must press \"Uno\" immediately, or you draw penalty cards!\n\n🔹 **Special cards:**\n1️⃣ **Draw 2 (+2):** The next player draws 2 and skips their turn, unless they have +2 and stack it (draw 4).\n2️⃣ **Reverse (🔄):** Reverses play direction.\n3️⃣ **Skip (🚫):** The next player is skipped.\n4️⃣ **Wild (🌈):** Choose the new color.\n5️⃣ **Wild Draw 4 (🌈+4):** Strongest card! Choose color and the next player draws 4. They can challenge if they think you had a matching color.\n\n🔹 **Challenge & penalties:**\n- **+4 challenge:** If you get +4 and suspect the player had a matching color, you can challenge. If they cheated, they draw 4. If not, you draw 6!\n- **Forgot Uno:** If you had one card and didn't say \"Uno\" and get caught, you draw 2.\n\n🔹 **End of game:**\nThe round ends when one player runs out of cards. Remaining cards in others' hands are counted as points and added to the winner's score.",
         "btn_back_short": "🔙 Back",
         "tutorial_title": "🎓 Hi! Quick tour of the bot",
-        "tutorial_body": "• **Random play:** The bot finds you an opponent and you start.\n• **Play with friends:** Create a room or join with a code/link.\n• **My account:** Edit name and settings.\n• **Rules:** Full Uno rules.\n\nPress «Try now» to open the menu and start!",
+        "tutorial_body": "• **Barra al-Salfa:** Multiplayer social deduction game.\n• **Domino:** Play Domino online with friends.\n• **My account:** Edit name and settings.\n\nPress «Try now» to open the menu and start!",
         "tutorial_btn": "✅ Try now",
         "training_offer_question": "🎓 **Welcome!**\n\nDo you want **training** or do you already know Uno?",
         "training_btn_yes": "📚 Yes, I want training",
@@ -491,36 +433,18 @@ TEXTS = {
         "player_removed_5_skips_others": "⛔ {name} was removed from the game (skipped 5 times).",
         "bot_info_title": "ℹ️ **Bot info**",
         "bot_info_text": (
-            "🎮 **Welcome to Uno Bot**\n\n"
+            "🎮 **Welcome to Barra al-Salfa & Domino**\n\n"
             "Here’s what you can do 👇\n\n"
-            "🎲 **1) Random play**\n"
-            "• 🔍 The bot finds you an opponent and you start immediately.\n"
-            "• ⏳ Each player has a limited time to play.\n"
-            "• 🃏 Play the same **color** or the same **number/symbol**.\n"
-            "• If no players are available, you get the option to **play vs Bot (AI)**.\n\n"
-            "🤖 **2) Play with Bot (AI)**\n"
-            "• From the menu: **Play vs Bot** starts a game against the bot.\n"
-            "• The bot plays automatically (picks cards, chooses color for wild, accepts/challenges +4).\n"
-            "• From **random play**: if no opponent is found, you can choose to play with the bot.\n\n"
-            "👥 **3) Play with friends (rooms)**\n"
-            "• ➕ Create a room and set players/score limit.\n"
-            "• 🔑 Join by code or invite link.\n"
-            "• 🚪 Public rooms (if enabled).\n\n"
-            "👤 **4) My account & profiles**\n"
-            "• View your points and account.\n"
-            "• Follow/unfollow players, invite them to play.\n\n"
-            "📊 **5) Leaderboard**\n"
-            "• Tap a player name to open their profile.\n\n"
-            "🧮 **6) Uno calculator**\n"
-            "• Calculate points from inside the bot.\n\n"
-            "📜 **7) Rules**\n"
-            "• Full rules + special cards + +4 challenge.\n\n"
-            "🏁 **8) After the round**\n"
-            "• **Play again** and **Share your win** (with your total points) if publishing is enabled.\n\n"
-            "🌍 **9) Language**\n"
-            "• Arabic • English • Persian\n\n"
+            "🕵️‍♂️ **1) Barra al-Salfa**\n"
+            "• 🎭 Social deduction game where one is 'out of the story'.\n\n"
+            "🀄 **2) Domino (Web)**\n"
+            "• 📱 Play Domino via web-app directly in Telegram.\n\n"
+            "👤 **3) Account & Friends**\n"
+            "• View your points, follow friends, and play together.\n\n"
+            "📊 **4) Leaderboard**\n"
+            "• Check your rank globally or among friends.\n"
             "──────────────\n"
-            "📩 **We welcome your suggestions and feedback via** @Branch"
+            "📩 **Suggestions?** @Branch"
         ),
         "channel_subscribe_required": "⛔ You must subscribe to the channel first to use the bot.\n\nSubscribe then tap «Verify».",
         "banned_from_bot": "🚫 You have been banned from the bot. You cannot use the bot.",
@@ -697,8 +621,6 @@ TEXTS = {
         "btn_followers_list": "👥 من را دنبال می‌کنند",
         "btn_following_list": "👥 من دنبال می‌کنم",
         "btn_friends": "👥 دوستان",
-        "btn_calc": "🧮 ماشین‌حساب اونو",
-        "btn_rules": "📜 قوانین",
         "btn_leaderboard": "📊 آمار",
         "btn_bot_info": "ℹ️ اطلاعات ربات",
         "btn_change_lang": "🌍 تغییر زبان",
@@ -748,27 +670,18 @@ TEXTS = {
         "round_summary_won": "برندهٔ دور شد",
         "bot_info_title": "ℹ️ **اطلاعات ربات**",
         "bot_info_text": (
-            "🎮 **به ربات اونو خوش آمدید**\n\n"
+            "🎮 **به برا السالفة و دومنة خوش آمدید**\n\n"
             "امکانات اصلی 👇\n\n"
-            "🎲 **1) بازی تصادفی**\n"
-            "• ربات برای شما حریف پیدا می‌کند.\n"
-            "• اگر بازیکنی نبود، می‌توانید **با ربات (هوش مصنوعی)** بازی کنید.\n\n"
-            "🤖 **2) بازی با ربات (هوش مصنوعی)**\n"
-            "• از منو: **بازی با ربات** — یک دور مقابل ربات.\n"
-            "• ربات خودکار بازی می‌کند (کارت، رنگ جوكر، قبول/چالش +۴).\n"
-            "• از بازی تصادفی: اگر حریفی نبود، گزینهٔ «بازی با ربات» نمایش داده می‌شود.\n\n"
-            "👥 **3) بازی با دوستان (اتاق‌ها)**\n"
-            "• ساخت اتاق، ورود با کد/لینک.\n\n"
+            "🕵️‍♂️ **1) برا السالفة**\n"
+            "• 🎭 بازی گروهی تشخیص جاسوس.\n\n"
+            "🀄 **2) دومنة (Web)**\n"
+            "• 📱 بازی آنلاین دومینه در تلگرام.\n\n"
+            "👤 **3) حساب و دوستان**\n"
+            "• مشاهده امتیازات و بازی با دوستان.\n\n"
             "📊 **4) جدول امتیازات**\n"
-            "• با لمس نام بازیکن، پروفایلش باز می‌شود.\n\n"
-            "📜 **5) قوانین**\n"
-            "• قوانین کامل + کارت‌های ویژه.\n\n"
-            "🏁 **6) پس از پایان دور**\n"
-            "• بازی دوباره و **نشر برد** (با مجموع امتیاز) در صورت فعال بودن.\n\n"
-            "🌍 **7) زبان**\n"
-            "• عربی • انگلیسی • فارسی\n\n"
+            "• رتبه خود را مشاهده کنید.\n"
             "──────────────\n"
-            "📩 **پیشنهادات و نظرات شما را از طریق** @Branch **می‌پذیریم**"
+            "📩 **پیشنهادات:** @Branch"
         ),
         "match_history_title": "📜 آخرین بازی‌های شما",
         "match_history_none": "هنوز بازی‌ای ثبت نشده.",

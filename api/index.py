@@ -8,9 +8,11 @@ import time
 import psycopg2
 from .database import get_db, RealDictCursor, get_db_conn
 from .domino import router as domino_router
+from .spy import router as spy_router
 
 app = FastAPI()
 app.include_router(domino_router)
+app.include_router(spy_router)
 
 # --- Database Connection ---
 DB_INITIALIZED = False
@@ -44,10 +46,10 @@ def init_db():
         if not conn: return
         try:
             with conn.cursor() as cur:
-            # 1. الأساسيات: جداول المستخدمين والغرف واللاعبين
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
+                # 1. الأساسيات: جداول المستخدمين والغرف واللاعبين
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        user_id BIGINT PRIMARY KEY,
                     username_key TEXT UNIQUE,
                     password_key TEXT,
                     player_name TEXT,
@@ -1817,16 +1819,15 @@ async def get_words():
 
 @app.get("/api/online/rankings")
 async def get_online_rankings():
-    conn = get_db_conn()
-    if not conn: return []
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT player_name, online_points FROM users WHERE online_points > 0 ORDER BY online_points DESC LIMIT 50")
-            return cur.fetchall()
-    except Exception as e:
-        print(f"Error in get_online_rankings: {e}")
-        return []
-    finally: conn.close()
+    with get_db() as conn:
+        if not conn: return []
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT player_name, online_points FROM users WHERE online_points > 0 ORDER BY online_points DESC LIMIT 50")
+                return cur.fetchall()
+        except Exception as e:
+            print(f"Error in get_online_rankings: {e}")
+            return []
 
 @app.get("/api/admin/players")
 async def admin_get_players():

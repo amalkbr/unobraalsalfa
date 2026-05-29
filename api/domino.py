@@ -196,10 +196,11 @@ async def domino_play_tile(data: dict):
             side = data.get('side', 'right') # 'left' or 'right'
 
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT game_data, status FROM rooms WHERE room_code = %s FOR UPDATE", (room_code,))
+                cur.execute("SELECT game_data, status, win_limit FROM rooms WHERE room_code = %s FOR UPDATE", (room_code,))
                 room = cur.fetchone()
                 if not room or room['status'] != 'playing': return {"success": False, "msg": "اللعبة ليست جارية"}
 
+                win_limit = room.get('win_limit') or 101
                 game_data = room['game_data']
                 if isinstance(game_data, str): game_data = json.loads(game_data)
 
@@ -253,6 +254,13 @@ async def domino_play_tile(data: dict):
                             total_pips += (t[0] + t[1])
 
                     game_data['scores'][winner_team] = game_data['scores'].get(winner_team, 0) + total_pips
+                    game_data['round_winner_team'] = winner_team
+                    game_data['round_points'] = total_pips
+
+                    if game_data['scores'][winner_team] >= win_limit:
+                        game_data['phase'] = 'game_over'
+                        game_data['winner_team'] = winner_team
+                        cur.execute("UPDATE rooms SET status = 'finished' WHERE room_code = %s", (room_code,))
                 else:
                     # Turn change
                     game_data['turn_index'] = (game_data['turn_index'] + 1) % len(game_data['ordered_ids'])
@@ -271,16 +279,37 @@ async def domino_play_tile(data: dict):
 
                         if not can_anyone_move:
                             game_data['phase'] = 'round_end'
-                            # Find who has least pips
-                            player_totals = {pid: sum(t[0]+t[1] for t in phand) for pid, phand in game_data['hands'].items()}
-                            min_pips = min(player_totals.values())
-                            winner_id = [pid for pid, pips in player_totals.items() if pips == min_pips][0]
+                            # Team-based stalemate logic
+                            cur.execute("SELECT user_id, team FROM room_players WHERE room_code = %s", (room_code,))
+                            player_teams = {str(row['user_id']): str(row['team']) for row in cur.fetchall()}
 
-                            cur.execute("SELECT team FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, int(winner_id)))
-                            st_winner_team = str(cur.fetchone()['team'])
+                            team_totals = {"0": 0, "1": 0}
+                            all_pips = 0
+                            for pid, phand in game_data['hands'].items():
+                                p_sum = sum(t[0] + t[1] for t in phand)
+                                all_pips += p_sum
+                                tid = player_teams.get(pid)
+                                if tid in team_totals:
+                                    team_totals[tid] += p_sum
 
-                            all_pips = sum(player_totals.values())
-                            game_data['scores'][st_winner_team] = game_data['scores'].get(st_winner_team, 0) + all_pips
+                            st_winner_team = None
+                            if team_totals["0"] < team_totals["1"]:
+                                st_winner_team = "0"
+                            elif team_totals["1"] < team_totals["0"]:
+                                st_winner_team = "1"
+
+                            if st_winner_team:
+                                game_data['scores'][st_winner_team] = game_data['scores'].get(st_winner_team, 0) + all_pips
+                                game_data['round_winner_team'] = st_winner_team
+                                game_data['round_points'] = all_pips
+                                if game_data['scores'][st_winner_team] >= win_limit:
+                                    game_data['phase'] = 'game_over'
+                                    game_data['winner_team'] = st_winner_team
+                                    cur.execute("UPDATE rooms SET status = 'finished' WHERE room_code = %s", (room_code,))
+                            else:
+                                # Tie in stalemate
+                                game_data['round_winner_team'] = None
+                                game_data['round_points'] = 0
 
                 cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
                 conn.commit()

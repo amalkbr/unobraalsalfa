@@ -237,212 +237,12 @@ router.callback_query.middleware(channel_subscribe_callback_middleware)
 
     
 replay_data = {}
-random_wait_tasks = {}  # room_id -> asyncio.Task (إلغاؤه عند انضمام لاعب ثانٍ)
-pending_invites = {}
-pending_next_round = {}
-next_round_ready = {}
 friend_invite_selections = {}
 kick_selections = {}
 # رجوع من شاشة البروفايل إلى لوحة المتصدرين (user_id -> callback_data)
 _pending_profile_back = {}
-# كتم دعوات اللعب: (muter_id, muted_id) -> muted_until (datetime أو None للابد)
-invite_mutes = {}
 # تعليم تفاعلي: كاش في الذاكرة حتى لو عمود seen_tutorial غير موجود في DB
 _tutorial_done_cache = set()
-
-# --- رزمة أونو المرجعية (المصدر الوحيد لعدد وتكوين الأوراق) ---
-# الإجمالي 110 ورقة. البوت لا يسحب أبداً من خارج هذه الكومة؛ وإذا نفدت كومة السحب
-# يُعاد خلط الأوراق النازلة (ما عدا الورقة العليا) لتكوين كومة سحب جديدة.
-#
-# 📍 الملفات التي يجب أن تستخدم هذه الدوال (ليست في هذا المجلد إنما في مشروعك):
-#    - handlers/room_2p.py  (لعب ثنائي: بداية الجولة، سحب عقوبة، انتهاء وقت الدور)
-#    - handlers/room_multi.py (لعب جماعي: نفس الاستخدام)
-# في بداية الجولة: draw_pile = create_shuffled_draw_pile()
-# عند أي سحب (توزيع أولي أو عقوبة أو +2/+4): drawn = draw_cards_from_pile(draw_pile, discard_pile, n)
-# لا تُنشئ أوراقاً عشوائية من خارج الرزمة ولا تسحب بدون draw_cards_from_pile.
-
-UNO_COLORS = ("R", "G", "B", "Y")  # أحمر، أخضر، أزرق، أصفر
-UNO_DECK_TOTAL = 110
-
-def build_uno_deck():
-    """
-    تبني رزمة أونو الكاملة 110 ورقة:
-    - أرقام 1–9: ورقتان من كل لون (4 ألوان) = 72
-    - رقم 0: ورقة واحدة من كل لون = 4
-    - منع (skip): ورقتان من كل لون = 8
-    - عكس (reverse): ورقتان من كل لون = 8
-    - +2: ورقتان من كل لون = 8
-    - جوكر ملون (wild): 4
-    - جوكر +4 (wild_draw4): 4
-    - أوراق أكشن +1 و +2: ورقة واحدة من كل نوع = 2
-    المجموع = 110. لا يُسحب من خارج هذه القائمة أبداً.
-    """
-    deck = []
-    for color in UNO_COLORS:
-        deck.append(f"{color}0")
-        for n in range(1, 10):
-            deck.append(f"{color}{n}")
-            deck.append(f"{color}{n}")
-        for _ in range(2):
-            deck.append(f"{color}_skip")
-            deck.append(f"{color}_reverse")
-            deck.append(f"{color}_draw2")
-    for _ in range(4):
-        deck.append("W_wild")
-        deck.append("W_draw4")
-    deck.append("W_plus1")
-    deck.append("W_plus2")
-    if len(deck) != UNO_DECK_TOTAL:
-        raise RuntimeError(f"عدد الأوراق في الرزمة يجب أن يكون {UNO_DECK_TOTAL}, حصل {len(deck)}")
-    return deck
-
-
-def create_shuffled_draw_pile():
-    """تُرجع كومة سحب جديدة (قائمة أوراق مخلوطة) من الرزمة الكاملة. استخدمها عند بداية الجولة."""
-    deck = build_uno_deck()
-    random.shuffle(deck)
-    return deck
-
-
-def reshuffle_discard_into_draw(discard_pile: list):
-    """
-    عند نفاد كومة السحب: خذ كل الأوراق النازلة ما عدا الورقة العليا (آخر عنصر)،
-    اخلطها واجعلها كومة سحب جديدة. الورقة العليا تبقى على الطاولة.
-    يُرجع: (كومة_سحب_جديدة, الورقة_العليا_للمنصة)
-    إذا كانت النازلة فارغة أو فيها ورقة واحدة فقط، يُرجع ([], ورقة أو None).
-    """
-    if not discard_pile:
-        return [], None
-    if len(discard_pile) == 1:
-        return [], discard_pile[0]
-    top = discard_pile[-1]
-    to_shuffle = discard_pile[:-1]
-    random.shuffle(to_shuffle)
-    return to_shuffle, top
-
-
-def draw_cards_from_pile(draw_pile: list, discard_pile: list, count: int) -> list:
-    """
-    سحب عدد معين من الأوراق من كومة السحب. إذا لم تكفِ الكومة،
-    تُعاد خلطة الأوراق النازلة (ما عدا العليا) وتُستخدم ككومة سحب ثم يُكمل السحب.
-    يُعدّل draw_pile و discard_pile في المكان (يُفترض أن تكونا قائمتين قابلتين للتعديل).
-    يُرجع: قائمة الأوراق المسحوبة (عددها count إن وُجدت أوراق كافية، وإلا ما توفّر).
-    """
-    drawn = []
-    for _ in range(count):
-        if not draw_pile:
-            new_draw, top = reshuffle_discard_into_draw(discard_pile)
-            if not new_draw and top is None:
-                break
-            if top is not None:
-                discard_pile.clear()
-                discard_pile.append(top)
-            draw_pile.extend(new_draw)
-        if not draw_pile:
-            break
-        drawn.append(draw_pile.pop())
-    return drawn
-
-# --- إزالة اللاعب تلقائياً بعد ترك اللعب 5 مرات (للاستدعاء من room_2p / room_multi) ---
-_player_skip_count = {}  # (room_id, user_id) -> عدد مرات عدم اللعب
-TURN_SKIP_LIMIT = 5
-
-def record_turn_skip(room_id: str, user_id: int) -> bool:
-    """
-    يُستدعى عندما اللاعب لم يلعب في دوره (انتهى وقت الدور).
-    يزيد العداد بواحد. إذا وصل إلى TURN_SKIP_LIMIT (5) تُرجع True = يجب إزالته من اللعب.
-    """
-    key = (room_id, user_id)
-    _player_skip_count[key] = _player_skip_count.get(key, 0) + 1
-    return _player_skip_count[key] >= TURN_SKIP_LIMIT
-
-def reset_turn_skip(room_id: str, user_id: int):
-    """عندما اللاعب يلعب ورقة، استدعِ هذه الدالة لتصفير عداد تركه."""
-    key = (room_id, user_id)
-    if key in _player_skip_count:
-        del _player_skip_count[key]
-
-def get_turn_skip_count(room_id: str, user_id: int) -> int:
-    """عدد مرات ترك اللعب حتى الآن (للعرض أو التحذير)."""
-    return _player_skip_count.get((room_id, user_id), 0)
-
-def clear_room_skip_counts(room_id: str):
-    """عند انتهاء الجولة أو إغلاق الغرفة، استدعِها لتنظيف العدادات."""
-    to_del = [k for k in _player_skip_count if k[0] == room_id]
-    for k in to_del:
-        del _player_skip_count[k]
-
-# --- إنجازات وبادجات (يُستدعى فتحها من room_2p عند الفوز/نهاية الجولة) ---
-ACHIEVEMENTS = {
-    "first_win": {"ar": "أول فوز", "en": "First win", "fa": "اولین برد", "emoji": "🏆"},
-    "wins_10": {"ar": "10 انتصارات", "en": "10 wins", "fa": "۱۰ برد", "emoji": "🔥"},
-    "wins_50": {"ar": "50 انتصاراً", "en": "50 wins", "fa": "۵۰ برد", "emoji": "⭐"},
-    "plus4_win": {"ar": "فوز بـ +4", "en": "Won with +4", "fa": "برد با +۴", "emoji": "🌈"},
-    "uno_perfect": {"ar": "أونو مثالي", "en": "Perfect Uno", "fa": "اوونوی کامل", "emoji": "🎯"},
-}
-def get_user_achievements(user_id: int):
-    try:
-        r = db_query("SELECT achievement_id FROM user_achievements WHERE user_id = %s", (user_id,))
-        return [row["achievement_id"] for row in r] if r else []
-    except Exception:
-        return []
-def unlock_achievement(user_id: int, achievement_id: str):
-    if achievement_id not in ACHIEVEMENTS:
-        return
-    try:
-        db_query(
-            "INSERT INTO user_achievements (user_id, achievement_id) VALUES (%s, %s) ON CONFLICT (user_id, achievement_id) DO NOTHING",
-            (user_id, achievement_id), commit=True
-        )
-    except Exception:
-        pass
-def format_achievements_badges(uid: int, achievement_ids: list) -> str:
-    if not achievement_ids:
-        return ""
-    parts = []
-    for aid in achievement_ids[:10]:
-        a = ACHIEVEMENTS.get(aid)
-        if not a:
-            continue
-        lang = get_lang(uid)
-        title = a.get(lang) or a.get("ar") or aid
-        parts.append(f"{a.get('emoji', '🏅')} {title}")
-    return "\n🏅 " + " | ".join(parts) if parts else ""
-
-# --- سجل المباريات وعرض سريع للجولة (للاستدعاء من room_2p / room_multi) ---
-def save_round_result(room_id: str, winner_id: int, scores_dict: dict, round_num: int = 1):
-    """احفظ نتيجة الجولة في match_results (للسجل والإحصائيات)."""
-    try:
-        db_query(
-            "INSERT INTO match_results (room_id, round_num, winner_id, scores_json) VALUES (%s, %s, %s, %s)",
-            (room_id, round_num, json.dumps(scores_dict) if isinstance(scores_dict, dict) else str(scores_dict), winner_id),
-            commit=True
-        )
-    except Exception:
-        pass
-
-def get_round_summary_text(uid: int, winner_name: str, scores_list: list) -> str:
-    """نص ملخص الجولة: من فاز ونقاط الجميع. scores_list = [(name, points), ...]"""
-    lines = [f"🏆 {winner_name} " + t(uid, "round_summary_won")]
-    for name, pts in (scores_list or [])[:10]:
-        lines.append(f"  • {name}: {pts}")
-    return "\n".join(lines)
-
-def prepare_replay_after_game(room_id: str, creator_id: int, max_players: int, score_limit: int, player_ids: list) -> tuple:
-    """لإعادة اللعب السريع: يخزن بيانات الغرفة ويُرجع (replay_id, message_text, InlineKeyboardMarkup) لإرساله لكل لاعب."""
-    replay_id = f"{room_id}_{creator_id}_{int(__import__('time').time())}"
-    replay_data[replay_id] = {
-        "creator_id": creator_id,
-        "max_players": max_players,
-        "score_limit": score_limit,
-        "player_ids": list(player_ids) if player_ids else [],
-    }
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 لعب مرة أخرى", callback_data=f"replay_{replay_id}")],
-        [InlineKeyboardButton(text=t(creator_id, "btn_home"), callback_data="home")]
-    ])
-    msg = "🏁 انتهت الجولة! اضغط «لعب مرة أخرى» لدعوة نفس الفريق."
-    return replay_id, msg, kb
 
 
 def _get_replay_from_db(replay_id: str):
@@ -1158,16 +958,12 @@ async def process_upgrade_password(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data == "play_friends")
 async def on_play_friends(c: types.CallbackQuery):
-    if await _ask_badge_color_if_needed(c):
-        return
     uid = c.from_user.id
-    text = "🎮 **اللعب مع الأصدقاء**\n\nاختر:"
+    # هذا المعالج كان مخصصاً للأونو، نحوله لدعوة أصدقاء عامة أو نحذفه إن لم نعد نحتاجه.
+    # حالياً سنعرض رسالة تفيد بأن اللعب مع الأصدقاء متاح في "برا السالفة".
+    text = "🎮 **اللعب مع الأصدقاء**\n\nمتوفر الآن في لعبة **برا السالفة**!"
     kb = [
-        [InlineKeyboardButton(text="➕ إنشاء غرفة", callback_data="room_create_start")],
-        [InlineKeyboardButton(text="🔑 دخول بكود", callback_data="room_join_input")],
-        [InlineKeyboardButton(text="🚪 الغرف المتوفرة", callback_data="available_rooms")],
-        [InlineKeyboardButton(text="📋 الغرف المفتوحة", callback_data="my_open_rooms")],
-        [InlineKeyboardButton(text=t(uid, "btn_public_rooms"), callback_data="public_rooms")],
+        [InlineKeyboardButton(text="🕵️‍♂️ اذهب إلى برا السالفة", callback_data="start_bara_menu")],
         [InlineKeyboardButton(text="🔙 رجوع", callback_data="home")]
     ]
     await c.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
@@ -1335,74 +1131,8 @@ async def complete_profile_password_handler(message: types.Message, state: FSMCo
 
 async def _join_room_by_code(message, code, user_data):
     uid = message.from_user.id
-    if user_data.get("is_banned") in (True, 1, "t", "true"):
-        await message.answer(t(message.from_user.id, "banned_no_rooms"))
-        return
-    room = db_query("SELECT * FROM rooms WHERE room_id = %s AND status = 'waiting'", (code,))
-    if not room:
-        await message.answer(t(uid, "room_not_found"))
-        await show_main_menu(message, user_data['player_name'], uid)
-        return
-
-    existing = db_query("SELECT * FROM room_players WHERE room_id = %s AND user_id = %s", (code, uid))
-    if existing:
-        await message.answer(t(uid, "already_in_room"))
-        return
-
-    p_count = db_query("SELECT count(*) as count FROM room_players WHERE room_id = %s", (code,))[0]['count']
-    max_p = room[0]['max_players']
-    if p_count >= max_p:
-        await message.answer(t(uid, "room_full"))
-        await show_main_menu(message, user_data['player_name'], uid)
-        return
-
-    u_name = user_data['player_name']
-    cur_count = db_query("SELECT COALESCE(MAX(join_order), 0) FROM room_players WHERE room_id = %s", (code,))[0][0] or 0
-    db_query("INSERT INTO room_players (room_id, user_id, player_name, is_ready, join_order) VALUES (%s, %s, %s, TRUE, %s)",
-             (code, uid, u_name, cur_count + 1), commit=True)
-
-    p_count += 1
-    creator_id = room[0]['creator_id']
-
-    all_in_room = db_query("SELECT user_id, player_name FROM room_players WHERE room_id = %s", (code,))
-    num_emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
-    players_list = ""
-    for idx, rp in enumerate(all_in_room):
-        marker = num_emojis[idx] if idx < len(num_emojis) else '👤'
-        players_list += f"{marker} {rp['player_name']}\n"
-
-    if p_count >= max_p:
-        db_query("UPDATE rooms SET status = 'playing' WHERE room_id = %s", (code,), commit=True)
-        all_players = db_query("SELECT user_id FROM room_players WHERE room_id = %s", (code,))
-        if max_p == 2:
-            for p in all_players:
-                try:
-                    await message.bot.send_message(p['user_id'], t(p['user_id'], "🎮 بدأت اللعبة! استعد..."))
-                except Exception:
-                    pass
-            await asyncio.sleep(0.5)
-            from handlers.room_2p import start_new_round
-            await start_new_round(code, message.bot, start_turn_idx=0)
-        else:
-            for p in all_players:
-                try:
-                    await message.bot.send_message(p['user_id'], t(p['user_id'], "game_starting_multi", n=max_p))
-                except Exception:
-                    pass
-            await asyncio.sleep(0.5)
-            from handlers.room_multi import start_game_multi
-            await start_game_multi(code, message.bot)
-    else:
-        wait_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=t(uid, "btn_home"), callback_data="home")]
-        ])
-        await message.answer(t(uid, "player_joined", name=u_name, count=p_count, max=max_p, list=players_list), reply_markup=wait_kb)
-        try:
-            notify_text = t(creator_id, "player_joined", name=u_name, count=p_count, max=max_p, list=players_list)
-            notify_text += t(creator_id, "waiting_players", n=max_p - p_count)
-            await message.bot.send_message(creator_id, notify_text, reply_markup=wait_kb)
-        except Exception:
-            pass
+    await message.answer("عذراً، روابط الانضمام القديمة للأونو لم تعد تعمل. يمكنك بدء لعبة جديدة من 'برا السالفة'.")
+    await show_main_menu(message, user_data['player_name'], uid)
 
 @router.callback_query(F.data == "auth_register")
 async def auth_register(c: types.CallbackQuery, state: FSMContext):
@@ -4452,9 +4182,8 @@ async def notify_followers_game_started(player_id, player_name, bot):
 @router.callback_query(F.data == "rules")
 async def show_rules(c: types.CallbackQuery):
     uid = c.from_user.id
-    rules_text = t(uid, "rules_text")
+    rules_text = "📜 **قوانين اللعب**\n\nيتم إضافة قوانين 'برا السالفة' قريباً. حالياً يمكنك اللعب مباشرة واكتشاف اللعبة!"
     kb = [
-        [InlineKeyboardButton(text=t(uid, "btn_training"), callback_data="training_screen")],
         [InlineKeyboardButton(text=t(uid, "btn_back_short"), callback_data="home")],
     ]
     try:
