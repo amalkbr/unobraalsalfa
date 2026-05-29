@@ -3208,6 +3208,8 @@ HTML_TEMPLATE = """
         }
 
         async function submitCreateDomino(maxPlayers) {
+            console.log('Creating Domino Room...', maxPlayers);
+            if (!currentUser) return alert("سجل دخولك أولاً");
             try {
                 const res = await fetch('/api/domino/create', {
                     method: 'POST',
@@ -3219,14 +3221,17 @@ HTML_TEMPLATE = """
                     })
                 });
                 const d = await res.json();
+                console.log('Create result:', d);
                 if(d.success) {
                     currentRoom = d.room_code;
-                    // عرض الرابط والرمز للمضيف قبل بدء Polling
                     showDominoRoomInfo(d.room_code);
                 } else {
-                    alert(d.msg);
+                    alert(d.msg || "فشل إنشاء الغرفة");
                 }
-            } catch(e) { console.error(e); }
+            } catch(e) {
+                console.error('Fetch error:', e);
+                alert("تعذر الاتصال بالخادم. تأكد من اتصالك بالإنترنت.");
+            }
         }
 
         function showDominoRoomInfo(code) {
