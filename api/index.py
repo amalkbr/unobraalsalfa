@@ -150,7 +150,8 @@ def init_db():
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_room_players_code_user ON room_players(room_code, user_id)",
                 "CREATE TABLE IF NOT EXISTS announcements (id SERIAL PRIMARY KEY, text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
                 "CREATE TABLE IF NOT EXISTS feedback (id SERIAL PRIMARY KEY, announcement_id INTEGER REFERENCES announcements(id) ON DELETE CASCADE, user_id BIGINT, player_name TEXT, text TEXT, type TEXT, original_text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
-                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_type TEXT DEFAULT 'bra_salpha'"
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_type TEXT DEFAULT 'bra_salpha'",
+                "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS team TEXT"
             ]
 
             for step in migration_steps:
@@ -552,6 +553,302 @@ def cleanup_stale_rooms():
         if conn: conn.rollback()
     finally:
         if conn: conn.close()
+
+@app.post("/api/domino/create")
+async def create_domino_room_endpoint(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        user_id = int(data['user_id'])
+        player_name = data['player_name']
+        room_code = ''.join(random.choices(string.ascii_uppercase, k=4))
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO rooms (room_code, host_id, status, game_type, win_limit)
+                VALUES (%s, %s, 'lobby', 'domino', 101)
+            """, (room_code, user_id))
+            cur.execute("""
+                INSERT INTO room_players (room_code, user_id, player_name, join_order)
+                VALUES (%s, %s, %s, 0)
+            """, (room_code, user_id, player_name))
+            conn.commit()
+        return {"success": True, "room_code": room_code}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
+    finally: conn.close()
+
+@app.post("/api/domino/set_team")
+async def set_domino_team(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        room_code = data['room_code'].upper()
+        user_id = int(data['user_id'])
+        team = data['team'] # 'A' or 'B'
+        with conn.cursor() as cur:
+            cur.execute("UPDATE room_players SET team = %s WHERE room_code = %s AND user_id = %s", (team, room_code, user_id))
+            conn.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
+    finally: conn.close()
+
+@app.post("/api/domino/play")
+async def domino_play_tile(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        room_code = data['room_code'].upper()
+        user_id = int(data['user_id'])
+        tile = data['tile'] # [a, b]
+        side = data.get('side', 'right') # 'left' or 'right'
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT game_data, status FROM rooms WHERE room_code = %s", (room_code,))
+            room = cur.fetchone()
+            if not room or room['status'] != 'playing': return {"success": False, "msg": "اللعبة ليست جارية"}
+
+            game_data = room['game_data']
+            if game_data['ordered_ids'][game_data['turn_index']] != user_id:
+                return {"success": False, "msg": "ليس دورك"}
+
+            hand = game_data['hands'][str(user_id)]
+            if tile not in hand: return {"success": False, "msg": "لا تملك هذا الحجر"}
+
+            board = game_data['board']
+            if not board:
+                board.append(tile)
+            else:
+                left_val = board[0][0]
+                right_val = board[-1][1]
+
+                if side == 'left':
+                    if tile[1] == left_val:
+                        board.insert(0, tile)
+                    elif tile[0] == left_val:
+                        board.insert(0, [tile[1], tile[0]])
+                    else: return {"success": False, "msg": "الحجر لا يطابق الطرف الأيسر"}
+                else: # right
+                    if tile[0] == right_val:
+                        board.append(tile)
+                    elif tile[1] == right_val:
+                        board.append([tile[1], tile[0]])
+                    else: return {"success": False, "msg": "الحجر لا يطابق الطرف الأيمن"}
+
+            # Remove from hand
+            hand.remove(tile)
+
+            # Refined scoring: winners get points equal to sum of opponents' hand pips (and partner's pips if applicable)
+            if not hand:
+                game_data['phase'] = 'round_end'
+                # Find winner's team
+                cur.execute("SELECT team FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
+                winner_team = cur.fetchone()['team']
+
+                # Calculate total pips remaining in other players' hands
+                total_pips = 0
+                for pid, phand in game_data['hands'].items():
+                    # In Domino, usually you count all other hands if you win.
+                    # In some variations, you count only opponents. We'll count all other remaining pips.
+                    for t in phand:
+                        total_pips += (t[0] + t[1])
+
+                game_data['scores'][winner_team] += total_pips
+                # Reset board for next round or handle game over logic could go here,
+                # but for now we just mark phase and add score.
+            else:
+                # Check for stalemate (Board Locked)
+                left_val = board[0][0]
+                right_val = board[-1][1]
+
+                can_anyone_move = False
+                for pid, phand in game_data['hands'].items():
+                    for t in phand:
+                        if t[0] in [left_val, right_val] or t[1] in [left_val, right_val]:
+                            can_anyone_move = True
+                            break
+                    if can_anyone_move: break
+
+                # If no one can move and boneyard is empty, it's a stalemate
+                if not can_anyone_move and not game_data['boneyard']:
+                    game_data['phase'] = 'round_end'
+                    # Calculate hand totals for everyone to find who has the least points
+                    player_totals = {}
+                    for pid, phand in game_data['hands'].items():
+                        player_totals[pid] = sum(t[0] + t[1] for t in phand)
+
+                    # Find player(s) with minimum points
+                    min_pips = min(player_totals.values())
+                    winners = [pid for pid, pips in player_totals.items() if pips == min_pips]
+
+                    # In case of tie, some rules say no points or split. Let's give points to first winner's team found.
+                    cur.execute("SELECT team FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, int(winners[0])))
+                    stalemate_winner_team = cur.fetchone()['team']
+
+                    # Total pips from all hands
+                    all_pips = sum(player_totals.values())
+                    game_data['scores'][stalemate_winner_team] += all_pips
+                else:
+                    game_data['turn_index'] = (game_data['turn_index'] + 1) % len(game_data['ordered_ids'])
+
+            cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+            conn.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
+    finally: conn.close()
+
+@app.post("/api/domino/next_round")
+async def domino_next_round(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        room_code = data['room_code'].upper()
+        user_id = int(data['user_id'])
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT host_id, game_data FROM rooms WHERE room_code = %s", (room_code,))
+            room = cur.fetchone()
+            if room['host_id'] != user_id: return {"success": False, "msg": "المضيف فقط يمكنه بدء جولة جديدة"}
+
+            game_data = room['game_data']
+            if game_data['phase'] != 'round_end': return {"success": False, "msg": "الجولة لم تنتهِ بعد"}
+
+            # Get players to reshuffle
+            cur.execute("SELECT user_id, team FROM room_players WHERE room_code = %s", (room_code,))
+            players = cur.fetchall()
+
+            all_tiles = [[i, j] for i in range(7) for j in range(i, 7)]
+            random.shuffle(all_tiles)
+
+            hands = {}
+            for p in players:
+                hands[str(p['user_id'])] = [all_tiles.pop() for _ in range(7)]
+
+            game_data['hands'] = hands
+            game_data['boneyard'] = all_tiles
+            game_data['board'] = []
+            game_data['phase'] = 'playing'
+            # Keep existing scores and ordered_ids
+            # Rotate starter for variety or find double 6 again
+            game_data['turn_index'] = (game_data.get('round_count', 0) + 1) % len(game_data['ordered_ids'])
+            game_data['round_count'] = game_data.get('round_count', 0) + 1
+
+            cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+            conn.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
+    finally: conn.close()
+
+@app.post("/api/domino/draw")
+async def domino_draw_tile(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        room_code = data['room_code'].upper()
+        user_id = int(data['user_id'])
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT game_data FROM rooms WHERE room_code = %s", (room_code,))
+            room = cur.fetchone()
+            game_data = room['game_data']
+
+            if game_data['ordered_ids'][game_data['turn_index']] != user_id:
+                return {"success": False, "msg": "ليس دورك"}
+
+            if not game_data['boneyard']:
+                # Pass turn if no more tiles
+                game_data['turn_index'] = (game_data['turn_index'] + 1) % len(game_data['ordered_ids'])
+                cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                conn.commit()
+                return {"success": True, "msg": "لا يوجد أحجار للسحب، تم تمرير الدور"}
+
+            tile = game_data['boneyard'].pop()
+            game_data['hands'][str(user_id)].append(tile)
+
+            cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+            conn.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
+    finally: conn.close()
+
+@app.post("/api/domino/start")
+async def start_domino_game_endpoint(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False, "msg": "Database connection error"}
+    try:
+        room_code = data['room_code'].upper()
+        user_id = int(data['user_id'])
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT host_id, game_type FROM rooms WHERE room_code = %s", (room_code,))
+            room = cur.fetchone()
+            if not room or room['game_type'] != 'domino':
+                return {"success": False, "msg": "الغرفة غير موجودة أو ليست دومينو"}
+            if room['host_id'] != user_id:
+                return {"success": False, "msg": "فقط المضيف يمكنه بدء اللعبة"}
+
+            cur.execute("SELECT user_id, player_name, team FROM room_players WHERE room_code = %s", (room_code,))
+            players = cur.fetchall()
+            n = len(players)
+
+            if n not in [2, 4]:
+                return {"success": False, "msg": "يجب أن يكون عدد اللاعبين 2 أو 4"}
+
+            team_a = [p for p in players if p['team'] == 'A']
+            team_b = [p for p in players if p['team'] == 'B']
+
+            if n == 4 and (len(team_a) != 2 or len(team_b) != 2):
+                return {"success": False, "msg": "توزيع الفرق غير عادل (يجب 2 ضد 2)"}
+            if n == 2 and (len(team_a) != 1 or len(team_b) != 1):
+                return {"success": False, "msg": "توزيع الفرق غير عادل (يجب 1 ضد 1)"}
+
+            # إنشاء وتوزيع الأحجار
+            all_tiles = [[i, j] for i in range(7) for j in range(i, 7)]
+            random.shuffle(all_tiles)
+
+            hands = {}
+            for p in players:
+                hands[str(p['user_id'])] = [all_tiles.pop() for _ in range(7)]
+
+            # ترتيب اللعب (دائري: فريق A ثم B ثم A ثم B)
+            # إذا 4 لاعبين: A1, B1, A2, B2
+            # إذا 2 لاعبين: A1, B1
+            ordered_players = []
+            if n == 4:
+                ordered_players = [team_a[0], team_b[0], team_a[1], team_b[1]]
+            else:
+                ordered_players = [team_a[0], team_b[0]]
+
+            # من يبدأ؟ (صاحب أعلى دبل، أو الدبل 6)
+            starter_id = ordered_players[0]['user_id']
+            max_double = -1
+            for p_id, hand in hands.items():
+                for tile in hand:
+                    if tile[0] == tile[1] and tile[0] > max_double:
+                        max_double = tile[0]
+                        starter_id = int(p_id)
+
+            game_data = {
+                "hands": hands,
+                "boneyard": all_tiles,
+                "board": [],
+                "turn_index": next(i for i, p in enumerate(ordered_players) if p['user_id'] == starter_id),
+                "ordered_ids": [p['user_id'] for p in ordered_players],
+                "scores": {"A": 0, "B": 0},
+                "history": [],
+                "phase": "playing"
+            }
+
+            cur.execute("UPDATE rooms SET status = 'playing', game_data = %s WHERE room_code = %s",
+                        (json.dumps(game_data), room_code))
+            conn.commit()
+
+        return {"success": True}
+    except Exception as e:
+        print(f"Error starting domino: {e}")
+        return {"success": False, "msg": str(e)}
+    finally: conn.close()
 
 @app.post("/api/online/create")
 async def create_room(data: dict):
@@ -2342,6 +2639,66 @@ HTML_TEMPLATE = """
             animation: typing-dots 1.5s infinite;
         }
 
+        /* Domino Styles */
+        .domino-tile {
+            background: #eee;
+            color: #222;
+            width: 45px;
+            height: 90px;
+            border-radius: 6px;
+            display: inline-flex;
+            flex-direction: column;
+            border: 2px solid #555;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
+            position: relative;
+            user-select: none;
+            flex-shrink: 0;
+            transition: transform 0.2s;
+        }
+        .domino-tile.double {
+            width: 90px;
+            height: 45px;
+            flex-direction: row;
+        }
+        .domino-half {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 900;
+            font-size: 22px;
+            font-family: 'Cairo', sans-serif;
+        }
+        .domino-line {
+            height: 2px;
+            background: #555;
+            width: 80%;
+            margin: 0 auto;
+        }
+        .domino-tile.double .domino-line {
+            width: 2px;
+            height: 80%;
+            margin: auto 0;
+        }
+        .domino-tile.playable {
+            cursor: pointer;
+        }
+        .domino-tile.playable:hover {
+            transform: translateY(-5px) scale(1.05);
+            border-color: var(--primary);
+            box-shadow: 0 0 15px var(--primary);
+        }
+        #domino-board {
+            perspective: 1000px;
+        }
+        .domino-tile {
+            animation: tileAppear 0.3s ease-out;
+        }
+        @keyframes tileAppear {
+            from { opacity: 0; transform: scale(0.5); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
         /* Responsive styling for larger screen devices */
         @media (min-width: 600px) {
             .container { max-width: 100%; width: 100%; padding: 0; }
@@ -2648,7 +3005,127 @@ HTML_TEMPLATE = """
             }
         }
 
-        function showGameSelection() {
+        function renderDominoGame() {
+            if(!window.roomData) return;
+            const {room, players} = window.roomData;
+            const gd = room.game_data;
+            const me = players.find(p => p.user_id == currentUser.user_id);
+            const myHand = gd.hands[currentUser.user_id] || [];
+            const isMyTurn = gd.ordered_ids[gd.turn_index] == currentUser.user_id;
+            const board = gd.board || [];
+
+            let html = `
+                <div class="card domino-game-card" style="padding:15px; max-width:100%; width:98vw; min-height:80vh; display:flex; flex-direction:column;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                        <div>
+                            <span style="background:#3498db; padding:4px 10px; border-radius:10px; font-size:12px;">فريق A: ${gd.scores.A}</span>
+                            <span style="background:#e74c3c; padding:4px 10px; border-radius:10px; font-size:12px; margin-right:5px;">فريق B: ${gd.scores.B}</span>
+                        </div>
+                        <div style="color:var(--accent); font-weight:bold;">${isMyTurn ? "🔴 دورك الآن!" : `دور: ${players.find(p=>p.user_id == gd.ordered_ids[gd.turn_index])?.player_name}`}</div>
+                    </div>
+
+                    <!-- طاولة اللعب -->
+                    <div id="domino-board" style="flex-grow:1; background:rgba(0,0,0,0.3); border-radius:20px; position:relative; overflow:auto; display:flex; align-items:center; justify-content:center; padding:40px; border:2px dashed rgba(255,255,255,0.1); margin-bottom:20px; min-height:200px; flex-wrap:wrap;">
+                        ${gd.phase === 'round_end' ? `
+                            <div style="text-align:center;">
+                                <h2 style="color:var(--accent)">انتهت الجولة!</h2>
+                                <p>النقاط الحالية: A:${gd.scores.A} | B:${gd.scores.B}</p>
+                                ${room.host_id == currentUser.user_id ?
+                                    `<button onclick="startNextDominoRound()" style="background:var(--success)">جولة جديدة 🔄</button>` :
+                                    `<p style="color:#aaa;">بانتظار المضيف لبدء الجولة التالية...</p>`
+                                }
+                            </div>
+                        ` : (board.length === 0 ? '<div style="color:#555; font-size:20px;">الطاولة خالية.. ابدأ بوضع أول حجر</div>' :
+                          board.map((tile, idx) => `
+                            <div class="domino-tile ${tile[0]===tile[1]?'double':''}" style="margin:2px;">
+                                <div class="domino-half">${tile[0]}</div>
+                                <div class="domino-line"></div>
+                                <div class="domino-half">${tile[1]}</div>
+                            </div>
+                          `).join('')
+                        )}
+                    </div>
+
+                    <!-- يد اللاعب -->
+                    <div style="background:rgba(255,255,255,0.05); padding:15px; border-radius:20px;">
+                        <div style="margin-bottom:10px; font-size:14px; display:flex; justify-content:space-between;">
+                            <span>أحجارك (${myHand.length})</span>
+                            <button onclick="drawDominoTile()" style="width:auto; padding:5px 15px; font-size:12px; background:var(--primary); display:${isMyTurn?'block':'none'}">➕ سحب حجر</button>
+                        </div>
+                        <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:center;">
+                            ${myHand.map((tile, idx) => `
+                                <div class="domino-tile playable" onclick="${isMyTurn ? `selectDominoTile(${JSON.stringify(tile)})` : ''}">
+                                    <div class="domino-half">${tile[0]}</div>
+                                    <div class="domino-line"></div>
+                                    <div class="domino-half">${tile[1]}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>`;
+
+            document.getElementById('main-ui').innerHTML = html;
+        }
+
+        let selectedTile = null;
+        function selectDominoTile(tile) {
+            selectedTile = tile;
+            const board = window.roomData.room.game_data.board;
+            if (board.length === 0) {
+                playDominoTile(tile, 'right');
+            } else {
+                // إظهار خيارين لليسار أو اليمين
+                const modal = document.createElement('div');
+                modal.className = 'card';
+                modal.style = "position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; box-shadow:0 0 50px rgba(0,0,0,0.9);";
+                modal.innerHTML = `
+                    <h3>وين تبي تحط الحجر؟</h3>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-top:20px;">
+                        <button onclick="playDominoTile(${JSON.stringify(tile)}, 'left'); this.parentElement.parentElement.remove()">⬅️ اليسار</button>
+                        <button onclick="playDominoTile(${JSON.stringify(tile)}, 'right'); this.parentElement.parentElement.remove()">اليمين ➡️</button>
+                    </div>
+                    <button style="background:#636e72; margin-top:15px;" onclick="this.parentElement.remove()">إلغاء</button>
+                `;
+                document.body.appendChild(modal);
+            }
+        }
+
+        async function playDominoTile(tile, side) {
+            try {
+                const res = await fetch('/api/domino/play', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id, tile, side})
+                });
+                const d = await res.json();
+                if(!d.success) alert(d.msg);
+            } catch(e) { console.error(e); }
+        }
+
+        async function drawDominoTile() {
+            try {
+                const res = await fetch('/api/domino/draw', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
+                });
+                const d = await res.json();
+                if(!d.success) alert(d.msg);
+                else if(d.msg) showToast(d.msg);
+            } catch(e) { console.error(e); }
+        }
+
+        async function startNextDominoRound() {
+            try {
+                const res = await fetch('/api/domino/next_round', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
+                });
+                const d = await res.json();
+                if(!d.success) alert(d.msg);
+            } catch(e) { console.error(e); }
+        }
             history.pushState({screen: 'game_selection'}, "");
             document.getElementById('main-ui').innerHTML = `
                 <div class="card" style="padding: 30px 20px;">
@@ -2664,7 +3141,7 @@ HTML_TEMPLATE = """
                     </div>
 
                     <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.08);">
-                        <p style="font-size: 14px; color:#777;">صُممت بكل حب لخدمتكم ❤️</p>
+                        <p style="font-size: 20px; color:#fff;">صُممت بكل حب لخدمتكم ❤️</p>
                     </div>
                 </div>`;
         }
@@ -3193,8 +3670,10 @@ HTML_TEMPLATE = """
                         }
 
                         // التحديث البصري للحالة
-                        if(status === 'waiting') {
+                        if(status === 'waiting' || (d.room.game_type === 'domino' && status === 'lobby')) {
                             renderRoom();
+                        } else if(status === 'playing' && d.room.game_type === 'domino') {
+                            renderDominoGame();
                         } else if(status === 'voting_limit') {
                             renderVotingLimit();
                         } else if(status === 'voting_cat') {
@@ -3355,6 +3834,9 @@ HTML_TEMPLATE = """
             if(!window.roomData) {
                 document.getElementById('main-ui').innerHTML = `<div class="card">جاري التحميل...</div>`;
                 return;
+            }
+            if(window.roomData.room.game_type === 'domino' && window.roomData.room.status === 'lobby') {
+                return renderDominoLobby();
             }
             const {room, players} = window.roomData;
             const me = players.find(p => p.user_id == currentUser.user_id);
@@ -4011,10 +4493,39 @@ HTML_TEMPLATE = """
                 </div>`;
         }
 
-        async function updateProfile() {
-            const res = await fetch('/api/auth/update', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({old_username: currentUser.username_key, username: edit_u.value, password: edit_p.value, name: edit_n.value})});
-            const d = await res.json();
-            if(d.success) { alert("تم التحديث! سجل دخولك مجدداً"); logout(); } else alert(d.msg);
+        async function startDominoGame() {
+            const {players} = window.roomData;
+            const pCount = players.length;
+            const playersInTeams = players.filter(p => p.team).length;
+
+            if (pCount !== 2 && pCount !== 4) {
+                return alert("يجب أن يكون عدد اللاعبين 2 أو 4 للعب الدومينو.");
+            }
+
+            if (playersInTeams !== pCount) {
+                return alert("يجب على جميع اللاعبين اختيار فريق أولاً.");
+            }
+
+            const teamA = players.filter(p => p.team === 'A').length;
+            const teamB = players.filter(p => p.team === 'B').length;
+
+            if (pCount === 4 && (teamA !== 2 || teamB !== 2)) {
+                return alert("يجب أن يكون شخصين في كل فريق (2 ضد 2).");
+            }
+            if (pCount === 2 && (teamA !== 1 || teamB !== 1)) {
+                return alert("يجب أن يكون شخص واحد في كل فريق (1 ضد 1).");
+            }
+
+            showLoading("جاري توزيع الأحجار...");
+            try {
+                const res = await fetch('/api/domino/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
+                });
+                const d = await res.json();
+                if(!d.success) alert(d.msg || "فشل بدء اللعبة");
+            } catch(e) { console.error(e); }
         }
 
         function changePCount(delta) {
