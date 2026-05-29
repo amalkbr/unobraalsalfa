@@ -3142,8 +3142,17 @@ HTML_TEMPLATE = """
             const board = window.roomData.room.game_data.board;
             if (board.length === 0) {
                 playDominoTile(tile, 'right');
-            } else {
-                // إظهار خيارين لليسار أو اليمين
+                return;
+            }
+
+            const leftVal = board[0][0];
+            const rightVal = board[board.length - 1][1];
+
+            const canLeft = (tile[0] === leftVal || tile[1] === leftVal);
+            const canRight = (tile[0] === rightVal || tile[1] === rightVal);
+
+            if (canLeft && canRight && leftVal !== rightVal) {
+                // يركب في الجهتين ومختلفتين، نسأل اللاعب
                 const modal = document.createElement('div');
                 modal.className = 'card';
                 modal.style = "position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; box-shadow:0 0 50px rgba(0,0,0,0.9);";
@@ -3156,6 +3165,12 @@ HTML_TEMPLATE = """
                     <button style="background:#636e72; margin-top:15px;" onclick="this.parentElement.remove()">إلغاء</button>
                 `;
                 document.body.appendChild(modal);
+            } else if (canLeft) {
+                playDominoTile(tile, 'left');
+            } else if (canRight) {
+                playDominoTile(tile, 'right');
+            } else {
+                showToast("هذا الحجر لا يركب!");
             }
         }
 
@@ -3180,7 +3195,10 @@ HTML_TEMPLATE = """
                 });
                 const d = await res.json();
                 if(!d.success) alert(d.msg);
-                else if(d.msg) showToast(d.msg);
+                else {
+                    if(d.msg) showToast(d.msg);
+                    pollRoomState(); // تحديث الواجهة فوراً لرؤية الحجر الجديد
+                }
             } catch(e) { console.error(e); }
         }
 

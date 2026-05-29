@@ -648,7 +648,7 @@ async def handle_play_multi(c: types.CallbackQuery, state: FSMContext):
             new_dir = direction * -1
             db_query("UPDATE rooms SET direction = %s WHERE room_id = %s", (new_dir, room_id), commit=True)
             next_turn = (p_idx + new_dir) % num_players
-            dir_text = "يمين ➡️" if new_dir == 1 else "يسار ⬅️"
+            dir_text = "يسار ➡️" if new_dir == 1 else "يمين ⬅️"
             alerts[c.from_user.id] = f"🔄 غيرت الاتجاه لـ {dir_text}!"
             for op in players:
                 if op['user_id'] != c.from_user.id:

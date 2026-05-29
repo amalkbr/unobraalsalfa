@@ -148,7 +148,6 @@ async def domino_draw_tile(data: dict):
         room_code = data['room_code'].upper()
         user_id = int(data['user_id'])
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Use FOR UPDATE to prevent race conditions
             cur.execute("SELECT game_data FROM rooms WHERE room_code = %s FOR UPDATE", (room_code,))
             room = cur.fetchone()
             if not room: return {"success": False, "msg": "الغرفة غير موجودة"}
@@ -159,22 +158,27 @@ async def domino_draw_tile(data: dict):
             if game_data['ordered_ids'][game_data['turn_index']] != user_id:
                 return {"success": False, "msg": "ليس دورك"}
 
-            if not game_data.get('boneyard') or len(game_data['boneyard']) == 0:
-                # If no more tiles, pass turn
+            if game_data.get('phase') != 'playing':
+                return {"success": False, "msg": "اللعبة متوقفة حالياً"}
+
+            boneyard = game_data.get('boneyard', [])
+            if len(boneyard) == 0:
+                # إذا انتهت الأحجار، يمر الدور للاعب التالي
                 game_data['turn_index'] = (game_data['turn_index'] + 1) % len(game_data['ordered_ids'])
                 cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
                 conn.commit()
-                return {"success": True, "msg": "لا يوجد أحجار للسحب، تم تمرير الدور"}
+                return {"success": True, "msg": "انتهت الأحجار، تم تمرير الدور"}
 
-            # Random draw from remaining boneyard
-            # In our case it's already shuffled, so pop() is random enough.
-            tile = game_data['boneyard'].pop()
+            # سحب حجر
+            tile = boneyard.pop()
             game_data['hands'][str(user_id)].append(tile)
+            game_data['boneyard'] = boneyard
 
             cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
             conn.commit()
         return {"success": True}
     except Exception as e:
+        print(f"Draw Error: {e}")
         return {"success": False, "msg": str(e)}
     finally: conn.close()
 
