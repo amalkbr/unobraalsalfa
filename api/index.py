@@ -296,6 +296,32 @@ async def add_announcement(data: dict):
         return {"success": False, "msg": str(e)}
     finally: conn.close()
 
+@app.post("/api/admin/announcements/update")
+async def update_announcement(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE announcements SET text = %s WHERE id = %s", (data['text'], data['id']))
+            conn.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
+    finally: conn.close()
+
+@app.post("/api/admin/announcements/delete")
+async def delete_announcement(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM announcements WHERE id = %s", (data['id'],))
+            conn.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
+    finally: conn.close()
+
 @app.get("/sw.js")
 async def service_worker():
     return FileResponse(os.path.join("static", "sw.js"))
@@ -4948,6 +4974,86 @@ HTML_TEMPLATE = """
             } catch(e) { console.error(e); alert("خطأ في الاتصال"); }
         }
 
+        async function adminManageAnnouncements() {
+            showLoading("جاري تحميل التحديثات...");
+            try {
+                const res = await fetch('/api/announcements');
+                const announcements = await res.json();
+
+                let html = `
+                    <div class="card" style="max-height: 80vh; overflow-y: auto;">
+                        <h2>📢 إدارة التحديثات</h2>
+
+                        <div style="background:rgba(255,255,255,0.05); padding:20px; border-radius:15px; margin-bottom:30px; border:1px solid rgba(255,255,255,0.1);">
+                            <h3 style="margin-top:0;">إرسال تحديث جديد</h3>
+                            <textarea id="announcement_text" placeholder="اكتب التحديث هنا..." style="width:100%; height:80px; padding:12px; border-radius:12px; background:#111; color:white; border:1px solid #444; margin-bottom:15px;"></textarea>
+                            <button onclick="sendAnnouncement()">إرسال التحديث 🚀</button>
+                        </div>
+
+                        <h3>التحديثات السابقة (يمكنك التعديل أو الحذف)</h3>
+                        <div id="admin-announcements-list">`;
+
+                if (!announcements || announcements.length === 0) {
+                    html += `<p style="color:#aaa;">لا توجد تحديثات سابقة.</p>`;
+                } else {
+                    announcements.forEach(item => {
+                        html += `
+                            <div class="announcement-item" style="border-right-color: #f1c40f; margin-bottom:15px;">
+                                <textarea id="edit_text_${item.id}" style="width:100%; background:transparent; border:none; color:white; font-size:14px; resize:none; height:60px;">${item.text}</textarea>
+                                <div style="display:flex; gap:10px; margin-top:10px;">
+                                    <button onclick="updateAnnouncement(${item.id})" style="padding:5px 15px; font-size:12px; background:#2ecc71;">حفظ التعديل ✅</button>
+                                    <button onclick="deleteAnnouncement(${item.id})" style="padding:5px 15px; font-size:12px; background:#e74c3c;">حذف 🗑️</button>
+                                </div>
+                            </div>`;
+                    });
+                }
+
+                html += `
+                        </div>
+                        <button style="margin-top:20px; background:#636e72;" onclick="showAdminDashboard(false)">رجوع</button>
+                    </div>`;
+
+                document.getElementById('main-ui').innerHTML = html;
+            } catch (e) { console.error(e); alert("خطأ في التحميل"); }
+        }
+
+        async function updateAnnouncement(id) {
+            const text = document.getElementById(`edit_text_${id}`).value.trim();
+            if(!text) return alert("لا يمكن ترك النص فارغاً");
+
+            showLoading("جاري الحفظ...");
+            try {
+                const res = await fetch('/api/admin/announcements/update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id, text})
+                });
+                const d = await res.json();
+                if(d.success) {
+                    alert("تم تعديل التحديث بنجاح ✨");
+                    adminManageAnnouncements();
+                } else { alert("فشل التعديل"); }
+            } catch(e) { console.error(e); }
+        }
+
+        async function deleteAnnouncement(id) {
+            if(!confirm("هل أنت متأكد من حذف هذا التحديث؟")) return;
+
+            showLoading("جاري الحذف...");
+            try {
+                const res = await fetch('/api/admin/announcements/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id})
+                });
+                const d = await res.json();
+                if(d.success) {
+                    alert("تم الحذف بنجاح");
+                    adminManageAnnouncements();
+                } else { alert("فشل الحذف"); }
+            } catch(e) { console.error(e); }
+        }
+
         async function sendAnnouncement() {
             const text = document.getElementById('announcement_text').value.trim();
             if(!text) return alert("يرجى كتابة نص");
@@ -4962,22 +5068,11 @@ HTML_TEMPLATE = """
                 const d = await res.json();
                 if(d.success) {
                     alert("تم إرسال التحديث بنجاح ✅");
-                    showAdminDashboard(false);
+                    adminManageAnnouncements();
                 } else {
                     alert("فشل الإرسال");
                 }
             } catch(e) { console.error(e); alert("خطأ في الاتصال"); }
-        }
-
-        function adminManageAnnouncements() {
-            document.getElementById('main-ui').innerHTML = `
-                <div class="card">
-                    <h2>📢 إرسال تحديث جديد</h2>
-                    <p style="margin-bottom:20px; color:#aaa;">سيظهر هذا التحديث لجميع اللاعبين عبر زر الجرس.</p>
-                    <textarea id="announcement_text" placeholder="اكتب التحديث هنا..." style="width:100%; height:120px; padding:15px; border-radius:15px; background:#222; color:white; border:1px solid #444; margin-bottom:20px;"></textarea>
-                    <button onclick="sendAnnouncement()">إرسال التحديث 🚀</button>
-                    <button style="background:#636e72; margin-top:10px;" onclick="showAdminDashboard(false)">رجوع</button>
-                </div>`;
         }
 
         function adminManageTimeouts() {
