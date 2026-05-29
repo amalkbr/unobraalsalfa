@@ -2720,22 +2720,23 @@ HTML_TEMPLATE = """
         .domino-tile {
             background: #eee;
             color: #222;
-            width: 45px;
-            height: 90px;
+            width: 90px; /* العادي بالعرض */
+            height: 45px;
             border-radius: 6px;
             display: inline-flex;
-            flex-direction: column;
+            flex-direction: row; /* توزيع الأرقام بجانب بعض */
             border: 2px solid #555;
             box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
             position: relative;
             user-select: none;
             flex-shrink: 0;
             transition: transform 0.2s;
+            align-items: center;
         }
         .domino-tile.double {
-            width: 90px;
-            height: 45px;
-            flex-direction: row;
+            width: 45px; /* الصاير بالطول */
+            height: 90px;
+            flex-direction: column; /* توزيع الأرقام فوق بعض */
         }
         .domino-half {
             flex: 1;
@@ -2747,15 +2748,15 @@ HTML_TEMPLATE = """
             font-family: 'Cairo', sans-serif;
         }
         .domino-line {
-            height: 2px;
+            width: 2px; /* الخط الفاصل بالعرض يكون عمودي */
+            height: 80%;
             background: #555;
-            width: 80%;
-            margin: 0 auto;
+            margin: auto 0;
         }
         .domino-tile.double .domino-line {
-            width: 2px;
-            height: 80%;
-            margin: auto 0;
+            width: 80%; /* الخط الفاصل بالطول يكون أفقي */
+            height: 2px;
+            margin: 0 auto;
         }
         .domino-tile.playable {
             cursor: pointer;
@@ -3913,6 +3914,7 @@ HTML_TEMPLATE = """
             }, 1000);
         }
 
+        let lastStateHash = "";
         let activeStatePromise = null;
         async function updateRoomState() {
             if(!currentRoom) return false;
@@ -3920,9 +3922,7 @@ HTML_TEMPLATE = """
 
             activeStatePromise = (async () => {
                 try {
-                    console.log('updateRoomState fetching', currentRoom);
                     const res = await fetch(`/api/online/room/${currentRoom}`);
-                    console.log('updateRoomState status', res.status);
                     if (!res.ok) {
                         if (res.status === 404) {
                             showError("تم إغلاق الغرفة من قبل المضيف أو انتهت جلسة اللعب.", "الغرفة غير موجودة أو مغلقة");
@@ -3932,8 +3932,22 @@ HTML_TEMPLATE = """
                         throw new Error("Room fetch failed");
                     }
                     const d = await res.json();
-                    console.log('updateRoomState response', d);
                     if(d.success) {
+                        // التحقق من تغير البيانات لمنع الوميض (الرمش)
+                        const currentStateHash = JSON.stringify({
+                            status: d.room.status,
+                            p_count: d.players.length,
+                            turn: d.room.game_data?.turn_index,
+                            board_len: d.room.game_data?.board?.length,
+                            scores: d.room.game_data?.scores,
+                            phase: d.room.game_data?.phase
+                        });
+
+                        if (currentStateHash === lastStateHash) {
+                            return true; // لم يتغير شيء، لا داعي للتحديث
+                        }
+                        lastStateHash = currentStateHash;
+
                         window.roomData = d;
                         const status = d.room.status;
 
