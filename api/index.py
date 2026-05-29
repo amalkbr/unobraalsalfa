@@ -3197,7 +3197,7 @@ HTML_TEMPLATE = """
                 if(!d.success) alert(d.msg);
                 else {
                     if(d.msg) showToast(d.msg);
-                    pollRoomState(); // تحديث الواجهة فوراً لرؤية الحجر الجديد
+                    updateRoomState(); // تحديث الواجهة فوراً لرؤية الحجر الجديد
                 }
             } catch(e) { console.error(e); }
         }
@@ -3942,6 +3942,15 @@ HTML_TEMPLATE = """
                     }
                     const d = await res.json();
                     if(d.success) {
+                        // Check if a player left in Domino
+                        if (d.room.game_type === 'domino' && window.roomData && window.roomData.players.length > d.players.length) {
+                            const leftPlayer = window.roomData.players.find(p => !d.players.find(p2 => p2.user_id === p.user_id));
+                            if (leftPlayer) {
+                                showToast(`اللاعب ${leftPlayer.player_name} غادر اللعبة`, "warning");
+                                AUDIO.penalty.play().catch(()=>{});
+                            }
+                        }
+
                         // التحقق من تغير البيانات لمنع الوميض (الرمش)
                         const currentStateHash = JSON.stringify({
                             status: d.room.status,
@@ -4770,7 +4779,7 @@ HTML_TEMPLATE = """
                 }
             }
             currentRoom = null;
-            showMenu();
+            navigateTo('online_menu');
         }
 
         function showEditProfile(push = true) {
