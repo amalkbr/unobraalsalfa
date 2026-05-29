@@ -90,6 +90,7 @@ def init_db():
                     vote_limit INTEGER,
                     vote_cat TEXT,
                     join_order INTEGER DEFAULT 0,
+                    team TEXT,
                     PRIMARY KEY (room_code, user_id)
                 );
                 CREATE TABLE IF NOT EXISTS categories (
@@ -566,25 +567,36 @@ async def create_domino_room_endpoint(data: dict):
         max_players = int(data.get('max_players', 4))
         room_code = ''.join(random.choices(string.ascii_uppercase, k=4))
         with conn.cursor() as cur:
-            # التأكد من وجود الأعمدة الجديدة (Migration بسيط)
-            try:
-                cur.execute("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_type TEXT DEFAULT 'spy'")
-                cur.execute("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS max_players INTEGER DEFAULT 10")
-            except: pass
+            # التأكد من وجود الأعمدة الجديدة بشكل آمن خارج المعاملة الرئيسية إذا أمكن
+            # أو مع عمل rollback في حال الفشل لتجنب كسر المعاملة
+            for col_query in [
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_type TEXT DEFAULT 'spy'",
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS max_players INTEGER DEFAULT 10",
+                "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS team TEXT"
+            ]:
+                try:
+                    cur.execute(col_query)
+                except Exception as ex:
+                    print(f"Migration notice: {ex}")
+                    conn.rollback() # إعادة تعيين حالة المعاملة في حال فشل إضافة العمود (ربما موجود مسبقاً)
 
             cur.execute("""
                 INSERT INTO rooms (room_code, host_id, status, game_type, win_limit, max_players)
                 VALUES (%s, %s, 'lobby', 'domino', 101, %s)
             """, (room_code, user_id, max_players))
+
             cur.execute("""
-                INSERT INTO room_players (room_code, user_id, player_name, join_order)
-                VALUES (%s, %s, %s, 0)
+                INSERT INTO room_players (room_code, user_id, player_name, join_order, team)
+                VALUES (%s, %s, %s, 0, 'A')
             """, (room_code, user_id, player_name))
+
             conn.commit()
         return {"success": True, "room_code": room_code}
     except Exception as e:
         print(f"Error creating domino room: {e}")
-        return {"success": False, "msg": "حدث خطأ أثناء إنشاء الغرفة. يرجى المحاولة مرة أخرى."}
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "msg": f"خطأ تقني: {str(e)}"}
     finally: conn.close()
 
 @app.post("/api/domino/set_team")
