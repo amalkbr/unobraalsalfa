@@ -950,9 +950,9 @@ async def join_room(data: dict):
         user_id = int(data['user_id'])
         player_name = data['player_name']
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # 1. فحص الأعمدة المتاحة في جدول الغرف
+            # 1. فحص الأعمدة المتاحة في جدول الغرف بطريقة متوافقة مع RealDictCursor
             cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'rooms'")
-            room_cols = [r[0] for r in cur.fetchall()]
+            room_cols = [r['column_name'] for r in cur.fetchall()]
             id_col = 'room_code' if 'room_code' in room_cols else 'room_id'
 
             cur.execute(f"SELECT status, game_type, max_players FROM rooms WHERE {id_col} = %s", (room_code,))
@@ -966,7 +966,7 @@ async def join_room(data: dict):
             is_open = (status == 'waiting' or status == 'lobby')
 
             # 2. فحص إذا كان اللاعب موجود مسبقاً
-            cur.execute("SELECT join_order FROM room_players WHERE (room_code = %s OR room_id = %s) AND user_id = %s", (room_code, room_code, user_id))
+            cur.execute(f"SELECT join_order FROM room_players WHERE ({id_col} = %s) AND user_id = %s", (room_code, user_id))
             row = cur.fetchone()
 
             if not row and not is_open:
@@ -974,7 +974,7 @@ async def join_room(data: dict):
 
             if not row:
                 # التحقق من العدد الأقصى للاعبين
-                cur.execute("SELECT COUNT(*) as count FROM room_players WHERE (room_code = %s OR room_id = %s)", (room_code, room_code))
+                cur.execute(f"SELECT COUNT(*) as count FROM room_players WHERE {id_col} = %s", (room_code,))
                 current_count = cur.fetchone()['count']
                 max_p = room.get('max_players') or (4 if game_type == 'domino' else 10)
 
@@ -982,19 +982,20 @@ async def join_room(data: dict):
                     return {"success": False, "msg": f"عذراً، الغرفة ممتلئة (الحد الأقصى {max_p} لاعبين)"}
 
                 # تحديد الترتيب القادم
-                cur.execute("SELECT COALESCE(MAX(join_order), 0) + 1 as next_order FROM room_players WHERE (room_code = %s OR room_id = %s)", (room_code, room_code))
+                cur.execute(f"SELECT COALESCE(MAX(join_order), 0) + 1 as next_order FROM room_players WHERE {id_col} = %s", (room_code,))
                 next_order = cur.fetchone()['next_order']
 
                 # 3. فحص أعمدة جدول اللاعبين ونوعها (خاصة الفريق)
                 cur.execute("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'room_players'")
-                p_cols_info = {r[0]: r[1] for r in cur.fetchall()}
+                p_cols_res = cur.fetchall()
+                p_cols_info = {r['column_name']: r['data_type'] for r in p_cols_res}
 
                 team_val = None
                 if game_type == 'domino' and 'team' in p_cols_info:
                     # توزيع اللاعبين على فريقين (A, B) أو (0, 1) آلياً
                     is_int = 'int' in p_cols_info['team'].lower()
                     if is_int:
-                        team_val = current_count % 2
+                        team_val = int(current_count % 2)
                     else:
                         team_val = 'A' if current_count % 2 == 0 else 'B'
 
@@ -1015,8 +1016,8 @@ async def join_room(data: dict):
                 cur.execute(f"INSERT INTO room_players ({cols_str}) VALUES ({placeholders})", list(valid_player_data.values()))
             else:
                 # تحديث اسم اللاعب إذا عاد للانضمام
-                cur.execute("UPDATE room_players SET player_name = %s WHERE (room_code = %s OR room_id = %s) AND user_id = %s",
-                            (player_name, room_code, room_code, user_id))
+                cur.execute(f"UPDATE room_players SET player_name = %s WHERE {id_col} = %s AND user_id = %s",
+                            (player_name, room_code, user_id))
 
             conn.commit()
         return {"success": True}
