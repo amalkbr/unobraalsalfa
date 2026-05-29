@@ -1,10 +1,4 @@
 {
-  "builds": [
-    {
-      "src": "api/index.py",
-      "use": "@vercel/python"
-    }
-  ],
   "rewrites": [
     { "source": "/sw.js", "destination": "/static/sw.js" },
     { "source": "/static/(.*)", "destination": "/static/$1" },
