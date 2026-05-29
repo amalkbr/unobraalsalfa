@@ -3187,6 +3187,13 @@ HTML_TEMPLATE = """
         }
 
         async function drawDominoTile() {
+            // إخفاء الزر مؤقتاً أو تعطيله لمنع السبام
+            const btn = document.querySelector('button[onclick="drawDominoTile()"]');
+            if(btn) {
+                btn.disabled = true;
+                btn.innerText = "⏳ جاري...";
+            }
+
             try {
                 const res = await fetch('/api/domino/draw', {
                     method: 'POST',
@@ -3194,12 +3201,26 @@ HTML_TEMPLATE = """
                     body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
                 });
                 const d = await res.json();
-                if(!d.success) alert(d.msg);
-                else {
+
+                if(!d.success) {
+                    showToast(d.msg || "لا يمكنك السحب الآن", "error");
+                } else {
                     if(d.msg) showToast(d.msg);
-                    updateRoomState(); // تحديث الواجهة فوراً لرؤية الحجر الجديد
+                    else showToast("✅ تم سحب حجر", "success");
+
+                    // إجبار النظام على تحديث البيانات فوراً
+                    lastStateHash = "";
+                    await updateRoomState(true);
                 }
-            } catch(e) { console.error(e); }
+            } catch(e) {
+                console.error("Draw error:", e);
+                showToast("عطلاً فنياً في السحب", "error");
+            } finally {
+                if(btn) {
+                    btn.disabled = false;
+                    btn.innerText = "➕ سحب حجر";
+                }
+            }
         }
 
         async function startNextDominoRound() {
@@ -3925,9 +3946,13 @@ HTML_TEMPLATE = """
 
         let lastStateHash = "";
         let activeStatePromise = null;
-        async function updateRoomState() {
+        async function updateRoomState(force = false) {
             if(!currentRoom) return false;
-            if (activeStatePromise) return activeStatePromise;
+            // إذا كان هناك تحديث جاري وطلبنا تحديثاً إجبارياً، ننتظر الحالي ثم نبدأ واحداً جديداً
+            if (activeStatePromise) {
+                if (force) await activeStatePromise;
+                else return activeStatePromise;
+            }
 
             activeStatePromise = (async () => {
                 try {
@@ -3957,6 +3982,7 @@ HTML_TEMPLATE = """
                             p_count: d.players.length,
                             turn: d.room.game_data?.turn_index,
                             board_len: d.room.game_data?.board?.length,
+                            hand_len: d.room.game_data?.hands?.[currentUser.user_id]?.length, // إضافة مراقبة عدد أحجار اليد
                             scores: d.room.game_data?.scores,
                             phase: d.room.game_data?.phase
                         });

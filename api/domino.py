@@ -171,12 +171,19 @@ async def domino_draw_tile(data: dict):
 
             # سحب حجر
             tile = boneyard.pop()
-            game_data['hands'][str(user_id)].append(tile)
+
+            # التأكد من أن المفتاح نصي وأن القائمة موجودة
+            uid_str = str(user_id)
+            if uid_str not in game_data['hands']:
+                game_data['hands'][uid_str] = []
+
+            game_data['hands'][uid_str].append(tile)
             game_data['boneyard'] = boneyard
 
+            # حفظ التغييرات فوراً
             cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
             conn.commit()
-        return {"success": True}
+        return {"success": True, "tile": tile} # نرسل الحجر المسحوب للتأكيد
     except Exception as e:
         print(f"Draw Error: {e}")
         return {"success": False, "msg": str(e)}
