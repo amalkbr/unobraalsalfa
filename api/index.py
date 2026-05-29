@@ -3143,7 +3143,7 @@ HTML_TEMPLATE = """
                     </div>
 
                     <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.08);">
-                        <p style="font-size: 20px; color:#fff;">صُممت بكل حب لخدمتكم ❤️</p>
+                        <p style="font-size: 20px; color:#fff;">صُممت لكم بايدي ابو الاكبر   ❤️</p>
                     </div>
                 </div>`;
         }
