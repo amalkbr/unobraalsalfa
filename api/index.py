@@ -3198,8 +3198,8 @@ HTML_TEMPLATE = """
                 modal.innerHTML = `
                     <h3>وين تبي تحط الحجر؟</h3>
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-top:20px;">
-                        <button onclick="playDominoTile(${JSON.stringify(tile)}, 'left'); this.parentElement.parentElement.remove()">⬅️ اليسار</button>
-                        <button onclick="playDominoTile(${JSON.stringify(tile)}, 'right'); this.parentElement.parentElement.remove()">اليمين ➡️</button>
+                        <button onclick="playDominoTile(${JSON.stringify(tile)}, 'left'); this.parentElement.parentElement.remove()">➡️ اليسار</button>
+                        <button onclick="playDominoTile(${JSON.stringify(tile)}, 'right'); this.parentElement.parentElement.remove()">اليمين ⬅️</button>
                     </div>
                     <button style="background:#636e72; margin-top:15px;" onclick="this.parentElement.remove()">إلغاء</button>
                 `;
