@@ -3036,6 +3036,13 @@ async def _ask_badge_color_if_needed(c: types.CallbackQuery) -> bool:
         return False
 
 
+@router.callback_query(F.data == "start_bara_menu")
+async def start_bara_menu(callback: types.CallbackQuery, state: FSMContext):
+    from handlers.bara_alsalfa import start_bara
+    await callback.message.delete()
+    await start_bara(callback.message, state)
+    await callback.answer()
+
 async def show_main_menu(message, name, user_id, cleanup=False, state=None, from_admin=False):
     # 1. تنظيف الحالة
     if state:
@@ -3132,19 +3139,15 @@ async def show_main_menu(message, name, user_id, cleanup=False, state=None, from
                 return
         except Exception:
             pass
-    # 4. بناء الكيبورد
+    # 4. بناء الكيبورد الجديدة (برا السالفة والدومنة فقط)
     kb = [
-        [InlineKeyboardButton(text=t(uid, "btn_random_play"), callback_data="random_play"),
-         InlineKeyboardButton(text=t(uid, "btn_play_vs_bot"), callback_data="play_vs_bot")],
-        [InlineKeyboardButton(text=t(uid, "btn_play_friends"), callback_data="play_friends")],
-        [InlineKeyboardButton(text="👥 مجتمع الأونو", callback_data="community_uno_menu")],
-        [InlineKeyboardButton(text=t(uid, "btn_friends"), callback_data="social_menu")],
-        [InlineKeyboardButton(text=t(uid, "btn_my_account"), callback_data="my_account"),
-         InlineKeyboardButton(text=t(uid, "btn_calc"), callback_data="mode_calc")],
-        [InlineKeyboardButton(text=t(uid, "btn_rules"), callback_data="rules")],
-        [InlineKeyboardButton(text=t(uid, "btn_leaderboard"), callback_data="leaderboard")],
-        [InlineKeyboardButton(text=t(uid, "btn_change_lang"), callback_data="change_lang")],
-        [InlineKeyboardButton(text=t(uid, "btn_bot_info"), callback_data="bot_info")],
+        [InlineKeyboardButton(text="🕵️‍♂️ العب برا السالفة", callback_data="start_bara_menu")],
+        [InlineKeyboardButton(text="🀄 العب دومنة (Web)", url="https://unobraalsalfa.vercel.app/")],
+        [InlineKeyboardButton(text="👥 الأصدقاء", callback_data="social_menu")],
+        [InlineKeyboardButton(text="👤 حسابي", callback_data="my_account"),
+         InlineKeyboardButton(text="🏆 المتصدرين", callback_data="leaderboard")],
+        [InlineKeyboardButton(text="🌐 تغيير اللغة", callback_data="change_lang"),
+         InlineKeyboardButton(text="ℹ️ معلومات البوت", callback_data="bot_info")],
     ]
     try:
         from handlers.admin import is_admin

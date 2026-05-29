@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from database import db_query
-from config import IMG_UNO_SAFE_ME, IMG_UNO_SAFE_OPP, IMG_CATCH_SUCCESS, IMG_CATCH_PENALTY
+from config import BOT_USER_ID, IMG_CATCH_SUCCESS, IMG_CATCH_PENALTY
 import json, random, asyncio, uuid
 
 
@@ -695,20 +695,6 @@ async def send_or_update_game_ui(room_id, bot, user_id, remaining_seconds=None, 
         if row:
             kb.append(row)
 
-        controls = []
-        if is_my_turn:
-            if len(hand) == 2 and any(check_validity(c, room['top_card'], room['current_color']) for c in hand):
-                controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"un_{room_id}"))
-
-        # منطق الصيدة: لا نعرض الزر عندما الخصم بوت (البوت ينفّذ الصيدة تلقائياً في دوره)
-        opp = players[1] if players[0]['user_id'] == user_id else players[0]
-        if opp['user_id'] != BOT_USER_ID:
-            opp_h = safe_load(opp.get('hand', '[]'))
-            if len(opp_h) == 1 and not str(opp.get('said_uno', 'false')).lower() in ['true', '1']:
-                controls.append(InlineKeyboardButton(text="🪤 صيدة!", callback_data=f"ct_{room_id}"))
-
-        if controls:
-            kb.append(controls)
         kb.append([InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"ex_{room_id}")])
         markup = InlineKeyboardMarkup(inline_keyboard=kb)
 
@@ -1018,38 +1004,6 @@ async def bot_play_turn(room_id, bot):
             deck = []
 
         opp_hand = safe_load(players[opp_idx]['hand'])
-        opp_said_uno = str(players[opp_idx].get('said_uno', False)).lower() in ['true', '1']
-        if len(opp_hand) == 1 and not opp_said_uno:
-            for _ in range(2):
-                if not deck:
-                    room = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-                    deck = ensure_deck_from_discard(room_id, room)
-                if deck:
-                    opp_hand.append(deck.pop(0))
-            db_query("UPDATE room_players SET hand = %s, said_uno = FALSE WHERE user_id = %s", (json.dumps(opp_hand), opp_id), commit=True)
-            db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
-            catch_msg = None
-            try:
-                catch_msg = await bot.send_message(opp_id, "🪤 **البوت صادك!** سحبت ورقتين لأنك نسيت تصيح اونو.\n⏳ اللعبة تكمل خلال 5 ثواني...", parse_mode="Markdown")
-            except Exception:
-                pass
-            await asyncio.sleep(5)
-            if catch_msg:
-                try:
-                    await bot.delete_message(opp_id, catch_msg.message_id)
-                except Exception:
-                    pass
-            await refresh_ui_2p(room_id, bot, {opp_id: "🪤 البوت صادك! سحبت ورقتين. دور البوت يلعب..."})
-            room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))
-            if not room_data or room_data[0]['status'] != 'playing':
-                return
-            room = room_data[0]
-            players = get_ordered_players(room_id)
-            deck = ensure_deck_from_discard(room_id, room)
-            bot_hand = safe_load(players[p_idx]['hand'])
-            top_card = room['top_card']
-            current_color = room['current_color']
-
         valid = [c for c in bot_hand if check_validity(c, top_card, current_color)]
         if room.get("is_training") and valid:
             # في وضع التدريب: لا نلعب ورقة تجعل البوت يربح (يده تصبح فارغة)
@@ -1072,7 +1026,7 @@ async def bot_play_turn(room_id, bot):
             if deck:
                 new_card = deck.pop(0)
                 bot_hand.append(new_card)
-                db_query("UPDATE room_players SET hand = %s, said_uno = FALSE WHERE user_id = %s", (json.dumps(bot_hand), BOT_USER_ID), commit=True)
+                db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(bot_hand), BOT_USER_ID), commit=True)
                 db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
                 if check_validity(new_card, top_card, current_color):
                     valid = [new_card]
@@ -1086,10 +1040,8 @@ async def bot_play_turn(room_id, bot):
         bot_hand.remove(card)
         discard_pile = safe_load(room.get('discard_pile', '[]'))
         discard_pile.append(top_card)
-        # البوت يصرّح أونو تلقائياً عندما يبقى له ورقة واحدة
-        bot_said_uno = len(bot_hand) == 1
-        db_query("UPDATE room_players SET hand = %s, said_uno = %s WHERE user_id = %s",
-            (json.dumps(bot_hand), bot_said_uno, BOT_USER_ID), commit=True)
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s",
+            (json.dumps(bot_hand), BOT_USER_ID), commit=True)
         db_query("UPDATE rooms SET discard_pile = %s WHERE room_id = %s", (json.dumps(discard_pile), room_id), commit=True)
         p_name = "البوت"
 
@@ -1258,7 +1210,7 @@ async def start_new_round(room_id, bot, start_turn_idx=0, alert_msgs=None):
 
         for p in players:
             hand = [deck.pop(0) for _ in range(7)]
-            db_query("UPDATE room_players SET hand = %s, said_uno = FALSE, last_msg_id = NULL, is_ready = FALSE WHERE user_id = %s", (json.dumps(hand), p['user_id']), commit=True)
+            db_query("UPDATE room_players SET hand = %s, last_msg_id = NULL, is_ready = FALSE WHERE user_id = %s", (json.dumps(hand), p['user_id']), commit=True)
 
         while any(x in deck[0] for x in ["🌈", "🔥", "💧", "🌊"]):
             random.shuffle(deck)
@@ -1332,11 +1284,8 @@ async def handle_play(c: types.CallbackQuery, state: FSMContext):
 
         # الجوكرات
         hand.pop(idx)
-        was_uno_said = str(players[p_idx].get('said_uno', False)).lower() in ['true', '1', 'true']
-        updated_said_uno = was_uno_said if len(hand) == 1 else False
-
-        db_query("UPDATE room_players SET hand = %s, said_uno = %s WHERE user_id = %s",
-            (json.dumps(hand), updated_said_uno, c.from_user.id), commit=True)
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s",
+            (json.dumps(hand), c.from_user.id), commit=True)
         discard_pile = safe_load(room.get('discard_pile', '[]'))
         discard_pile.append(room['top_card'])
 
@@ -1683,75 +1632,6 @@ async def handle_challenge_decision(c: types.CallbackQuery):
     except Exception as e:
         print(f"[handle_challenge_decision] Error: {e}")
         await c.answer("⚠️ خطأ أثناء معالجة قرار التحدي.", show_alert=True)
-
-
-@router.callback_query(F.data.startswith("un_"))
-async def handle_uno(c: types.CallbackQuery):
-    try:
-        room_id = c.data.split("_")[1]
-        cancel_auto_draw_task(room_id)
-        cancel_timer(room_id)
-        db_query("UPDATE room_players SET said_uno = TRUE WHERE room_id = %s AND user_id = %s", (room_id, c.from_user.id), commit=True)
-        players = get_ordered_players(room_id)
-        opp = next((p for p in players if p['user_id'] != c.from_user.id), None)
-        me = next((p for p in players if p['user_id'] == c.from_user.id), None)
-        p_name = me.get('player_name') if me else "لاعب"
-        await c.answer()
-        alerts = {c.from_user.id: "✅ صحت اونو بنجاح وأنت في أمان."}
-        if opp:
-            alerts[opp['user_id']] = f"🚨 {p_name} صاح اونو! بقتله ورقة وحدة وهو في أمان."
-        try:
-            if IMG_UNO_SAFE_ME and IMG_UNO_SAFE_ME != "123":
-                await _send_photo_then_schedule_delete(c.bot, c.from_user.id, IMG_UNO_SAFE_ME)
-            if opp and IMG_UNO_SAFE_OPP and IMG_UNO_SAFE_OPP != "123":
-                await _send_photo_then_schedule_delete(c.bot, opp['user_id'], IMG_UNO_SAFE_OPP)
-        except:
-            pass
-        await refresh_ui_2p(room_id, c.bot, alerts)
-    except Exception as e:
-        print(f"Uno Error: {e}")
-
-
-@router.callback_query(F.data.startswith("ct_"))
-async def handle_catch(c: types.CallbackQuery):
-    try:
-        room_id = c.data.split("_")[1]
-        cancel_auto_draw_task(room_id)
-        cancel_timer(room_id)
-        players = get_ordered_players(room_id)
-        opp = next(p for p in players if p['user_id'] != c.from_user.id)
-        opp_h = safe_load(opp['hand'])
-        me = next((p for p in players if p['user_id'] == c.from_user.id), None)
-        p_name = me.get('player_name') if me else "لاعب"
-        opp_name = opp.get('player_name') or "لاعب"
-        if len(opp_h) == 1 and not str(opp.get('said_uno')).lower() in ['true', '1']:
-            room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-            deck = ensure_deck_from_discard(room_id, room_data)
-            for _ in range(2):
-                if not deck:
-                    room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-                    deck = ensure_deck_from_discard(room_id, room_data)
-                if deck:
-                    opp_h.append(deck.pop(0))
-            db_query("UPDATE room_players SET hand = %s, said_uno = FALSE WHERE user_id = %s", (json.dumps(opp_h), opp['user_id']), commit=True)
-            db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
-            await c.answer()
-            try:
-                if IMG_CATCH_SUCCESS and IMG_CATCH_SUCCESS != "123":
-                    await _send_photo_then_schedule_delete(c.bot, c.from_user.id, IMG_CATCH_SUCCESS)
-                if IMG_CATCH_PENALTY and IMG_CATCH_PENALTY != "123":
-                    await _send_photo_then_schedule_delete(c.bot, opp['user_id'], IMG_CATCH_PENALTY)
-            except:
-                pass
-            alerts = {
-                c.from_user.id: f"🪤 صدت {opp_name}! سحب ورقتين لأنه نسي الاونو.",
-                opp['user_id']: f"⚠️ {p_name} صادك! سحبت ورقتين لأنك نسيت تصيح اونو!"
-            }
-            await refresh_ui_2p(room_id, c.bot, alerts)
-        else:
-            await c.answer("❌ ما تگدر تصيده حالياً!")
-    except Exception as e:
-        print(f"Catch Error: {e}")
 
 
 @router.callback_query(F.data.startswith("ex_"))

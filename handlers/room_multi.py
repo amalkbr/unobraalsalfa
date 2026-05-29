@@ -508,17 +508,6 @@ async def refresh_ui_multi(room_id, bot, alert_msg_dict=None):
                 if card_in_row == 3: kb.append(row); row = []; card_in_row = 0
             if row: kb.append(row)
 
-            controls = []
-            # زر الأونو يظهر فقط عند ورقتين وفيها ورقة تعمل
-            if i == room['turn_index'] and len(hand) == 2 and any(check_validity(c, room['top_card'], room['current_color']) for c in hand):
-                controls.append(InlineKeyboardButton(text="🚨 اونو!", callback_data=f"unomul_{room_id}"))
-            for other in players:
-                ohand = safe_load(other['hand'])
-                if len(ohand) == 1 and not str(other.get('said_uno', 'false')).lower() in ['true', '1'] and other['user_id'] != p['user_id']:
-                    o_name = other.get('player_name') or 'لاعب'
-                    controls.append(InlineKeyboardButton(text=f"🪤 صيد {o_name}", callback_data=f"repmul_{room_id}_{other['user_id']}"))
-                    break
-            if controls: kb.append(controls)
             exit_row = [InlineKeyboardButton(text="🚪 انسحاب", callback_data=f"leavemul_{room_id}")]
             if p['user_id'] == room.get('creator_id'):
                 exit_row.append(InlineKeyboardButton(text="⚙️", callback_data=f"rsettings_{room_id}"))
@@ -580,9 +569,7 @@ async def handle_play_multi(c: types.CallbackQuery, state: FSMContext):
             return await refresh_ui_multi(room_id, c.bot, alerts)
 
         hand.pop(idx)
-        was_uno_said = str(players[p_idx]['said_uno']).lower() in ['true', '1']
-        updated_said_uno = was_uno_said if len(hand) == 1 else False
-        db_query("UPDATE room_players SET hand = %s, said_uno = %s WHERE user_id = %s", (json.dumps(hand), updated_said_uno, c.from_user.id), commit=True)
+        db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(hand), c.from_user.id), commit=True)
 
         discard_pile = safe_load(room['discard_pile'])
         discard_pile.append(room['top_card'])
@@ -804,56 +791,7 @@ async def handle_challenge_multi(c: types.CallbackQuery):
         await refresh_ui_multi(room_id, c.bot, alerts)
     except Exception as e: print(f"Multi Challenge Error: {e}")
 
-@router.callback_query(F.data.startswith("unomul_"))
-async def handle_uno_multi(c: types.CallbackQuery):
-    try:
-        room_id = c.data.split("_")[1]
-        db_query("UPDATE room_players SET said_uno = TRUE WHERE room_id = %s AND user_id = %s", (room_id, c.from_user.id), commit=True)
-        players = get_ordered_players(room_id)
-        me = next((p for p in players if p['user_id'] == c.from_user.id), None)
-        p_name = me.get('player_name') if me else "لاعب"
-        await c.answer()
-        alerts = {c.from_user.id: "✅ صحت اونو بنجاح وأنت في أمان."}
-        for op in players:
-            if op['user_id'] != c.from_user.id:
-                alerts[op['user_id']] = f"🚨 {p_name} صاح اونو! بقتله ورقة وحدة وهو في أمان."
-        try:
-            if IMG_UNO_SAFE_ME and IMG_UNO_SAFE_ME != "123":
-                await _send_photo_then_schedule_delete(c.bot, c.from_user.id, IMG_UNO_SAFE_ME)
-            if IMG_UNO_SAFE_OPP and IMG_UNO_SAFE_OPP != "123":
-                for op in players:
-                    if op['user_id'] != c.from_user.id:
-                        await _send_photo_then_schedule_delete(c.bot, op['user_id'], IMG_UNO_SAFE_OPP)
-        except: pass
-        await refresh_ui_multi(room_id, c.bot, alerts)
-    except Exception as e: print(f"Multi Uno Error: {e}")
-
-@router.callback_query(F.data.startswith("repmul_"))
-async def handle_catch_multi(c: types.CallbackQuery):
-    try:
-        parts = c.data.split("_")
-        room_id, target_id = parts[1], int(parts[2])
-        players = get_ordered_players(room_id)
-        target = next(p for p in players if p['user_id'] == target_id)
-        t_hand = safe_load(target['hand'])
-        me = next((p for p in players if p['user_id'] == c.from_user.id), None)
-        p_name = me.get('player_name') if me else "لاعب"
-        t_name = target.get('player_name') or "لاعب"
-        if len(t_hand) == 1 and not str(target.get('said_uno')).lower() in ['true', '1']:
-            room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-            deck = ensure_deck_from_discard(room_id, room_data)
-            for _ in range(2):
-                if not deck:
-                    room_data = db_query("SELECT * FROM rooms WHERE room_id = %s", (room_id,))[0]
-                    deck = ensure_deck_from_discard(room_id, room_data)
-                if deck:
-                    t_hand.append(deck.pop(0))
-            db_query("UPDATE room_players SET hand = %s WHERE user_id = %s", (json.dumps(t_hand), target_id), commit=True)
-            db_query("UPDATE rooms SET deck = %s WHERE room_id = %s", (json.dumps(deck), room_id), commit=True)
-            await c.answer()
-            try:
-                if IMG_CATCH_SUCCESS and IMG_CATCH_SUCCESS != "123":
-                    await _send_photo_then_schedule_delete(c.bot, c.from_user.id, IMG_CATCH_SUCCESS)
+@router.callback_query(F.data.startswith("leavemul_"))
                 if IMG_CATCH_PENALTY and IMG_CATCH_PENALTY != "123":
                     await _send_photo_then_schedule_delete(c.bot, target_id, IMG_CATCH_PENALTY)
             except: pass
