@@ -2,7 +2,7 @@ import random
 import string
 import json
 from fastapi import APIRouter
-from .index import get_db_conn, RealDictCursor
+from .database import get_db_conn, RealDictCursor
 
 router = APIRouter()
 

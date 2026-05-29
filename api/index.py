@@ -6,7 +6,7 @@ import string
 import os
 import time
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from .database import get_db_conn, RealDictCursor
 from .domino import router as domino_router
 
 app = FastAPI()
@@ -14,17 +14,6 @@ app.include_router(domino_router)
 
 # --- Database Connection ---
 DB_INITIALIZED = False
-
-def get_db_conn():
-    db_url = os.environ.get('DATABASE_URL')
-    if db_url:
-        try:
-            conn = psycopg2.connect(db_url, sslmode='require')
-            return conn
-        except Exception as e:
-            print(f"DB Error: {e}")
-            return None
-    return None
 
 CATEGORIES = {
     "أكلات": ["بيتزا", "برجر", "شاورما", "منسف", "كبسة", "فلافل", "مندي", "باستا", "دولمة", "برياني", "مسحب", "كبة", "بخاري", "مقلوبة", "سوشي", "تاكو", "ملوخية", "باشميل"],
