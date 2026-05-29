@@ -2767,11 +2767,18 @@ HTML_TEMPLATE = """
         }
         .domino-tile.playable {
             cursor: pointer;
+            border-color: #00ffaa;
+            box-shadow: 0 0 10px rgba(0, 255, 170, 0.8), inset 0 0 8px rgba(0, 255, 170, 0.5);
+            animation: pulse-glow-domino 1.5s infinite alternate;
+        }
+        @keyframes pulse-glow-domino {
+            from { box-shadow: 0 0 5px rgba(0, 255, 170, 0.5), inset 0 0 5px rgba(0, 255, 170, 0.3); border-color: #00cc88; }
+            to { box-shadow: 0 0 15px rgba(0, 255, 170, 1), inset 0 0 12px rgba(0, 255, 170, 0.8); border-color: #00ffaa; }
         }
         .domino-tile.playable:hover {
             transform: translateY(-5px) scale(1.05);
-            border-color: var(--primary);
-            box-shadow: 0 0 15px var(--primary);
+            border-color: #00ffaa;
+            box-shadow: 0 0 20px rgba(0, 255, 170, 1), inset 0 0 15px rgba(0, 255, 170, 1);
         }
         #domino-board {
             perspective: 1000px;
@@ -3140,13 +3147,27 @@ HTML_TEMPLATE = """
                             <button onclick="drawDominoTile()" style="width:auto; padding:5px 15px; font-size:12px; background:var(--primary); display:${isMyTurn?'block':'none'}">➕ سحب حجر</button>
                         </div>
                         <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:center; padding:10px 0;">
-                            ${myHand.map((tile, idx) => `
-                                <div class="domino-tile playable" onclick="${isMyTurn ? `selectDominoTile(${JSON.stringify(tile)})` : ''}">
+                            ${myHand.map((tile, idx) => {
+                                let isPlayable = false;
+                                if (isMyTurn) {
+                                    if (board.length === 0) {
+                                        isPlayable = true;
+                                    } else {
+                                        const leftVal = board[0][0];
+                                        const rightVal = board[board.length - 1][1];
+                                        if (tile[0] === leftVal || tile[1] === leftVal || tile[0] === rightVal || tile[1] === rightVal) {
+                                            isPlayable = true;
+                                        }
+                                    }
+                                }
+                                return `
+                                <div class="domino-tile ${isPlayable ? 'playable' : ''}" onclick="${isPlayable ? `selectDominoTile(${JSON.stringify(tile)})` : ''}" style="${!isPlayable && isMyTurn ? 'opacity:0.6; cursor:not-allowed;' : ''}">
                                     <div class="domino-half">${tile[0]}</div>
                                     <div class="domino-line"></div>
                                     <div class="domino-half">${tile[1]}</div>
                                 </div>
-                            `).join('')}
+                                `;
+                            }).join('')}
                         </div>
                     </div>
                 </div>`;
