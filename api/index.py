@@ -75,6 +75,8 @@ def init_db():
                     secret_word TEXT,
                     spy_id BIGINT,
                     game_data JSONB DEFAULT '{}',
+                    game_type TEXT DEFAULT 'spy',
+                    max_players INTEGER DEFAULT 10,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 CREATE TABLE IF NOT EXISTS room_players (
@@ -564,6 +566,12 @@ async def create_domino_room_endpoint(data: dict):
         max_players = int(data.get('max_players', 4))
         room_code = ''.join(random.choices(string.ascii_uppercase, k=4))
         with conn.cursor() as cur:
+            # التأكد من وجود الأعمدة الجديدة (Migration بسيط)
+            try:
+                cur.execute("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_type TEXT DEFAULT 'spy'")
+                cur.execute("ALTER TABLE rooms ADD COLUMN IF NOT EXISTS max_players INTEGER DEFAULT 10")
+            except: pass
+
             cur.execute("""
                 INSERT INTO rooms (room_code, host_id, status, game_type, win_limit, max_players)
                 VALUES (%s, %s, 'lobby', 'domino', 101, %s)
@@ -575,7 +583,8 @@ async def create_domino_room_endpoint(data: dict):
             conn.commit()
         return {"success": True, "room_code": room_code}
     except Exception as e:
-        return {"success": False, "msg": str(e)}
+        print(f"Error creating domino room: {e}")
+        return {"success": False, "msg": "حدث خطأ أثناء إنشاء الغرفة. يرجى المحاولة مرة أخرى."}
     finally: conn.close()
 
 @app.post("/api/domino/set_team")
