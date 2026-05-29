@@ -154,8 +154,12 @@ def init_db():
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_room_players_code_user ON room_players(room_code, user_id)",
                 "CREATE TABLE IF NOT EXISTS announcements (id SERIAL PRIMARY KEY, text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
                 "CREATE TABLE IF NOT EXISTS feedback (id SERIAL PRIMARY KEY, announcement_id INTEGER REFERENCES announcements(id) ON DELETE CASCADE, user_id BIGINT, player_name TEXT, text TEXT, type TEXT, original_text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
-                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_type TEXT DEFAULT 'bra_salpha'",
-                "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS team TEXT"
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_type TEXT DEFAULT 'spy'",
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS max_players INTEGER DEFAULT 10",
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS room_code TEXT",
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS host_id BIGINT",
+                "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS team TEXT",
+                "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS room_code TEXT"
             ]
 
             for step in migration_steps:
@@ -569,71 +573,23 @@ async def create_domino_room_endpoint(data: dict):
         room_code = ''.join(random.choices(string.ascii_uppercase, k=4))
 
         with conn.cursor() as cur:
-            # 1. تحديث الهيكل بشكل سريع وآمن
-            for col_query in [
-                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS room_code TEXT",
-                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_type TEXT DEFAULT 'spy'",
-                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS max_players INTEGER DEFAULT 10",
-                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS host_id BIGINT",
-                "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS room_code TEXT",
-                "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS team TEXT"
-            ]:
-                try: cur.execute(col_query)
-                except: conn.rollback()
+            # محاولة إدخال مباشر لتسريع العملية (الأعمدة تم التأكد منها في init_db)
+            cur.execute("""
+                INSERT INTO rooms (room_code, room_id, host_id, creator_id, status, game_type, win_limit, max_players)
+                VALUES (%s, %s, %s, %s, 'lobby', 'domino', 101, %s)
+                ON CONFLICT (room_code) DO NOTHING
+            """, (room_code, room_code, user_id, user_id, max_players))
 
-            # 2. فحص الأعمدة الموجودة فعلياً في جدول rooms لضمان الإدخال الصحيح
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'rooms'")
-            room_cols = [r[0] for r in cur.fetchall()]
-
-            room_vals = {
-                'room_id': room_code,
-                'room_code': room_code,
-                'host_id': user_id,
-                'creator_id': user_id,
-                'status': 'lobby',
-                'game_type': 'domino',
-                'win_limit': 101,
-                'max_players': max_players,
-                'category': 'domino'
-            }
-
-            # تصفية البيانات لتشمل فقط الأعمدة الموجودة في الجدول
-            valid_room_data = {k: v for k, v in room_vals.items() if k in room_cols}
-            cols_str = ", ".join(valid_room_data.keys())
-            placeholders = ", ".join(["%s"] * len(valid_room_data))
-
-            cur.execute(f"INSERT INTO rooms ({cols_str}) VALUES ({placeholders})", list(valid_room_data.values()))
-
-            # 3. نفس الشيء لجدول اللاعبين
-            cur.execute("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'room_players'")
-            player_cols_info = {r[0]: r[1] for r in cur.fetchall()}
-
-            # تحديد قيمة الفريق بناءً على نوع العمود (نصي أو رقمي)
-            team_val = 'A'
-            if 'team' in player_cols_info and 'int' in player_cols_info['team'].lower():
-                team_val = 0
-
-            player_vals = {
-                'room_id': room_code,
-                'room_code': room_code,
-                'user_id': user_id,
-                'player_name': player_name,
-                'join_order': 0,
-                'team': team_val,
-                'is_ready': True
-            }
-
-            valid_player_data = {k: v for k, v in player_vals.items() if k in player_cols_info}
-            p_cols_str = ", ".join(valid_player_data.keys())
-            p_placeholders = ", ".join(["%s"] * len(valid_player_data))
-
-            cur.execute(f"INSERT INTO room_players ({p_cols_str}) VALUES ({p_placeholders})", list(valid_player_data.values()))
+            cur.execute("""
+                INSERT INTO room_players (room_code, room_id, user_id, player_name, join_order, team)
+                VALUES (%s, %s, %s, %s, 0, 'A')
+            """, (room_code, room_code, user_id, player_name))
 
             conn.commit()
         return {"success": True, "room_code": room_code}
     except Exception as e:
         print(f"Error creating domino room: {e}")
-        return {"success": False, "msg": f"خطأ تقني: {str(e)}"}
+        return {"success": False, "msg": f"خطأ: {str(e)}"}
     finally: conn.close()
 
 @app.post("/api/domino/set_team")
@@ -3294,6 +3250,7 @@ HTML_TEMPLATE = """
         async function submitCreateDomino(maxPlayers) {
             console.log('Creating Domino Room...', maxPlayers);
             if (!currentUser) return alert("سجل دخولك أولاً");
+            showLoading("جاري إنشاء الطاولة...");
             try {
                 const res = await fetch('/api/domino/create', {
                     method: 'POST',
@@ -3305,6 +3262,7 @@ HTML_TEMPLATE = """
                     })
                 });
                 const d = await res.json();
+                hideLoading();
                 console.log('Create result:', d);
                 if(d.success) {
                     currentRoom = d.room_code;
@@ -3313,6 +3271,7 @@ HTML_TEMPLATE = """
                     alert(d.msg || "فشل إنشاء الغرفة");
                 }
             } catch(e) {
+                hideLoading();
                 console.error('Fetch error:', e);
                 alert("تعذر الاتصال بالخادم. تأكد من اتصالك بالإنترنت.");
             }
