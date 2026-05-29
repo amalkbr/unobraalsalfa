@@ -149,7 +149,8 @@ def init_db():
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_room_code ON rooms(room_code)",
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_room_players_code_user ON room_players(room_code, user_id)",
                 "CREATE TABLE IF NOT EXISTS announcements (id SERIAL PRIMARY KEY, text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
-                "CREATE TABLE IF NOT EXISTS feedback (id SERIAL PRIMARY KEY, announcement_id INTEGER REFERENCES announcements(id) ON DELETE CASCADE, user_id BIGINT, player_name TEXT, text TEXT, type TEXT, original_text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+                "CREATE TABLE IF NOT EXISTS feedback (id SERIAL PRIMARY KEY, announcement_id INTEGER REFERENCES announcements(id) ON DELETE CASCADE, user_id BIGINT, player_name TEXT, text TEXT, type TEXT, original_text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_type TEXT DEFAULT 'bra_salpha'"
             ]
 
             for step in migration_steps:
@@ -2536,8 +2537,8 @@ HTML_TEMPLATE = """
             }
 
             if (currentUser) {
-                showMenu(false);
-                history.replaceState({ screen: 'menu' }, "");
+                showGameSelection();
+                history.replaceState({ screen: 'game_selection' }, "");
             } else {
                 showAuth();
             }
@@ -2645,6 +2646,40 @@ HTML_TEMPLATE = """
                 console.error("Register failed", e);
                 showError("فشل التسجيل. يرجى التحقق من اتصالك بالإنترنت والمحاولة مرة أخرى لاحقاً.", "خطأ في الاتصال");
             }
+        }
+
+        function showGameSelection() {
+            history.pushState({screen: 'game_selection'}, "");
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card" style="padding: 30px 20px;">
+                    <div style="font-size: 60px; margin-bottom: 20px;">🎮</div>
+                    <h1 style="margin-bottom: 10px;">اختر اللعبة</h1>
+                    <p style="color: #a29bfe; margin-bottom: 30px; font-size: 16px;">ماذا تحب أن تلعب اليوم؟</p>
+
+                    <button onclick="showMenu()" style="margin-bottom: 15px; background: linear-gradient(135deg, #6c5ce7, #a29bfe);">🕵️‍♂️ برا السالفة</button>
+
+                    <div style="position:relative;">
+                        <button onclick="showDominoMenu()" style="background: linear-gradient(135deg, #2d3436, #000); border: 1px solid #444;">🁔 دومينو (أونلاين)</button>
+                        <span style="position:absolute; top:-10px; right:-5px; background:var(--error); font-size:10px; padding:2px 6px; border-radius:10px;">قريباً</span>
+                    </div>
+
+                    <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.08);">
+                        <p style="font-size: 14px; color:#777;">صُممت بكل حب لخدمتكم ❤️</p>
+                    </div>
+                </div>`;
+        }
+
+        function showDominoMenu() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h1>🁔 دومينو أونلاين</h1>
+                    <p style="color:#aaa; margin-bottom:20px;">العب مع أصدقائك بنظام الفرق (2 لاعبين أو 4)</p>
+
+                    <button onclick="createDominoRoom()" style="background:var(--success); margin-bottom:15px;">✨ إنشاء طاولة جديدة</button>
+                    <button onclick="showDominoJoinInput()" style="background:var(--primary); margin-bottom:15px;">🚪 انضمام لطاولة</button>
+
+                    <button style="background:#636e72; margin-top:20px;" onclick="showGameSelection()">رجوع</button>
+                </div>`;
         }
 
         function showMenu(push = true) {
