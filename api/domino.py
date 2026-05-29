@@ -2,7 +2,10 @@ import random
 import string
 import json
 from fastapi import APIRouter
-from .database import get_db, RealDictCursor
+try:
+    from .database import get_db, RealDictCursor
+except ImportError:
+    from api.database import get_db, RealDictCursor
 
 router = APIRouter()
 

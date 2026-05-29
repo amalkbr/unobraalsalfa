@@ -1,8 +1,14 @@
 {
+  "builds": [
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python"
+    }
+  ],
   "rewrites": [
     { "source": "/sw.js", "destination": "/static/sw.js" },
     { "source": "/manifest.json", "destination": "/static/manifest.json" },
     { "source": "/static/(.*)", "destination": "/static/$1" },
-    { "source": "/(.*)", "destination": "/api/index" }
+    { "source": "/(.*)", "destination": "/api/index.py" }
   ]
 }

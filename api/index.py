@@ -1,16 +1,28 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+
+# 1. تعريف التطبيق في أول الملف لضمان اكتشافه من Vercel
+app = FastAPI()
+
 import json
 import random
 import string
 import os
 import time
 import psycopg2
-from .database import get_db, RealDictCursor, get_db_conn
-from .domino import router as domino_router
-from .spy import router as spy_router
 
-app = FastAPI()
+# 2. الاستيراد باستخدام المسارات المطلقة من جذر المشروع
+# هذا يمنع تعطل التطبيق في بيئة Vercel Serverless
+try:
+    from api.database import get_db, RealDictCursor, get_db_conn
+    from api.domino import router as domino_router
+    from api.spy import router as spy_router
+except ImportError:
+    # دعم التشغيل المحلي إذا كان المجلد الحالي هو api
+    from database import get_db, RealDictCursor, get_db_conn
+    from domino import router as domino_router
+    from spy import router as spy_router
+
 app.include_router(domino_router)
 app.include_router(spy_router)
 
@@ -102,6 +114,13 @@ def init_db():
                     key TEXT PRIMARY KEY,
                     value TEXT
                 );
+                CREATE TABLE IF NOT EXISTS feedback (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    player_name TEXT,
+                    message TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
             """)
 
             # 2. هجرة البيانات وتوافق الأعمدة (Migrations)
@@ -170,6 +189,13 @@ def init_db():
                 INSERT INTO settings (key, value) VALUES ('vote_timeout', '10') ON CONFLICT DO NOTHING;
                 INSERT INTO settings (key, value) VALUES ('spy_guess_timeout', '15') ON CONFLICT DO NOTHING;
                 INSERT INTO settings (key, value) VALUES ('sound_click', '') ON CONFLICT (key) DO UPDATE SET value = '' WHERE settings.value LIKE '%soundjay.com%';
+                CREATE TABLE IF NOT EXISTS feedback (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    player_name TEXT,
+                    message TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
             """)
 
             # --- Seeding Data ---
@@ -535,1249 +561,35 @@ async def start_game(data: dict):
         print(f"Error in start_game: {e}")
         return {"error": str(e)}
 
-# --- Online Mode API ---
-
-def cleanup_stale_rooms():
-    conn = get_db_conn()
-    if not conn: return
-    try:
-        with conn.cursor() as cur:
-            # Delete stale players and rooms inactive for more than 30 minutes
-            cur.execute("DELETE FROM room_players WHERE room_code IN (SELECT room_code FROM rooms WHERE updated_at < NOW() - INTERVAL '30 minutes')")
-            cur.execute("DELETE FROM rooms WHERE updated_at < NOW() - INTERVAL '30 minutes'")
-            conn.commit()
-    except Exception as e:
-        print(f"Cleanup stale rooms error: {e}")
-        if conn: conn.rollback()
-    finally:
-        if conn: conn.close()
-
-@app.post("/api/domino/create")
-async def create_domino_room_endpoint(data: dict):
-    conn = get_db_conn()
-    if not conn: return {"success": False}
-    try:
-        user_id = int(data['user_id'])
-        player_name = data['player_name']
-        max_players = int(data.get('max_players', 4))
-        room_code = ''.join(random.choices(string.ascii_uppercase, k=4))
-
-        with conn.cursor() as cur:
-            # 1. تحديد نوع عمود الفريق (نصي أم رقمي) لتجنب الأخطاء
-            cur.execute("SELECT data_type FROM information_schema.columns WHERE table_name = 'room_players' AND column_name = 'team'")
-            team_col = cur.fetchone()
-            team_val = 'A'
-            if team_col and 'int' in team_col[0].lower():
-                team_val = 0
-
-            # 2. إدخال الغرفة
-            cur.execute("""
-                INSERT INTO rooms (room_code, room_id, host_id, creator_id, status, game_type, win_limit, max_players)
-                VALUES (%s, %s, %s, %s, 'lobby', 'domino', 101, %s)
-                ON CONFLICT (room_code) DO NOTHING
-            """, (room_code, room_code, user_id, user_id, max_players))
-
-            # 3. إدخال اللاعب (المضيف)
-            cur.execute("""
-                INSERT INTO room_players (room_code, room_id, user_id, player_name, join_order, team)
-                VALUES (%s, %s, %s, %s, 0, %s)
-            """, (room_code, room_code, user_id, player_name, team_val))
-
-            conn.commit()
-        return {"success": True, "room_code": room_code}
-    except Exception as e:
-        print(f"Error creating domino room: {e}")
-        return {"success": False, "msg": f"خطأ: {str(e)}"}
-    finally: conn.close()
-
-@app.post("/api/domino/set_team")
-async def set_domino_team(data: dict):
-    conn = get_db_conn()
-    if not conn: return {"success": False}
-    try:
-        room_code = data['room_code'].upper()
-        user_id = int(data['user_id'])
-        team = data['team'] # 'A' or 'B'
-        with conn.cursor() as cur:
-            cur.execute("UPDATE room_players SET team = %s WHERE room_code = %s AND user_id = %s", (team, room_code, user_id))
-            conn.commit()
-        return {"success": True}
-    except Exception as e:
-        return {"success": False, "msg": str(e)}
-    finally: conn.close()
-
-@app.post("/api/domino/play")
-async def domino_play_tile(data: dict):
-    conn = get_db_conn()
-    if not conn: return {"success": False}
-    try:
-        room_code = data['room_code'].upper()
-        user_id = int(data['user_id'])
-        tile = data['tile'] # [a, b]
-        side = data.get('side', 'right') # 'left' or 'right'
-
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT game_data, status FROM rooms WHERE room_code = %s", (room_code,))
-            room = cur.fetchone()
-            if not room or room['status'] != 'playing': return {"success": False, "msg": "اللعبة ليست جارية"}
-
-            game_data = room['game_data']
-            if game_data['ordered_ids'][game_data['turn_index']] != user_id:
-                return {"success": False, "msg": "ليس دورك"}
-
-            hand = game_data['hands'][str(user_id)]
-            if tile not in hand: return {"success": False, "msg": "لا تملك هذا الحجر"}
-
-            board = game_data['board']
-            if not board:
-                board.append(tile)
-            else:
-                left_val = board[0][0]
-                right_val = board[-1][1]
-
-                if side == 'left':
-                    if tile[1] == left_val:
-                        board.insert(0, tile)
-                    elif tile[0] == left_val:
-                        board.insert(0, [tile[1], tile[0]])
-                    else: return {"success": False, "msg": "الحجر لا يطابق الطرف الأيسر"}
-                else: # right
-                    if tile[0] == right_val:
-                        board.append(tile)
-                    elif tile[1] == right_val:
-                        board.append([tile[1], tile[0]])
-                    else: return {"success": False, "msg": "الحجر لا يطابق الطرف الأيمن"}
-
-            # Remove from hand
-            hand.remove(tile)
-
-            # Refined scoring: winners get points equal to sum of opponents' hand pips (and partner's pips if applicable)
-            if not hand:
-                game_data['phase'] = 'round_end'
-                # Find winner's team
-                cur.execute("SELECT team FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
-                winner_team = cur.fetchone()['team']
-
-                # Calculate total pips remaining in other players' hands
-                total_pips = 0
-                for pid, phand in game_data['hands'].items():
-                    # In Domino, usually you count all other hands if you win.
-                    # In some variations, you count only opponents. We'll count all other remaining pips.
-                    for t in phand:
-                        total_pips += (t[0] + t[1])
-
-                game_data['scores'][winner_team] += total_pips
-                # Reset board for next round or handle game over logic could go here,
-                # but for now we just mark phase and add score.
-            else:
-                # Check for stalemate (Board Locked)
-                left_val = board[0][0]
-                right_val = board[-1][1]
-
-                can_anyone_move = False
-                for pid, phand in game_data['hands'].items():
-                    for t in phand:
-                        if t[0] in [left_val, right_val] or t[1] in [left_val, right_val]:
-                            can_anyone_move = True
-                            break
-                    if can_anyone_move: break
-
-                # If no one can move and boneyard is empty, it's a stalemate
-                if not can_anyone_move and not game_data['boneyard']:
-                    game_data['phase'] = 'round_end'
-                    # Calculate hand totals for everyone to find who has the least points
-                    player_totals = {}
-                    for pid, phand in game_data['hands'].items():
-                        player_totals[pid] = sum(t[0] + t[1] for t in phand)
-
-                    # Find player(s) with minimum points
-                    min_pips = min(player_totals.values())
-                    winners = [pid for pid, pips in player_totals.items() if pips == min_pips]
-
-                    # In case of tie, some rules say no points or split. Let's give points to first winner's team found.
-                    cur.execute("SELECT team FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, int(winners[0])))
-                    stalemate_winner_team = cur.fetchone()['team']
-
-                    # Total pips from all hands
-                    all_pips = sum(player_totals.values())
-                    game_data['scores'][stalemate_winner_team] += all_pips
-                else:
-                    game_data['turn_index'] = (game_data['turn_index'] + 1) % len(game_data['ordered_ids'])
-
-            cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-            conn.commit()
-        return {"success": True}
-    except Exception as e:
-        return {"success": False, "msg": str(e)}
-    finally: conn.close()
-
-@app.post("/api/domino/next_round")
-async def domino_next_round(data: dict):
-    conn = get_db_conn()
-    if not conn: return {"success": False}
-    try:
-        room_code = data['room_code'].upper()
-        user_id = int(data['user_id'])
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT host_id, game_data FROM rooms WHERE room_code = %s", (room_code,))
-            room = cur.fetchone()
-            if room['host_id'] != user_id: return {"success": False, "msg": "المضيف فقط يمكنه بدء جولة جديدة"}
-
-            game_data = room['game_data']
-            if game_data['phase'] != 'round_end': return {"success": False, "msg": "الجولة لم تنتهِ بعد"}
-
-            # Get players to reshuffle
-            cur.execute("SELECT user_id, team FROM room_players WHERE room_code = %s", (room_code,))
-            players = cur.fetchall()
-
-            all_tiles = [[i, j] for i in range(7) for j in range(i, 7)]
-            random.shuffle(all_tiles)
-
-            hands = {}
-            for p in players:
-                hands[str(p['user_id'])] = [all_tiles.pop() for _ in range(7)]
-
-            game_data['hands'] = hands
-            game_data['boneyard'] = all_tiles
-            game_data['board'] = []
-            game_data['phase'] = 'playing'
-            # Keep existing scores and ordered_ids
-            # Rotate starter for variety or find double 6 again
-            game_data['turn_index'] = (game_data.get('round_count', 0) + 1) % len(game_data['ordered_ids'])
-            game_data['round_count'] = game_data.get('round_count', 0) + 1
-
-            cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-            conn.commit()
-        return {"success": True}
-    except Exception as e:
-        return {"success": False, "msg": str(e)}
-    finally: conn.close()
-
-@app.post("/api/domino/draw")
-async def domino_draw_tile(data: dict):
-    conn = get_db_conn()
-    if not conn: return {"success": False}
-    try:
-        room_code = data['room_code'].upper()
-        user_id = int(data['user_id'])
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT game_data FROM rooms WHERE room_code = %s", (room_code,))
-            room = cur.fetchone()
-            game_data = room['game_data']
-
-            if game_data['ordered_ids'][game_data['turn_index']] != user_id:
-                return {"success": False, "msg": "ليس دورك"}
-
-            if not game_data['boneyard']:
-                # Pass turn if no more tiles
-                game_data['turn_index'] = (game_data['turn_index'] + 1) % len(game_data['ordered_ids'])
-                cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+@app.post("/api/feedback")
+async def post_feedback(data: dict):
+    with get_db() as conn:
+        if not conn: return {"success": False}
+        try:
+            user_id = data.get('user_id')
+            player_name = data.get('player_name', 'Unknown')
+            message = data.get('message', '').strip()
+            if not message: return {"success": False, "msg": "الرسالة فارغة"}
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO feedback (user_id, player_name, message) VALUES (%s, %s, %s)",
+                            (user_id, player_name, message))
                 conn.commit()
-                return {"success": True, "msg": "لا يوجد أحجار للسحب، تم تمرير الدور"}
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "msg": str(e)}
+
+@app.get("/api/admin/feedback")
+async def get_feedback():
+    with get_db() as conn:
+        if not conn: return []
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("SELECT * FROM feedback ORDER BY created_at DESC LIMIT 100")
+                return cur.fetchall()
+        except Exception:
+            return []
 
-            tile = game_data['boneyard'].pop()
-            game_data['hands'][str(user_id)].append(tile)
 
-            cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-            conn.commit()
-        return {"success": True}
-    except Exception as e:
-        return {"success": False, "msg": str(e)}
-    finally: conn.close()
-
-@app.post("/api/domino/start")
-async def start_domino_game_endpoint(data: dict):
-    conn = get_db_conn()
-    if not conn: return {"success": False, "msg": "Database connection error"}
-    try:
-        room_code = data['room_code'].upper()
-        user_id = int(data['user_id'])
-
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT host_id, game_type FROM rooms WHERE room_code = %s", (room_code,))
-            room = cur.fetchone()
-            if not room or room['game_type'] != 'domino':
-                return {"success": False, "msg": "الغرفة غير موجودة أو ليست دومينو"}
-            if room['host_id'] != user_id:
-                return {"success": False, "msg": "فقط المضيف يمكنه بدء اللعبة"}
-
-            cur.execute("SELECT user_id, player_name, team FROM room_players WHERE room_code = %s", (room_code,))
-            players = cur.fetchall()
-            n = len(players)
-
-            if n not in [2, 4]:
-                return {"success": False, "msg": "يجب أن يكون عدد اللاعبين 2 أو 4"}
-
-            # توزيع الفرق تلقائياً إذا لم تكن موزعة بشكل صحيح
-            # نحتاج تقسيم اللاعبين لمجموعتين متساويتين
-            team_a = []
-            team_b = []
-            for i, p in enumerate(players):
-                if i % 2 == 0: team_a.append(p)
-                else: team_b.append(p)
-
-            # تحديث الفرق في قاعدة البيانات لضمان الاستمرارية (استخدام 0 و 1 لأن العمود من نوع integer)
-            for p in team_a:
-                cur.execute("UPDATE room_players SET team = %s WHERE room_code = %s AND user_id = %s", (0, room_code, p['user_id']))
-            for p in team_b:
-                cur.execute("UPDATE room_players SET team = %s WHERE room_code = %s AND user_id = %s", (1, room_code, p['user_id']))
-
-            # إنشاء وتوزيع الأحجار
-            all_tiles = [[i, j] for i in range(7) for j in range(i, 7)]
-            random.shuffle(all_tiles)
-
-            hands = {}
-            for p in players:
-                hands[str(p['user_id'])] = [all_tiles.pop() for _ in range(7)]
-
-            # ترتيب اللعب (دائري: فريق A ثم B ثم A ثم B)
-            # إذا 4 لاعبين: A1, B1, A2, B2
-            # إذا 2 لاعبين: A1, B1
-            ordered_players = []
-            if n == 4:
-                ordered_players = [team_a[0], team_b[0], team_a[1], team_b[1]]
-            else:
-                ordered_players = [team_a[0], team_b[0]]
-
-            # من يبدأ؟ (صاحب أعلى دبل، أو الدبل 6)
-            starter_id = ordered_players[0]['user_id']
-            max_double = -1
-            for p_id, hand in hands.items():
-                for tile in hand:
-                    if tile[0] == tile[1] and tile[0] > max_double:
-                        max_double = tile[0]
-                        starter_id = int(p_id)
-
-            game_data = {
-                "hands": hands,
-                "boneyard": all_tiles,
-                "board": [],
-                "turn_index": next(i for i, p in enumerate(ordered_players) if p['user_id'] == starter_id),
-                "ordered_ids": [p['user_id'] for p in ordered_players],
-                "scores": {"A": 0, "B": 0},
-                "history": [],
-                "phase": "playing"
-            }
-
-            cur.execute("UPDATE rooms SET status = 'playing', game_data = %s WHERE room_code = %s",
-                        (json.dumps(game_data), room_code))
-            conn.commit()
-
-        return {"success": True}
-    except Exception as e:
-        print(f"Error starting domino: {e}")
-        return {"success": False, "msg": str(e)}
-    finally: conn.close()
-
-@app.post("/api/online/create")
-async def create_room(data: dict):
-    conn = get_db_conn()
-    if not conn:
-        return {"success": False, "msg": "فشل الاتصال بقاعدة البيانات"}
-
-    uid_raw = data.get('user_id')
-    if uid_raw is None:
-        return {"success": False, "msg": "معرف المستخدم مفقود. يرجى إعادة تسجيل الدخول."}
-
-    try:
-        user_id = int(uid_raw)
-    except Exception:
-        return {"success": False, "msg": "معرف المستخدم غير صالح. يرجى إعادة تسجيل الدخول."}
-
-    player_name = str(data.get('player_name', 'لاعب'))[:100]
-    category = str(data.get('category', 'أكلات'))
-    win_limit = 10
-    try:
-        win_limit = int(data.get('win_limit', 10))
-    except:
-        pass
-
-    room_code = None
-
-    try:
-        cleanup_stale_rooms()
-        with conn.cursor() as cur:
-
-            cur.execute("""
-                INSERT INTO users (user_id, player_name, is_registered)
-                VALUES (%s, %s, TRUE)
-                ON CONFLICT (user_id) DO UPDATE SET player_name = EXCLUDED.player_name
-            """, (user_id, player_name))
-
-            for _ in range(5):
-                candidate = ''.join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=5))
-                cur.execute("SELECT 1 FROM rooms WHERE room_code = %s", (candidate,))
-                if not cur.fetchone():
-                    room_code = candidate
-                    break
-
-            if not room_code:
-                raise Exception("تعذر إنشاء رمز غرفة فريد. حاول مرة أخرى.")
-
-            cur.execute("""
-                INSERT INTO rooms (room_code, room_id, host_id, creator_id, status, category, win_limit)
-                VALUES (%s, %s, %s, %s, 'waiting', %s, %s)
-            """, (room_code, room_code, user_id, user_id, category, win_limit))
-
-            cur.execute("""
-                INSERT INTO room_players (room_code, room_id, user_id, player_name, is_ready, join_order, score, vote_limit, vote_cat)
-                VALUES (%s, %s, %s, %s, TRUE, 1, 0, %s, %s)
-                ON CONFLICT (room_code, user_id) DO UPDATE
-                SET is_ready = TRUE, join_order = 1, player_name = EXCLUDED.player_name,
-                    vote_limit = EXCLUDED.vote_limit, vote_cat = EXCLUDED.vote_cat
-            """, (room_code, room_code, user_id, player_name, win_limit, category))
-
-            conn.commit()
-        return {"success": True, "room_code": room_code}
-    except Exception as e:
-        if conn: conn.rollback()
-        import sys
-        print(f"!!! DATABASE ERROR IN create_room: {e}", file=sys.stderr)
-        return {"success": False, "msg": f"خطأ تقني في إنشاء الغرفة: {str(e)}"}
-    finally:
-        if conn: conn.close()
-
-@app.post("/api/online/join")
-async def join_room(data: dict):
-    conn = get_db_conn()
-    if not conn: return {"success": False, "msg": "DB Error"}
-    try:
-        room_code = data['room_code'].upper()
-        user_id = int(data['user_id'])
-        player_name = data['player_name']
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # 1. فحص الأعمدة المتاحة في جدول الغرف بطريقة متوافقة مع RealDictCursor
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'rooms'")
-            room_cols = [r['column_name'] for r in cur.fetchall()]
-            id_col = 'room_code' if 'room_code' in room_cols else 'room_id'
-
-            cur.execute(f"SELECT status, game_type, max_players FROM rooms WHERE {id_col} = %s", (room_code,))
-            room = cur.fetchone()
-            if not room: return {"success": False, "msg": "الغرفة غير موجودة"}
-
-            game_type = room.get('game_type', 'spy')
-            status = room['status']
-
-            # السماح بالانضمام إذا كانت الحالة 'waiting' (برا السالفة) أو 'lobby' (دومينو)
-            is_open = (status == 'waiting' or status == 'lobby')
-
-            # 2. فحص إذا كان اللاعب موجود مسبقاً
-            cur.execute(f"SELECT join_order FROM room_players WHERE ({id_col} = %s) AND user_id = %s", (room_code, user_id))
-            row = cur.fetchone()
-
-            if not row and not is_open:
-                return {"success": False, "msg": "اللعبة بدأت بالفعل ولا يمكنك الانضمام كلاعب جديد"}
-
-            if not row:
-                # التحقق من العدد الأقصى للاعبين
-                cur.execute(f"SELECT COUNT(*) as count FROM room_players WHERE {id_col} = %s", (room_code,))
-                current_count = cur.fetchone()['count']
-                max_p = room.get('max_players') or (4 if game_type == 'domino' else 10)
-
-                if current_count >= max_p:
-                    return {"success": False, "msg": f"عذراً، الغرفة ممتلئة (الحد الأقصى {max_p} لاعبين)"}
-
-                # تحديد الترتيب القادم
-                cur.execute(f"SELECT COALESCE(MAX(join_order), 0) + 1 as next_order FROM room_players WHERE {id_col} = %s", (room_code,))
-                next_order = cur.fetchone()['next_order']
-
-                # 3. فحص أعمدة جدول اللاعبين ونوعها (خاصة الفريق)
-                cur.execute("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'room_players'")
-                p_cols_res = cur.fetchall()
-                p_cols_info = {r['column_name']: r['data_type'] for r in p_cols_res}
-
-                team_val = None
-                if game_type == 'domino' and 'team' in p_cols_info:
-                    # توزيع اللاعبين على فريقين (A, B) أو (0, 1) آلياً
-                    is_int = 'int' in p_cols_info['team'].lower()
-                    if is_int:
-                        team_val = int(current_count % 2)
-                    else:
-                        team_val = 'A' if current_count % 2 == 0 else 'B'
-
-                player_vals = {
-                    'room_id': room_code,
-                    'room_code': room_code,
-                    'user_id': user_id,
-                    'player_name': player_name,
-                    'join_order': next_order,
-                    'team': team_val,
-                    'is_ready': True
-                }
-
-                valid_player_data = {k: v for k, v in player_vals.items() if k in p_cols_info}
-                cols_str = ", ".join(valid_player_data.keys())
-                placeholders = ", ".join(["%s"] * len(valid_player_data))
-
-                cur.execute(f"INSERT INTO room_players ({cols_str}) VALUES ({placeholders})", list(valid_player_data.values()))
-            else:
-                # تحديث اسم اللاعب إذا عاد للانضمام
-                cur.execute(f"UPDATE room_players SET player_name = %s WHERE {id_col} = %s AND user_id = %s",
-                            (player_name, room_code, user_id))
-
-            conn.commit()
-        return {"success": True}
-    except Exception as e:
-        print(f"Error in join_room: {e}")
-        return {"success": False, "msg": f"خطأ تقني: {str(e)}"}
-    finally:
-        if conn: conn.close()
-
-@app.post("/api/online/leave")
-async def leave_online_room(data: dict):
-    conn = get_db_conn()
-    if not conn: return {"success": False, "msg": "Database connection failed"}
-    try:
-        room_code = data['room_code'].upper()
-        user_id = int(data['user_id'])
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT 1 FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
-            if not cur.fetchone():
-                return {"success": True}
-            
-            cur.execute("DELETE FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
-            
-            cur.execute("SELECT user_id FROM room_players WHERE room_code = %s ORDER BY join_order ASC", (room_code,))
-            remaining = cur.fetchall()
-            if not remaining:
-                cur.execute("DELETE FROM rooms WHERE room_code = %s", (room_code,))
-            else:
-                cur.execute("SELECT host_id FROM rooms WHERE room_code = %s", (room_code,))
-                host_row = cur.fetchone()
-                if host_row and host_row['host_id'] == user_id:
-                    new_host_id = remaining[0]['user_id']
-                    cur.execute("UPDATE rooms SET host_id = %s WHERE room_code = %s", (new_host_id, room_code))
-            conn.commit()
-        return {"success": True}
-    except Exception as e:
-        print(f"Error in leave_room: {e}")
-        return {"success": False, "msg": str(e)}
-    finally:
-        if conn: conn.close()
-
-@app.post("/api/online/vote")
-async def online_vote(data: dict):
-    conn = get_db_conn()
-    if not conn: return {"success": False}
-    try:
-        room_code = data['room_code'].upper()
-        user_id = data['user_id']
-        vote_type = data['type'] # 'limit' or 'cat'
-        val = data['value']
-
-        with conn.cursor() as cur:
-            if vote_type == 'limit':
-                cur.execute("UPDATE room_players SET vote_limit = %s WHERE room_code = %s AND user_id = %s", (int(val), room_code, user_id))
-            else:
-                cur.execute("UPDATE room_players SET vote_cat = %s WHERE room_code = %s AND user_id = %s", (val, room_code, user_id))
-            conn.commit()
-        return {"success": True}
-    finally: conn.close()
-
-@app.post("/api/online/start")
-async def start_online_game(data: dict):
-    conn = get_db_conn()
-    if not conn: return {"success": False, "msg": "لا يوجد اتصال بقاعدة البيانات"}
-    try:
-        room_code = data['room_code'].upper()
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT host_id FROM rooms WHERE room_code = %s", (room_code,))
-            r = cur.fetchone()
-            if not r: return {"success": False, "msg": "الغرفة غير موجودة"}
-            if r['host_id'] != int(data['user_id']): return {"success": False, "msg": "فقط المضيف يمكنه البدء"}
-
-            # التأكد من عدد اللاعبين
-            cur.execute("SELECT COUNT(*) FROM room_players WHERE room_code = %s", (room_code,))
-            if cur.fetchone()['count'] < 3: return {"success": False, "msg": "يجب وجود 3 لاعبين على الأقل"}
-
-            # حساب نتائج التصويت في اللوبي
-            # 1. نقاط الفوز
-            cur.execute("SELECT vote_limit, COUNT(*) as c FROM room_players WHERE room_code = %s AND vote_limit IS NOT NULL GROUP BY vote_limit ORDER BY c DESC LIMIT 1", (room_code,))
-            res_limit = cur.fetchone()
-
-            # 2. الفئة
-            cur.execute("SELECT vote_cat, COUNT(*) as c FROM room_players WHERE room_code = %s AND vote_cat IS NOT NULL GROUP BY vote_cat ORDER BY c DESC LIMIT 1", (room_code,))
-            res_cat = cur.fetchone()
-
-            if res_limit or res_cat:
-                win_limit = res_limit['vote_limit'] if res_limit else 10
-                category = res_cat['vote_cat'] if res_cat else "أكلات"
-                cur.execute("UPDATE rooms SET win_limit = %s, category = %s, status = 'roles_prep' WHERE room_code = %s", (win_limit, category, room_code))
-            else:
-                # If no one voted in lobby, keep the room's preset settings (chosen at creation)
-                cur.execute("UPDATE rooms SET status = 'roles_prep' WHERE room_code = %s", (room_code,))
-
-            conn.commit()
-
-        # البدء الفعلي (توزيع الأدوار)
-        await prepare_round(room_code)
-
-        return {"success": True}
-    except Exception as e:
-        print(f"Error in start_online_game: {e}")
-        return {"success": False, "msg": f"خطأ: {str(e)}"}
-    finally:
-        if conn: conn.close()
-
-@app.post("/api/online/submit_vote")
-async def submit_vote(data: dict):
-    conn = get_db_conn()
-    if not conn: return {"success": False, "msg": "Database connection failed"}
-    try:
-        room_code = data['room_code'].upper()
-        user_id = int(data['user_id'])
-        vote_type = data['type'] # 'limit' or 'cat'
-        val = data['value']
-        is_lobby = data.get('is_lobby', False)
-
-        should_prepare = False
-        with conn.cursor() as cur:
-            if vote_type == 'limit':
-                cur.execute("UPDATE room_players SET vote_limit = %s WHERE room_code = %s AND user_id = %s", (int(val), room_code, user_id))
-            else:
-                cur.execute("UPDATE room_players SET vote_cat = %s WHERE room_code = %s AND user_id = %s", (val, room_code, user_id))
-
-            # إذا لم نكن في اللوبي، نكمل المنطق القديم للانتقال التلقائي
-            if not is_lobby:
-                cur.execute(f"SELECT COUNT(*) FROM room_players WHERE room_code = %s AND vote_{vote_type} IS NULL", (room_code,))
-                if cur.fetchone()[0] == 0:
-                    cur.execute(f"SELECT vote_{vote_type}, COUNT(*) as c FROM room_players WHERE room_code = %s GROUP BY vote_{vote_type} ORDER BY c DESC LIMIT 1", (room_code,))
-                    winner = cur.fetchone()[0]
-
-                    if vote_type == 'limit':
-                        cur.execute("SELECT game_data FROM rooms WHERE room_code = %s", (room_code,))
-                        g_row = cur.fetchone()
-                        g_data = g_row[0] if g_row and g_row[0] else {}
-                        g_data['phase_start'] = time.time()
-                        cur.execute("UPDATE rooms SET win_limit = %s, status = 'voting_cat', game_data = %s WHERE room_code = %s", (winner, json.dumps(g_data), room_code))
-                    else:
-                        cur.execute("UPDATE rooms SET category = %s, status = 'roles_prep' WHERE room_code = %s", (winner, room_code))
-                        should_prepare = True
-
-            conn.commit()
-
-        if should_prepare and not is_lobby:
-            conn.close()
-            conn = None
-            await prepare_round(room_code)
-
-        return {"success": True}
-    except Exception as e:
-        print(f"Error in submit_vote: {e}")
-        return {"success": False, "msg": str(e)}
-    finally:
-        if conn: conn.close()
-
-async def prepare_round(room_code):
-    conn = get_db_conn()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT category FROM rooms WHERE room_code = %s", (room_code,))
-            room = cur.fetchone()
-            cat = room['category']
-
-            cur.execute("SELECT word FROM words WHERE category = %s", (cat,))
-            words = [r['word'].strip() for r in cur.fetchall()]
-            if not words: words = ["بيتزا", "شاورما", "منسف"] # افتراضي
-
-            correct = random.choice(words)
-            cur.execute("SELECT user_id, player_name, red_card FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
-            players = cur.fetchall()
-
-            spy_idx = random.randint(0, len(players)-1)
-            spy_id = players[spy_idx]['user_id']
-
-            # Reset players' readiness for role reveal
-            cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
-
-            # Filter active players for the question sequence
-            active_players = [p for p in players if not p['red_card']]
-            if len(active_players) < 3:
-                 active_players = players
-
-            other = [w for w in words if w != correct]
-            guesses = random.sample(other, min(len(other), 6)) + [correct]
-            random.shuffle(guesses)
-
-            # Initial asker is the first active player
-            current_asker = active_players[0]
-
-            # Generate automatic sequence if needed (everyone asks everyone)
-            # 1 asks 2, 2 asks 3... n asks 1, then 1 asks 3, etc.
-            auto_seq = []
-            p_ids = [p['user_id'] for p in active_players]
-            n = len(p_ids)
-            for shift in range(1, n):
-                for i in range(n):
-                    asker_id = p_ids[i]
-                    ans_id = p_ids[(i + shift) % n]
-                    auto_seq.append({'asker_id': asker_id, 'ans_id': ans_id})
-
-            dist_mode = room.get('distribution_mode', 'auto')
-            # إذا كان عدد اللاعبين 3، نجعل نظام الأسئلة اختيارياً للكل بدلاً من التتابع التلقائي
-            if len(active_players) == 3:
-                dist_mode = 'manual'
-
-            game_data = {
-                "word": correct,
-                "spy_id": spy_id,
-                "q_seq": [], # History of completed questions
-                "auto_seq": auto_seq, # Pre-calculated sequence
-                "current_seq_idx": 0,
-                "distribution_mode": dist_mode,
-                "current_asker_id": current_asker['user_id'],
-                "current_asker_name": current_asker['player_name'],
-                "ready_to_vote": [], # List of user_ids who clicked "Vote"
-                "current_q": None, # Ongoing question {ans_id, ans_name, question, answer, status}
-                "guesses": guesses,
-                "messages": [],
-                "phase_start": time.time(),
-                "phase_timeout": 0
-            }
-
-            cur.execute("UPDATE rooms SET status = 'playing_questions', secret_word = %s, spy_id = %s, game_data = %s WHERE room_code = %s",
-                        (correct, spy_id, json.dumps(game_data), room_code))
-            conn.commit()
-    finally: conn.close()
-
-async def calculate_online_results(room_code):
-    conn = get_db_conn()
-    if not conn: return
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
-            room = cur.fetchone()
-            game_data = room['game_data']
-            spy_id = room['spy_id']
-            votes = game_data.get('votes', {}) # user_id_str -> target_id (int)
-
-            # Count votes
-            vote_counts = {}
-            for v_id_str, target_id in votes.items():
-                target_id = int(target_id)
-                vote_counts[target_id] = vote_counts.get(target_id, 0) + 1
-
-            # Determine who got the most votes
-            max_votes = -1
-            voted_out_id = None
-            for p_id, count in vote_counts.items():
-                if count > max_votes:
-                    max_votes = count
-                    voted_out_id = p_id
-                elif count == max_votes:
-                    voted_out_id = None # Tie
-
-            spy_caught = (voted_out_id == spy_id)
-            game_data['spy_caught'] = spy_caught
-
-            # Points distribution
-            # 1. Players who voted for the spy (and are not red-carded) get 1 point
-            for voter_id_str, target_id in votes.items():
-                voter_id = int(voter_id_str)
-                if int(target_id) == spy_id:
-                    cur.execute("UPDATE room_players SET score = score + 1 WHERE room_code = %s AND user_id = %s AND red_card = FALSE", (room_code, voter_id))
-
-            # 2. Spy gets point if NOT caught and not red-carded
-            if not spy_caught:
-                cur.execute("UPDATE room_players SET score = score + 1 WHERE room_code = %s AND user_id = %s AND red_card = FALSE", (room_code, spy_id))
-
-            # 3. Handle Game Over and session points persistence
-            cur.execute("SELECT user_id, score FROM room_players WHERE room_code = %s", (room_code,))
-            players_scores = cur.fetchall()
-
-            game_over = False
-            winner_id = None
-            for p in players_scores:
-                if p['score'] >= room['win_limit']:
-                    game_over = True
-                    winner_id = p['user_id']
-                    break
-
-            if game_over:
-                game_data['game_over'] = True
-                game_data['winner_id'] = winner_id
-                # Persist to global user profile (online_points)
-                cur.execute("UPDATE users SET online_points = online_points + 1 WHERE user_id = %s", (winner_id,))
-                cur.execute("UPDATE rooms SET status = 'result' WHERE room_code = %s", (room_code,))
-            else:
-                # Always go to spy_reveal phase to let the spy guess the word
-                game_data['phase_start'] = time.time()
-                cur.execute("UPDATE rooms SET status = 'spy_reveal', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-
-            cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-            conn.commit()
-    except Exception as e:
-        print(f"Error in calculate_online_results: {e}")
-    finally:
-        if conn: conn.close()
-
-@app.get("/api/online/room/{room_code}")
-async def get_room(room_code: str):
-    conn = get_db_conn()
-    if not conn: return {"success": False, "msg": "No DB connection"}
-    try:
-        room_code = room_code.upper()
-        should_prepare = False
-        should_calculate_results = False
-        changed = False
-
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # 1. Update updated_at keepalive timestamp
-            cur.execute("UPDATE rooms SET updated_at = CURRENT_TIMESTAMP WHERE room_code = %s", (room_code,))
-            conn.commit()
-            
-            # 2. Fetch the room
-            cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
-            room = cur.fetchone()
-            if not room: return {"success": False, "msg": "Room not found"}
-
-            status = room['status']
-            game_data = room['game_data'] or {}
-
-            # --- Timeout and Auto-Transitions Checks ---
-            if status == 'voting_limit':
-                phase_start = game_data.get('phase_start')
-                if phase_start and (time.time() - phase_start > 10):
-                    cur.execute("SELECT user_id FROM room_players WHERE room_code = %s AND vote_limit IS NULL", (room_code,))
-                    missing_voters = cur.fetchall()
-                    for p in missing_voters:
-                        random_limit = random.choice([5, 10, 15, 20])
-                        cur.execute("UPDATE room_players SET vote_limit = %s WHERE room_code = %s AND user_id = %s", (random_limit, room_code, p['user_id']))
-                    
-                    cur.execute("SELECT vote_limit, COUNT(*) as c FROM room_players WHERE room_code = %s GROUP BY vote_limit ORDER BY c DESC LIMIT 1", (room_code,))
-                    winner_row = cur.fetchone()
-                    winner = winner_row['vote_limit'] if winner_row else 10
-                    
-                    game_data['phase_start'] = time.time()
-                    cur.execute("UPDATE rooms SET win_limit = %s, status = 'voting_cat', game_data = %s WHERE room_code = %s", (winner, json.dumps(game_data), room_code))
-                    changed = True
-
-            elif status == 'voting_cat':
-                phase_start = game_data.get('phase_start')
-                if phase_start and (time.time() - phase_start > 10):
-                    cur.execute("SELECT user_id FROM room_players WHERE room_code = %s AND vote_cat IS NULL", (room_code,))
-                    missing_voters = cur.fetchall()
-                    available_cats = ["أكلات", "حيوانات", "ملابس", "كورة", "سيارات", "شركات", "كواكب", "أجهزة", "تطبيقات", "فواكه وخضار", "شخصيات", "كارتون", "مشروبات", "حلويات", "مسلسلات", "انمي", "كيبوب", "قيمرز", "مهن"]
-                    for p in missing_voters:
-                        random_cat = random.choice(available_cats)
-                        cur.execute("UPDATE room_players SET vote_cat = %s WHERE room_code = %s AND user_id = %s", (random_cat, room_code, p['user_id']))
-                    
-                    cur.execute("SELECT vote_cat, COUNT(*) as c FROM room_players WHERE room_code = %s GROUP BY vote_cat ORDER BY c DESC LIMIT 1", (room_code,))
-                    winner_row = cur.fetchone()
-                    winner = winner_row['vote_cat'] if winner_row else "أكلات"
-                    
-                    cur.execute("UPDATE rooms SET category = %s, status = 'roles_prep' WHERE room_code = %s", (winner, room_code))
-                    changed = True
-                    should_prepare = True
-
-            elif status == 'voting_spy':
-                phase_start = game_data.get('phase_start')
-                if phase_start and (time.time() - phase_start > 10):
-                    cur.execute("SELECT user_id FROM room_players WHERE room_code = %s AND is_ready = FALSE AND red_card = FALSE", (room_code,))
-                    missing_voters = cur.fetchall()
-                    
-                    cur.execute("SELECT user_id FROM room_players WHERE room_code = %s", (room_code,))
-                    all_players = [p['user_id'] for p in cur.fetchall()]
-                    
-                    if 'votes' not in game_data: game_data['votes'] = {}
-                    for p in missing_voters:
-                        voter_id = p['user_id']
-                        possible_targets = [pid for pid in all_players if pid != voter_id]
-                        if possible_targets:
-                            random_target = random.choice(possible_targets)
-                            game_data['votes'][str(voter_id)] = random_target
-                            cur.execute("UPDATE room_players SET is_ready = TRUE WHERE room_code = %s AND user_id = %s", (room_code, voter_id))
-                    
-                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                    cur.execute("SELECT COUNT(*) FROM room_players WHERE room_code = %s AND is_ready = FALSE AND red_card = FALSE", (room_code,))
-                    if cur.fetchone()['count'] == 0:
-                        should_calculate_results = True
-                    changed = True
-
-            elif status == 'playing_questions':
-                game_data = room.get('game_data') or {}
-                current_asker_id = game_data.get('current_asker_id')
-                current_q = game_data.get('current_q')
-                phase_start = game_data.get('phase_start')
-
-                # Fetch question timeout from settings or default to 30
-                cur.execute("SELECT value FROM settings WHERE key = 'question_timeout'")
-                q_timeout_row = cur.fetchone()
-                q_timeout = int(q_timeout_row['value']) if q_timeout_row else 30
-
-                # Check for absolute timeout to skip turns for absent players
-                if phase_start:
-                    elapsed = time.time() - phase_start
-                    if elapsed > q_timeout:
-                        changed = True
-                        if not current_q:
-                            # Asker didn't choose a target
-                            cur.execute("UPDATE room_players SET yellow_cards = yellow_cards + 1 WHERE room_code = %s AND user_id = %s", (room_code, current_asker_id))
-                            # Move turn to next player
-                            cur.execute("SELECT user_id, player_name FROM room_players WHERE room_code = %s AND red_card = FALSE ORDER BY join_order ASC", (room_code,))
-                            active_players = cur.fetchall()
-                            if active_players:
-                                curr_idx = next((i for i, p in enumerate(active_players) if p['user_id'] == current_asker_id), 0)
-                                next_asker = active_players[(curr_idx + 1) % len(active_players)]
-
-                                game_data['current_asker_id'] = next_asker['user_id']
-                                game_data['current_asker_name'] = next_asker['player_name']
-                            game_data['phase_start'] = time.time()
-                        else:
-                            # Asking or Answering timeout
-                            target_id = current_q['asker_id'] if current_q['status'] == 'asking' else current_q['ans_id']
-                            cur.execute("UPDATE room_players SET yellow_cards = yellow_cards + 1 WHERE room_code = %s AND user_id = %s", (room_code, target_id))
-
-                            # Cancel current question and move turn to next asker
-                            cur.execute("SELECT user_id, player_name FROM room_players WHERE room_code = %s AND red_card = FALSE ORDER BY join_order ASC", (room_code,))
-                            active_players = cur.fetchall()
-                            if active_players:
-                                curr_idx = next((i for i, p in enumerate(active_players) if p['user_id'] == current_asker_id), 0)
-                                next_asker = active_players[(curr_idx + 1) % len(active_players)]
-
-                                game_data['current_asker_id'] = next_asker['user_id']
-                                game_data['current_asker_name'] = next_asker['player_name']
-                            game_data['current_q'] = None
-                            game_data['phase_start'] = time.time()
-
-                        # Check for red cards (2 yellows = red)
-                        cur.execute("UPDATE room_players SET red_card = TRUE WHERE room_code = %s AND yellow_cards >= 2", (room_code,))
-
-            elif status == 'spy_reveal':
-                phase_start = game_data.get('phase_start')
-                if phase_start and (time.time() - phase_start > 15):
-                    # Auto-timeout for spy guess
-                    if 'spy_guess' not in game_data:
-                        game_data['spy_guess'] = "لم يختبر (انتهى الوقت)"
-                    cur.execute("UPDATE rooms SET status = 'result', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                    changed = True
-
-            if changed:
-                cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                conn.commit()
-                # Re-fetch room if changed
-                cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
-                room = cur.fetchone()
-
-            cur.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card, vote_limit, vote_cat FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
-            players = cur.fetchall()
-
-        # Commit and close connection first to prevent nested deadlocks!
-        if conn:
-            conn.commit()
-            conn.close()
-            conn = None
-
-        if should_prepare:
-            await prepare_round(room_code)
-            conn_new = get_db_conn()
-            try:
-                with conn_new.cursor(cursor_factory=RealDictCursor) as cur_new:
-                    cur_new.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
-                    room = cur_new.fetchone()
-                    cur_new.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card, vote_limit, vote_cat FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
-                    players = cur_new.fetchall()
-            finally:
-                conn_new.close()
-
-        if should_calculate_results:
-            await calculate_online_results(room_code)
-            conn_new = get_db_conn()
-            try:
-                with conn_new.cursor(cursor_factory=RealDictCursor) as cur_new:
-                    cur_new.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
-                    room = cur_new.fetchone()
-                    cur_new.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card, vote_limit, vote_cat FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
-                    players = cur_new.fetchall()
-            finally:
-                conn_new.close()
-
-        # Compute time_left server-side to avoid timezone/clock desync
-        time_left = 0
-        if room:
-            status = room.get('status')
-            game_data = room.get('game_data') or {}
-            if isinstance(game_data, str):
-                try:
-                    game_data = json.loads(game_data)
-                except:
-                    game_data = {}
-            
-            phase_start = game_data.get('phase_start')
-            if phase_start:
-                elapsed = time.time() - phase_start
-                if status in ['voting_limit', 'voting_cat', 'voting_spy', 'spy_reveal']:
-                    time_left = max(0, int(15 - elapsed))
-                elif status == 'playing_questions':
-                    q_idx = game_data.get('q_idx', 0)
-                    q_seq = game_data.get('q_seq', [])
-                    if q_idx < len(q_seq):
-                        curr_q = q_seq[q_idx]
-                        limit = 20 if curr_q.get('status') == 'answering' else 15
-                        time_left = max(0, int(limit - elapsed))
-            
-            room_dict = dict(room)
-            room_dict['time_left'] = time_left
-            room = room_dict
-
-        return {"success": True, "room": room, "players": players}
-    except Exception as e:
-        print(f"Error in get_room: {e}")
-        return {"success": False, "msg": str(e)}
-    finally:
-        if conn: conn.close()
-
-@app.post("/api/online/action")
-async def online_action(data: dict):
-    conn = get_db_conn()
-    if not conn: return {"success": False, "msg": "No DB connection"}
-    try:
-        room_code = data['room_code'].upper()
-        user_id = data['user_id']
-        action = data['action']
-
-        should_calculate_results = False
-        should_prepare_round = False
-
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
-            room = cur.fetchone()
-            if not room: return {"success": False, "msg": "Room not found"}
-
-            game_data = room['game_data']
-
-            if action == "ready_role":
-                # تسجيل أن اللاعب قرأ دوره
-                cur.execute("UPDATE room_players SET is_ready = TRUE WHERE room_code = %s AND user_id = %s", (room_code, user_id))
-                # إذا الكل جاهز، ننتقل للمرحلة التالية
-                cur.execute("SELECT COUNT(*) FROM room_players WHERE room_code = %s AND is_ready = FALSE", (room_code,))
-                if cur.fetchone()['count'] == 0:
-                    game_data['phase_start'] = time.time()
-                    cur.execute("UPDATE rooms SET status = 'playing_questions', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                    # ريست لـ is_ready لاستخدامها لاحقاً
-                    cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
-                conn.commit()
-
-            elif action == "choose_target":
-                target_id = int(data['target_id'])
-                target_name = data['target_name']
-
-                # Check if it's manual mode and host or it's the asker's turn
-                is_host = room['host_id'] == int(user_id)
-                can_choose = (game_data.get('distribution_mode') == 'manual' and is_host) or \
-                            (game_data.get('distribution_mode') == 'auto' and game_data.get('current_asker_id') == user_id)
-
-                if can_choose and not game_data.get('current_q'):
-                    game_data['current_q'] = {
-                        "asker_id": game_data['current_asker_id'],
-                        "asker_name": game_data['current_asker_name'],
-                        "ans_id": target_id, "ans_name": target_name,
-                        "status": "asking", "question": "", "answer": ""
-                    }
-                    game_data['phase_start'] = time.time()
-                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                conn.commit()
-
-            elif action == "toggle_vote_ready":
-                if 'ready_to_vote' not in game_data: game_data['ready_to_vote'] = []
-                if user_id not in game_data['ready_to_vote']:
-                    game_data['ready_to_vote'].append(user_id)
-
-                # Check if everyone is ready to vote
-                cur.execute("SELECT user_id FROM room_players WHERE room_code = %s AND red_card = FALSE", (room_code,))
-                active_ids = [p['user_id'] for p in cur.fetchall()]
-
-                all_ready = True
-                for aid in active_ids:
-                    if aid not in game_data['ready_to_vote']:
-                        all_ready = False; break
-
-                if all_ready:
-                    game_data['phase_start'] = time.time()
-                    cur.execute("UPDATE rooms SET status = 'voting_spy', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                else:
-                    # If it was my turn to ask, pass it randomly
-                    if game_data.get('current_asker_id') == user_id and not game_data.get('current_q'):
-                        others = [aid for aid in active_ids if aid not in game_data['ready_to_vote']]
-                        if others:
-                            new_asker_id = random.choice(others)
-                            cur.execute("SELECT player_name FROM room_players WHERE user_id = %s", (new_asker_id,))
-                            game_data['current_asker_id'] = new_asker_id
-                            game_data['current_asker_name'] = cur.fetchone()['player_name']
-
-                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                conn.commit()
-
-            elif action == "submit_question":
-                # Check if red carded
-                cur.execute("SELECT red_card FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
-                res = cur.fetchone()
-                if res and res['red_card']: return {"success": False, "msg": "أنت مستبعد (كرت أحمر)"}
-
-                curr_q = game_data.get('current_q')
-                if curr_q and curr_q['asker_id'] == user_id and curr_q['status'] == 'asking':
-                    curr_q['question'] = data['text']
-                    curr_q['status'] = 'answering'
-                    game_data['phase_start'] = time.time()
-                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                conn.commit()
-
-            elif action == "submit_answer":
-                # Check if red carded
-                cur.execute("SELECT red_card FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
-                res = cur.fetchone()
-                if res and res['red_card']: return {"success": False, "msg": "أنت مستبعد (كرت أحمر)"}
-
-                curr_q = game_data.get('current_q')
-                if curr_q and curr_q['ans_id'] == user_id and curr_q['status'] == 'answering':
-                    curr_q['answer'] = data['text']
-                    curr_q['status'] = 'done'
-
-                    # Add to history
-                    if 'q_seq' not in game_data: game_data['q_seq'] = []
-                    game_data['q_seq'].append(curr_q)
-                    game_data['current_q'] = None
-
-                    # Logic for next asker
-                    if game_data.get('distribution_mode') == 'auto':
-                        # Advance in pre-calculated sequence
-                        game_data['current_seq_idx'] = game_data.get('current_seq_idx', 0) + 1
-                        auto_seq = game_data.get('auto_seq', [])
-
-                        if game_data['current_seq_idx'] < len(auto_seq):
-                            next_pair = auto_seq[game_data['current_seq_idx']]
-                            game_data['current_asker_id'] = next_pair['asker_id']
-                            cur.execute("SELECT player_name FROM room_players WHERE user_id = %s", (next_pair['asker_id'],))
-                            game_data['current_asker_name'] = cur.fetchone()['player_name']
-
-                            # Automatically set the target (answerer) for auto mode
-                            cur.execute("SELECT player_name FROM room_players WHERE user_id = %s", (next_pair['ans_id'],))
-                            ans_name = cur.fetchone()['player_name']
-                            game_data['current_q'] = {
-                                "asker_id": next_pair['asker_id'], "asker_name": game_data['current_asker_name'],
-                                "ans_id": next_pair['ans_id'], "ans_name": ans_name,
-                                "status": "asking", "question": "", "answer": ""
-                            }
-                        else:
-                            # End of sequence, maybe go to voting or loop?
-                            # For now, let it be manual or just keep last asker
-                            pass
-                    else:
-                        # Manual mode: Next asker is the one who just answered
-                        next_asker_id = curr_q['ans_id']
-                        next_asker_name = curr_q['ans_name']
-
-                        # If the next asker already opted to vote, pick a random person who hasn't
-                        if next_asker_id in game_data.get('ready_to_vote', []):
-                            cur.execute("SELECT user_id, player_name FROM room_players WHERE room_code = %s AND red_card = FALSE", (room_code,))
-                            active_players = cur.fetchall()
-                            others = [p for p in active_players if p['user_id'] not in game_data['ready_to_vote']]
-                            if others:
-                                chosen = random.choice(others)
-                                next_asker_id = chosen['user_id']
-                                next_asker_name = chosen['player_name']
-                            else:
-                                game_data['phase_start'] = time.time()
-                                cur.execute("UPDATE rooms SET status = 'voting_spy', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                                conn.commit()
-                                return {"success": True}
-
-                        game_data['current_asker_id'] = next_asker_id
-                        game_data['current_asker_name'] = next_asker_name
-
-                    game_data['phase_start'] = time.time()
-                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                conn.commit()
-
-            elif action == "adjust_timer":
-                # Only host can adjust timer mid-game
-                if room['host_id'] == user_id:
-                    new_time = int(data['new_time'])
-                    # We adjust the phase_start to "add" or "subtract" time from the current phase
-                    # Logic: Current time left = q_timeout - (now - phase_start)
-                    # We want: Current time left = new_time
-                    # So: new_time = q_timeout - (now - new_phase_start)
-                    # new_phase_start = now - q_timeout + new_time
-
-                    cur.execute("SELECT value FROM settings WHERE key = 'question_timeout'")
-                    q_timeout_row = cur.fetchone()
-                    q_timeout = int(q_timeout_row['value']) if q_timeout_row else 30
-
-                    game_data['phase_start'] = time.time() - q_timeout + new_time
-                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                conn.commit()
-
-            elif action == "vote":
-                # Check if red carded
-                cur.execute("SELECT red_card FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
-                res = cur.fetchone()
-                if res and res['red_card']: return {"success": False, "msg": "أنت مستبعد (كرت أحمر)"}
-
-                target_id = int(data['target_id'])
-                if 'votes' not in game_data: game_data['votes'] = {}
-                game_data['votes'][str(user_id)] = target_id
-
-                cur.execute("UPDATE room_players SET is_ready = TRUE WHERE room_code = %s AND user_id = %s", (room_code, user_id))
-
-                # إذا الكل صوت (باستثناء المستبعدين بالكرت الأحمر)
-                cur.execute("SELECT COUNT(*) FROM room_players WHERE room_code = %s AND is_ready = FALSE AND red_card = FALSE", (room_code,))
-                if cur.fetchone()['count'] == 0:
-                    # Calculate results
-                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                    conn.commit() # Save votes first
-                    should_calculate_results = True
-                else:
-                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                    conn.commit()
-
-            elif action == "spy_guess":
-                guess = data['guess']
-                game_data['spy_guess'] = guess
-                room_code = data['room_code'].upper()
-
-                # توزيع النقاط إذا خمن صح
-                if guess == room['secret_word']:
-                    cur.execute("UPDATE room_players SET score = score + 1 WHERE room_code = %s AND user_id = %s", (room_code, user_id))
-
-                # Check for Game Over after spy guess
-                cur.execute("SELECT user_id, score FROM room_players WHERE room_code = %s", (room_code,))
-                players_scores = cur.fetchall()
-
-                game_over = False
-                winner_id = None
-                for p in players_scores:
-                    if p['score'] >= room['win_limit']:
-                        game_over = True
-                        winner_id = p['user_id']
-                        break
-
-                if game_over:
-                    game_data['game_over'] = True
-                    game_data['winner_id'] = winner_id
-                    cur.execute("UPDATE users SET online_points = online_points + 1 WHERE user_id = %s", (winner_id,))
-
-                cur.execute("UPDATE rooms SET status = 'result', game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
-                conn.commit()
-
-            elif action == "new_round":
-                if room['host_id'] == user_id:
-                    should_prepare_round = True
-
-        # Commit and close connection first to prevent nested deadlocks!
-        if should_calculate_results or should_prepare_round:
-            conn.close()
-            conn = None
-            if should_calculate_results:
-                await calculate_online_results(room_code)
-            elif should_prepare_round:
-                await prepare_round(room_code)
-
-        return {"success": True}
-    except Exception as e:
-        print(f"Error in online_action: {e}")
-        return {"success": False, "msg": str(e)}
-    finally:
-        if conn: conn.close()
 
 @app.post("/api/admin/add_word")
 async def add_word(data: dict):
@@ -3116,6 +1928,9 @@ r(--primary);
             const scoreA = gd.scores.A !== undefined ? gd.scores.A : (gd.scores["0"] || 0);
             const scoreB = gd.scores.B !== undefined ? gd.scores.B : (gd.scores["1"] || 0);
             const winLimit = gd.win_limit || 151;
+            const roundWinnerTeam = gd.round_winner_team;
+            const roundPoints = gd.round_points;
+            const isStalemate = gd.boneyard && gd.boneyard.length === 0 && gd.phase === 'round_end';
 
             let html = `
                 <div class="card domino-game-card" style="padding:10px; max-width:100%; width:98vw; min-height:85vh; display:flex; flex-direction:column; background: linear-gradient(135deg, #1e272e 0%, #2f3640 100%);">
@@ -3144,24 +1959,32 @@ r(--primary);
                     <!-- طاولة اللعب بتصميم الأفعى المحسن -->
                     <div id="domino-board" style="flex-grow:1; background: radial-gradient(circle, rgba(255,255,255,0.03) 0%, transparent 70%); border-radius:20px; position:relative; overflow:auto; display:flex; align-content:center; justify-content:center; padding:20px; border:1px solid rgba(255,255,255,0.05); margin-bottom:15px; flex-wrap:wrap; perspective: 1000px;">
                         ${gd.phase === 'round_end' ? `
-                            <div class="round-end-overlay" style="background:rgba(0,0,0,0.8); padding:30px; border-radius:20px; text-align:center; border:2px solid var(--accent); animation: popIn 0.5s ease;">
-                                <h2 style="color:var(--accent); margin-bottom:10px;">انتهت الجولة! 🏆</h2>
-                                <div style="display:flex; justify-content:center; gap:30px; margin:20px 0;">
+                            <div class="round-end-overlay" style="background:rgba(0,0,0,0.9); padding:30px; border-radius:20px; text-align:center; border:2px solid var(--accent); animation: popIn 0.5s ease; min-width:280px;">
+                                <h2 style="color:var(--accent); margin-bottom:10px;">${isStalemate ? '🔒 قفلة!' : 'انتهت الجولة! 🏆'}</h2>
+                                ${roundWinnerTeam !== null ? `
+                                    <div style="margin:15px 0;">
+                                        <div style="font-size:1.2rem; color:#fff;">الفائز: <b style="color:var(--success);">فريق ${roundWinnerTeam == "0" ? "A" : "B"}</b></div>
+                                        <div style="font-size:2rem; color:var(--accent); font-weight:900;">+${roundPoints} نقطة</div>
+                                    </div>
+                                ` : `
+                                    <div style="margin:15px 0; color:var(--error); font-size:1.2rem;">تعادل لا يوجد نقاط!</div>
+                                `}
+                                <div style="display:flex; justify-content:center; gap:30px; margin:20px 0; border-top: 1px solid rgba(255,255,255,0.1); padding-top:20px;">
                                     <div>
                                         <div style="color:#aaa;">فريق A</div>
                                         <div style="font-size:30px; font-weight:900;">${scoreA}</div>
-                                        <div style="font-size:12px; color:#55efc4;">باقي له: ${winLimit - scoreA}</div>
+                                        <div style="font-size:12px; color:#55efc4;">باقي: ${Math.max(0, winLimit - scoreA)}</div>
                                     </div>
                                     <div style="border-left:1px solid #444;"></div>
                                     <div>
                                         <div style="color:#aaa;">فريق B</div>
                                         <div style="font-size:30px; font-weight:900;">${scoreB}</div>
-                                        <div style="font-size:12px; color:#55efc4;">باقي له: ${winLimit - scoreB}</div>
+                                        <div style="font-size:12px; color:#55efc4;">باقي: ${Math.max(0, winLimit - scoreB)}</div>
                                     </div>
                                 </div>
                                 ${room.host_id == currentUser.user_id ?
-                                    `<button onclick="startNextDominoRound()" style="background:var(--success); width:100%; padding:15px; font-size:18px;">ابدأ الجولة التالية 🔄</button>` :
-                                    `<p style="color:#aaa; border-top:1px solid #333; pt-10">بانتظار المضيف لبدء الجولة التالية...</p>`
+                                    `<button onclick="startNextDominoRound()" style="background:var(--success); width:100%; padding:15px; font-size:18px; border-radius:15px;">ابدأ الجولة التالية 🔄</button>` :
+                                    `<p style="color:#aaa; border-top:1px solid #333; padding-top:10px;">بانتظار المضيف لبدء الجولة التالية...</p>`
                                 }
                             </div>
                         ` : (board.length === 0 ? '<div style="color:#555; font-size:18px; font-style:italic;">ضع أول حجر لتشكيل الأفعى..</div>' :
@@ -6022,6 +4845,11 @@ r(--primary);
                             <h3 style="font-size:2rem; margin:15px 0; color:var(--accent);">التحديثات والأخبار</h3>
                             <p style="font-size:1.1rem; color:#aaa; line-height:1.6;">إرسال إشعارات وتحديثات لجميع اللاعبين</p>
                         </div>
+                        <div class="admin-item-card" onclick="adminManageFeedback()" style="cursor:pointer; text-align:center; padding:50px 30px; border-radius:30px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); transition:0.3s;">
+                            <div style="font-size:5rem; margin-bottom:20px;">💬</div>
+                            <h3 style="font-size:2rem; margin:15px 0; color:var(--accent);">آراء المستخدمين</h3>
+                            <p style="font-size:1.1rem; color:#aaa; line-height:1.6;">مشاهدة الرسائل والاقتراحات الواردة من اللاعبين</p>
+                        </div>
                         <div class="admin-item-card" onclick="adminManageTimeouts()" style="cursor:pointer; text-align:center; padding:50px 30px; border-radius:30px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); transition:0.3s;">
                             <div style="font-size:5rem; margin-bottom:20px;">⏱️</div>
                             <h3 style="font-size:2rem; margin:15px 0; color:var(--accent);">الإعدادات والهوية</h3>
@@ -6498,6 +5326,41 @@ r(--primary);
                 adminManageCategories();
             } else {
                 alert("خطأ: " + (d.msg || "فشل الحفظ"));
+            }
+        }
+
+        async function adminManageFeedback() {
+            try {
+                showLoading("جاري تحميل الآراء...");
+                const res = await fetch('/api/admin/feedback');
+                const feedback = await res.json();
+
+                let h = `<h2>💬 آراء واقتراحات اللاعبين</h2>
+                    <div class="admin-content-box" style="background:transparent; padding:0;">
+                        <div style="max-height:70vh; overflow-y:auto; padding:10px;">`;
+
+                if (!feedback || feedback.length === 0) {
+                    h += `<p style="text-align:center; padding:40px; opacity:0.5;">لا توجد رسائل حالياً</p>`;
+                } else {
+                    feedback.forEach(f => {
+                        const date = new Date(f.created_at).toLocaleString('ar-EG');
+                        h += `
+                        <div class="admin-item-card" style="margin-bottom:15px; text-align:right; border-right:4px solid var(--primary);">
+                            <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+                                <b style="color:var(--accent);">${escapeHtml(f.player_name || 'غير معروف')}</b>
+                                <small style="opacity:0.6;">${date}</small>
+                            </div>
+                            <p style="margin:0; line-height:1.6; white-space:pre-wrap;">${escapeHtml(f.message || f.text || '')}</p>
+                            ${f.type ? `<div style="margin-top:10px;"><span style="font-size:0.8rem; background:rgba(0,210,255,0.1); padding:2px 8px; border-radius:10px; color:var(--primary);">${f.type}</span></div>` : ''}
+                        </div>`;
+                    });
+                }
+
+                h += `</div></div><button style="margin-top:20px; background:#333;" onclick="showAdminDashboard(false)">🔙 العودة للوحة التحكم</button>`;
+                document.getElementById('main-ui').innerHTML = `<div class="card admin-wide-card">${h}</div>`;
+            } catch (e) {
+                console.error(e);
+                alert("خطأ في تحميل البيانات");
             }
         }
 
