@@ -605,8 +605,13 @@ async def create_domino_room_endpoint(data: dict):
             cur.execute(f"INSERT INTO rooms ({cols_str}) VALUES ({placeholders})", list(valid_room_data.values()))
 
             # 3. نفس الشيء لجدول اللاعبين
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'room_players'")
-            player_cols = [r[0] for r in cur.fetchall()]
+            cur.execute("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'room_players'")
+            player_cols_info = {r[0]: r[1] for r in cur.fetchall()}
+
+            # تحديد قيمة الفريق بناءً على نوع العمود (نصي أو رقمي)
+            team_val = 'A'
+            if 'team' in player_cols_info and 'int' in player_cols_info['team'].lower():
+                team_val = 0
 
             player_vals = {
                 'room_id': room_code,
@@ -614,11 +619,11 @@ async def create_domino_room_endpoint(data: dict):
                 'user_id': user_id,
                 'player_name': player_name,
                 'join_order': 0,
-                'team': 'A',
+                'team': team_val,
                 'is_ready': True
             }
 
-            valid_player_data = {k: v for k, v in player_vals.items() if k in player_cols}
+            valid_player_data = {k: v for k, v in player_vals.items() if k in player_cols_info}
             p_cols_str = ", ".join(valid_player_data.keys())
             p_placeholders = ", ".join(["%s"] * len(valid_player_data))
 
