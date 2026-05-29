@@ -147,7 +147,8 @@ def init_db():
                 "UPDATE room_players SET room_id = room_code WHERE room_id IS NULL AND room_code IS NOT NULL",
                 # ضمان وجود الفهارس الضرورية
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_room_code ON rooms(room_code)",
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_room_players_code_user ON room_players(room_code, user_id)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_room_players_code_user ON room_players(room_code, user_id)",
+                "CREATE TABLE IF NOT EXISTS announcements (id SERIAL PRIMARY KEY, text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
             ]
 
             for step in migration_steps:
@@ -270,6 +271,30 @@ async def upload_icon(request: Request):
         return {"success": False, "msg": str(e)}
     finally:
         conn.close()
+
+@app.get("/api/announcements")
+async def get_announcements():
+    conn = get_db_conn()
+    if not conn: return []
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM announcements ORDER BY created_at DESC LIMIT 20")
+            return cur.fetchall()
+    except: return []
+    finally: conn.close()
+
+@app.post("/api/admin/announcements/add")
+async def add_announcement(data: dict):
+    conn = get_db_conn()
+    if not conn: return {"success": False}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO announcements (text) VALUES (%s)", (data['text'],))
+            conn.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "msg": str(e)}
+    finally: conn.close()
 
 @app.get("/sw.js")
 async def service_worker():
@@ -1210,6 +1235,24 @@ async def online_action(data: dict):
                     cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
                 conn.commit()
 
+            elif action == "adjust_timer":
+                # Only host can adjust timer mid-game
+                if room['host_id'] == user_id:
+                    new_time = int(data['new_time'])
+                    # We adjust the phase_start to "add" or "subtract" time from the current phase
+                    # Logic: Current time left = q_timeout - (now - phase_start)
+                    # We want: Current time left = new_time
+                    # So: new_time = q_timeout - (now - new_phase_start)
+                    # new_phase_start = now - q_timeout + new_time
+
+                    cur.execute("SELECT value FROM settings WHERE key = 'question_timeout'")
+                    q_timeout_row = cur.fetchone()
+                    q_timeout = int(q_timeout_row['value']) if q_timeout_row else 30
+
+                    game_data['phase_start'] = time.time() - q_timeout + new_time
+                    cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
+                conn.commit()
+
             elif action == "vote":
                 # Check if red carded
                 cur.execute("SELECT red_card FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
@@ -1669,6 +1712,120 @@ HTML_TEMPLATE = """
             text-shadow: 0 0 10px var(--primary);
         }
         @keyframes pop { 0% { transform: scale(0.5); } 100% { transform: scale(1); } }
+        @keyframes bell-ring {
+            0% { transform: rotate(0); }
+            10% { transform: rotate(15deg); }
+            20% { transform: rotate(-15deg); }
+            30% { transform: rotate(10deg); }
+            40% { transform: rotate(-10deg); }
+            50% { transform: rotate(5deg); }
+            60% { transform: rotate(-5deg); }
+            100% { transform: rotate(0); }
+        }
+        .bell-btn {
+            position: relative;
+            background: rgba(255,255,255,0.1);
+            border: none;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            margin: 0 auto 20px auto;
+            transition: all 0.3s ease;
+        }
+        .bell-btn.dance {
+            animation: bell-ring 1s infinite;
+            background: rgba(241, 196, 15, 0.2);
+            box-shadow: 0 0 15px rgba(241, 196, 15, 0.3);
+        }
+        .bell-badge {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: #ff7675;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 2px solid #1b1464;
+            display: none;
+        }
+        .bell-btn.dance .bell-badge {
+            display: block;
+        }
+        .announcement-item {
+            background: rgba(255,255,255,0.05);
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 10px;
+            text-align: right;
+            border-right: 4px solid var(--accent);
+        }
+        .announcement-date {
+            font-size: 10px;
+            color: #9aa0b4;
+            margin-top: 5px;
+        }
+        @keyframes bell-ring {
+            0% { transform: rotate(0); }
+            10% { transform: rotate(15deg); }
+            20% { transform: rotate(-15deg); }
+            30% { transform: rotate(10deg); }
+            40% { transform: rotate(-10deg); }
+            50% { transform: rotate(5deg); }
+            60% { transform: rotate(-5deg); }
+            100% { transform: rotate(0); }
+        }
+        .bell-btn {
+            position: relative;
+            background: rgba(255,255,255,0.1);
+            border: none;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            margin: 0 auto 20px auto;
+            transition: all 0.3s ease;
+        }
+        .bell-btn.dance {
+            animation: bell-ring 1s infinite;
+            background: rgba(241, 196, 15, 0.2);
+            box-shadow: 0 0 15px rgba(241, 196, 15, 0.3);
+        }
+        .bell-badge {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: var(--error);
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 2px solid #1b1464;
+            display: none;
+        }
+        .bell-btn.dance .bell-badge {
+            display: block;
+        }
+        .announcement-item {
+            background: rgba(255,255,255,0.05);
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 10px;
+            text-align: right;
+            border-right: 4px solid var(--accent);
+        }
+        .announcement-date {
+            font-size: 10px;
+            color: #9aa0b4;
+            margin-top: 5px;
+        }
         h1 {
             font-weight: 900;
             color: white;
@@ -2410,8 +2567,13 @@ HTML_TEMPLATE = """
             winLimit = 5;
             window.pNamesSave = []; // تصفير قائمة اللاعبين عند العودة للقائمة
             totalScores = {}; // ريست للنقاط عند العودة للقائمة
+
             document.getElementById('main-ui').innerHTML = `
                 <div class="card" style="padding: 30px 20px;">
+                    <button id="announcement-bell" class="bell-btn" onclick="showAnnouncements()">
+                        🔔
+                        <div class="bell-badge"></div>
+                    </button>
                     <div style="font-size: 60px; margin-bottom: 20px;">🕵️‍♂️</div>
                     <h1 style="margin-bottom: 10px;">لعبة برا السالفة</h1>
                     <p style="color: #a29bfe; margin-bottom: 30px; font-size: 16px;">اكتشف الجاسوس قبل فوات الأوان!</p>
@@ -2421,6 +2583,60 @@ HTML_TEMPLATE = """
                         <p style="font-size: 20px; font-weight: 900; background: linear-gradient(to right, #f1c40f, #f39c12); -webkit-background-clip: text; -webkit-text-fill-color: transparent; drop-shadow: 0 2px 4px rgba(0,0,0,0.3); margin: 0; letter-spacing: 1px;">✨ تصميم ابو الاكبر ✨</p>
                     </div>
                 </div>`;
+            checkAnnouncements();
+        }
+
+        async function checkAnnouncements() {
+            try {
+                const res = await fetch('/api/announcements');
+                const data = await res.json();
+                if (data && data.length > 0) {
+                    const latestId = data[0].id;
+                    const lastSeenId = localStorage.getItem('last_seen_announcement') || 0;
+                    if (latestId > lastSeenId) {
+                        document.getElementById('announcement-bell').classList.add('dance');
+                    }
+                }
+            } catch (e) { console.error("Error checking announcements:", e); }
+        }
+
+        async function showAnnouncements() {
+            showLoading("جاري تحميل التحديثات...");
+            try {
+                const res = await fetch('/api/announcements');
+                const data = await res.json();
+
+                let html = `
+                    <div class="card" style="max-height: 80vh; overflow-y: auto;">
+                        <h2 style="color:var(--accent); margin-bottom:20px;">📢 آخر التحديثات والأخبار</h2>
+                        <div id="announcements-list">`;
+
+                if (!data || data.length === 0) {
+                    html += `<p style="color:#9aa0b4; margin:40px 0;">لا توجد تحديثات حالياً.</p>`;
+                } else {
+                    data.forEach(item => {
+                        const date = new Date(item.created_at).toLocaleString('ar-EG');
+                        html += `
+                            <div class="announcement-item">
+                                <div style="font-size:16px; color:white; line-height:1.5;">${item.text}</div>
+                                <div class="announcement-date">${date}</div>
+                            </div>`;
+                    });
+                    localStorage.setItem('last_seen_announcement', data[0].id);
+                }
+
+                html += `
+                        </div>
+                        <button style="margin-top:20px;" onclick="navigateTo('menu')">إغلاق</button>
+                    </div>`;
+
+                document.getElementById('main-ui').innerHTML = html;
+                document.getElementById('announcement-bell')?.classList.remove('dance');
+            } catch (e) {
+                console.error(e);
+                alert("فشل تحميل التحديثات");
+                navigateTo('menu');
+            }
         }
 
         // --- Online Logic ---
@@ -3367,7 +3583,7 @@ HTML_TEMPLATE = """
                     </div>
                     <div class="qa-chat-footer-input">
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                            <div id="questions-timer" class="qa-timer-badge" style="margin:0;">⏱️ ${timeLeft} ثانية</div>
+                            <div id="questions-timer" onclick="showQuickTimerEdit()" class="qa-timer-badge" style="margin:0; cursor:pointer;">⏱️ ${timeLeft} ثانية</div>
                             ${voteButtonHtml}
                         </div>
                         <div class="qa-input-box-wrapper" style="flex-direction:column; gap:10px;">
@@ -4263,7 +4479,11 @@ HTML_TEMPLATE = """
 
             if (userDisabled) {
                 const timerEl = document.getElementById('timer-display');
-                if(timerEl) timerEl.innerText = "∞";
+                if(timerEl) {
+                    timerEl.innerText = "∞";
+                    timerEl.onclick = () => showQuickTimerEdit(callback);
+                    timerEl.style.cursor = "pointer";
+                }
                 return;
             }
 
@@ -4274,7 +4494,11 @@ HTML_TEMPLATE = """
             }
 
             const timerEl = document.getElementById('timer-display');
-            if(timerEl) timerEl.innerText = timeLeft;
+            if(timerEl) {
+                timerEl.innerText = timeLeft;
+                timerEl.onclick = () => showQuickTimerEdit(callback);
+                timerEl.style.cursor = "pointer";
+            }
 
             timerInterval = setInterval(() => {
                 timeLeft--;
@@ -4284,6 +4508,27 @@ HTML_TEMPLATE = """
                     callback();
                 }
             }, 1000);
+        }
+
+        function showQuickTimerEdit(callback) {
+            const currentVal = document.getElementById('timer-display').innerText;
+            const newVal = prompt("تعديل الوقت المتبقي (ثانية):", currentVal === "∞" ? "30" : currentVal);
+
+            if (newVal !== null && !isNaN(newVal)) {
+                const seconds = parseInt(newVal);
+                if (currentRoom) {
+                    // Online Mode: Only host can adjust
+                    const {room} = window.roomData;
+                    if (room.host_id == currentUser.user_id) {
+                        onlineAction('adjust_timer', {new_time: seconds});
+                    } else {
+                        alert("فقط المضيف يمكنه تعديل الوقت.");
+                    }
+                } else {
+                    // Offline Mode: Direct adjustment
+                    startTimer(callback, seconds);
+                }
+            }
         }
 
         function showPhase1() {
@@ -4656,6 +4901,11 @@ HTML_TEMPLATE = """
                             <h3 style="font-size:2rem; margin:15px 0; color:var(--accent);">الفئات والكلمات</h3>
                             <p style="font-size:1.1rem; color:#aaa; line-height:1.6;">إضافة وتعديل الأقسام والكلمات وتنظيم محتوى اللعبة</p>
                         </div>
+                        <div class="admin-item-card" onclick="adminManageAnnouncements()" style="cursor:pointer; text-align:center; padding:50px 30px; border-radius:30px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); transition:0.3s;">
+                            <div style="font-size:5rem; margin-bottom:20px;">📢</div>
+                            <h3 style="font-size:2rem; margin:15px 0; color:var(--accent);">التحديثات والأخبار</h3>
+                            <p style="font-size:1.1rem; color:#aaa; line-height:1.6;">إرسال إشعارات وتحديثات لجميع اللاعبين</p>
+                        </div>
                         <div class="admin-item-card" onclick="adminManageTimeouts()" style="cursor:pointer; text-align:center; padding:50px 30px; border-radius:30px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); transition:0.3s;">
                             <div style="font-size:5rem; margin-bottom:20px;">⏱️</div>
                             <h3 style="font-size:2rem; margin:15px 0; color:var(--accent);">الإعدادات والهوية</h3>
@@ -4663,6 +4913,70 @@ HTML_TEMPLATE = """
                         </div>
                     </div>
                     <button style="background:#333; margin-top:50px; width:auto; padding:15px 40px; font-size:1.2rem;" onclick="navigateTo('menu')">🏠 العودة للقائمة الرئيسية</button>
+                </div>`;
+        }
+
+        function adminManageAnnouncements() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>📢 إرسال تحديث جديد</h2>
+                    <p style="margin-bottom:20px; color:#aaa;">سيظهر هذا التحديث لجميع اللاعبين عبر زر الجرس.</p>
+                    <textarea id="announcement_text" placeholder="اكتب التحديث هنا..." style="width:100%; height:120px; padding:15px; border-radius:15px; background:#222; color:white; border:1px solid #444; margin-bottom:20px;"></textarea>
+                    <button onclick="sendAnnouncement()">إرسال التحديث 🚀</button>
+                    <button style="background:#636e72; margin-top:10px;" onclick="showAdminDashboard(false)">رجوع</button>
+                </div>`;
+        }
+
+        async function sendAnnouncement() {
+            const text = document.getElementById('announcement_text').value.trim();
+            if(!text) return alert("يرجى كتابة نص");
+
+            showLoading("جاري الإرسال...");
+            try {
+                const res = await fetch('/api/admin/announcements/add', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({text})
+                });
+                const d = await res.json();
+                if(d.success) {
+                    alert("تم إرسال التحديث بنجاح ✅");
+                    showAdminDashboard(false);
+                } else {
+                    alert("فشل الإرسال");
+                }
+            } catch(e) { console.error(e); alert("خطأ في الاتصال"); }
+        }
+
+        async function sendAnnouncement() {
+            const text = document.getElementById('announcement_text').value.trim();
+            if(!text) return alert("يرجى كتابة نص");
+
+            showLoading("جاري الإرسال...");
+            try {
+                const res = await fetch('/api/admin/announcements/add', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({text})
+                });
+                const d = await res.json();
+                if(d.success) {
+                    alert("تم إرسال التحديث بنجاح ✅");
+                    showAdminDashboard(false);
+                } else {
+                    alert("فشل الإرسال");
+                }
+            } catch(e) { console.error(e); alert("خطأ في الاتصال"); }
+        }
+
+        function adminManageAnnouncements() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>📢 إرسال تحديث جديد</h2>
+                    <p style="margin-bottom:20px; color:#aaa;">سيظهر هذا التحديث لجميع اللاعبين عبر زر الجرس.</p>
+                    <textarea id="announcement_text" placeholder="اكتب التحديث هنا..." style="width:100%; height:120px; padding:15px; border-radius:15px; background:#222; color:white; border:1px solid #444; margin-bottom:20px;"></textarea>
+                    <button onclick="sendAnnouncement()">إرسال التحديث 🚀</button>
+                    <button style="background:#636e72; margin-top:10px;" onclick="showAdminDashboard(false)">رجوع</button>
                 </div>`;
         }
 
