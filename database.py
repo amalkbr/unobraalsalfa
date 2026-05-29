@@ -52,48 +52,59 @@ def init_db():
                     last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- لخدمة "من متصل الآن"
                 )''')
     
-    # 2. جدول الغرف (محدث للدومنة وبرا السالفة)
+    # 2. جدول الغرف
     cur.execute('''CREATE TABLE IF NOT EXISTS rooms (
                     room_id VARCHAR(10) PRIMARY KEY,
-                    room_code VARCHAR(10),
                     creator_id BIGINT,
-                    host_id BIGINT,
                     max_players INT,
-                    win_limit INT DEFAULT 101,
+                    score_limit INT DEFAULT 0,
                     status VARCHAR(20) DEFAULT 'waiting',
-                    game_type VARCHAR(20) DEFAULT 'domino',
-                    game_data JSONB DEFAULT '{}'::jsonb,
+                    game_mode VARCHAR(20) DEFAULT 'solo',
                     is_random BOOLEAN DEFAULT FALSE,
+                    top_card VARCHAR(50),
+                    deck TEXT,
+                    discard_pile TEXT,
+                    turn_index INT DEFAULT 0,
+                    current_color VARCHAR(10) DEFAULT '🔴',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 
     # 3. جدول اللاعبين داخل الغرفة
     cur.execute('''CREATE TABLE IF NOT EXISTS room_players (
                     room_id VARCHAR(10),
-                    room_code VARCHAR(10),
                     user_id BIGINT,
                     player_name VARCHAR(100),
+                    hand TEXT,
                     points INT DEFAULT 0,
-                    team VARCHAR(10) DEFAULT '0',
+                    team INT DEFAULT 0,
+                    said_uno BOOLEAN DEFAULT FALSE,
                     is_ready BOOLEAN DEFAULT FALSE,
                     join_order INTEGER DEFAULT 0,
                     last_msg_id BIGINT,
                     PRIMARY KEY (room_id, user_id))''')
 
-    # 4. جدول المتابعات
+    # 4. جدول المتابعات (النظام الاجتماعي الجديد)
     cur.execute('''CREATE TABLE IF NOT EXISTS follows (
                     follower_id BIGINT, 
                     following_id BIGINT, 
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (follower_id, following_id))''')
 
-    # 5. جدول الإسكات
+    # 5. جدول الإسكات (لمنع إزعاج دعوات اللعب)
     cur.execute('''CREATE TABLE IF NOT EXISTS mutes (
                     sender_id BIGINT, 
                     receiver_id BIGINT, 
                     expire_at TIMESTAMP, 
                     PRIMARY KEY (sender_id, receiver_id))''')
 
-    # تحديثات إجبارية
+    # 6. جدول حاسبة اللاعبين
+    cur.execute('''CREATE TABLE IF NOT EXISTS calc_players (
+                    player_name VARCHAR(100),
+                    creator_id BIGINT,
+                    wins INT DEFAULT 0,
+                    total_points INT DEFAULT 0,
+                    PRIMARY KEY (player_name, creator_id))''')
+
+    # تحديثات إجبارية (في حال كانت الجداول منشأة سابقاً بدون هذه الأعمدة)
     alter_queries = [
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS username_key VARCHAR(50) UNIQUE;",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_key VARCHAR(50);",
@@ -102,13 +113,14 @@ def init_db():
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP;",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS language VARCHAR(2) DEFAULT 'ar';",
-        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS room_code VARCHAR(10);",
-        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS host_id BIGINT;",
-        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS win_limit INT DEFAULT 101;",
-        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_type VARCHAR(20) DEFAULT 'domino';",
-        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_data JSONB DEFAULT '{}'::jsonb;",
-        "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS room_code VARCHAR(10);",
-        "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS team VARCHAR(10) DEFAULT '0';"
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_state JSONB DEFAULT '{}'::jsonb;",
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'waiting';",
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS is_random BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS score_limit INT DEFAULT 0;",
+        "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS discard_pile TEXT;",
+        "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS is_ready BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS points INT DEFAULT 0;",
+        "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS said_uno BOOLEAN DEFAULT FALSE;"
     ]
 
     for query in alter_queries:
