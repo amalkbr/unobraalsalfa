@@ -214,7 +214,7 @@ async def domino_play_tile(data: dict):
                     game_data['round_points'] = total_pips
 
                     if game_data['scores'][winner_team] >= (room.get('win_limit') or 101):
-                        game_data['phase'] = 'game_over'; cur.execute("UPDATE rooms SET status = 'finished' WHERE room_code = %s", (room_code,))
+                        game_data['phase'] = 'game_over'; cur.execute("UPDATE rooms SET status = 'result' WHERE room_code = %s", (room_code,))
                 else:
                     game_data['turn_index'] = (game_data['turn_index'] + 1) % len(game_data['ordered_ids'])
                     # التحقق من القفلة (Stalemate)
@@ -235,7 +235,7 @@ async def domino_play_tile(data: dict):
                                 game_data['round_winner_team'] = st_winner
                                 game_data['round_points'] = total
                                 if game_data['scores'][st_winner] >= (room.get('win_limit') or 101):
-                                    game_data['phase'] = 'game_over'; cur.execute("UPDATE rooms SET status = 'finished' WHERE room_code = %s", (room_code,))
+                                    game_data['phase'] = 'game_over'; cur.execute("UPDATE rooms SET status = 'result' WHERE room_code = %s", (room_code,))
                             else: game_data['round_winner_team'] = None # تعادل كامل
 
                 cur.execute("UPDATE rooms SET game_data = %s WHERE room_code = %s", (json.dumps(game_data), room_code))
