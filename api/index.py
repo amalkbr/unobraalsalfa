@@ -2757,6 +2757,28 @@ HTML_TEMPLATE = """
             border-color: var(--primary);
             box-shadow: 0 0 15px var(--primary);
         }
+        .domino-tile.vertical {
+            width: 45px;
+            height: 80px;
+            flex-direction: column;
+            display: inline-flex;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            border-radius: 6px;
+            background: #fdfdfd;
+        }
+        .domino-tile.vertical .domino-line {
+            width: 80%;
+            height: 2px;
+            background: #333;
+            margin: 2px 0;
+        }
+        .domino-tile.vertical .domino-half {
+            font-size: 20px;
+            font-weight: bold;
+            color: #2d3436;
+        }
+r(--primary);
+        }
         #domino-board {
             perspective: 1000px;
         }
@@ -3079,34 +3101,76 @@ HTML_TEMPLATE = """
             const {room, players} = window.roomData;
             const gd = room.game_data;
             const me = players.find(p => p.user_id == currentUser.user_id);
-            const myHand = gd.hands[currentUser.user_id] || [];
+
+            // ترتيب يد اللاعب تلقائياً (حسب الرقم الأكبر أولاً)
+            let myHand = gd.hands[currentUser.user_id] || [];
+            myHand.sort((a, b) => {
+                const maxA = Math.max(a[0], a[1]);
+                const maxB = Math.max(b[0], b[1]);
+                if (maxA !== maxB) return maxB - maxA;
+                return (b[0] + b[1]) - (a[0] + a[1]);
+            });
+
             const isMyTurn = gd.ordered_ids[gd.turn_index] == currentUser.user_id;
             const board = gd.board || [];
 
+            // إصلاح مسميات النقاط (استخدام A و B أو 0 و 1 حسب المخزن)
+            const scoreA = gd.scores.A !== undefined ? gd.scores.A : (gd.scores["0"] || 0);
+            const scoreB = gd.scores.B !== undefined ? gd.scores.B : (gd.scores["1"] || 0);
+            const winLimit = gd.win_limit || 151;
+
             let html = `
-                <div class="card domino-game-card" style="padding:15px; max-width:100%; width:98vw; min-height:80vh; display:flex; flex-direction:column;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                        <div>
-                            <span style="background:#3498db; padding:4px 10px; border-radius:10px; font-size:12px;">فريق A: ${gd.scores.A}</span>
-                            <span style="background:#e74c3c; padding:4px 10px; border-radius:10px; font-size:12px; margin-right:5px;">فريق B: ${gd.scores.B}</span>
+                <div class="card domino-game-card" style="padding:10px; max-width:100%; width:98vw; min-height:85vh; display:flex; flex-direction:column; background: linear-gradient(135deg, #1e272e 0%, #2f3640 100%);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; padding: 5px 10px; background: rgba(0,0,0,0.2); border-radius: 15px;">
+                        <div style="display:flex; gap:10px;">
+                            <div style="text-align:center;">
+                                <div style="font-size:10px; color:#aaa;">فريق A</div>
+                                <div style="background:#3498db; padding:2px 12px; border-radius:8px; font-weight:900;">${scoreA}</div>
+                            </div>
+                            <div style="text-align:center;">
+                                <div style="font-size:10px; color:#aaa;">فريق B</div>
+                                <div style="background:#e74c3c; padding:2px 12px; border-radius:8px; font-weight:900;">${scoreB}</div>
+                            </div>
+                            <div style="text-align:center; border-right:1px solid #444; padding-right:10px; margin-right:5px;">
+                                <div style="font-size:10px; color:var(--accent);">الهدف</div>
+                                <div style="font-weight:900; color:var(--accent);">${winLimit}</div>
+                            </div>
                         </div>
-                        <div style="color:var(--accent); font-weight:bold;">${isMyTurn ? "🔴 دورك الآن!" : `دور: ${players.find(p=>p.user_id == gd.ordered_ids[gd.turn_index])?.player_name}`}</div>
+                        <div style="text-align:right;">
+                            <div class="turn-indicator ${isMyTurn?'active':''}" style="font-size:14px; font-weight:bold; color:${isMyTurn?'#55efc4':'#aaa'}">
+                                ${isMyTurn ? "🟢 دورك" : `🟡 دور ${players.find(p=>p.user_id == gd.ordered_ids[gd.turn_index])?.player_name || 'الخصم'}`}
+                            </div>
+                        </div>
                     </div>
 
-                    <!-- طاولة اللعب -->
-                    <div id="domino-board" style="flex-grow:1; background:rgba(0,0,0,0.3); border-radius:20px; position:relative; overflow:auto; display:flex; align-items:center; justify-content:center; padding:40px; border:2px dashed rgba(255,255,255,0.1); margin-bottom:20px; min-height:200px; flex-wrap:wrap;">
+                    <!-- طاولة اللعب بتصميم الأفعى المحسن -->
+                    <div id="domino-board" style="flex-grow:1; background: radial-gradient(circle, rgba(255,255,255,0.03) 0%, transparent 70%); border-radius:20px; position:relative; overflow:auto; display:flex; align-content:center; justify-content:center; padding:20px; border:1px solid rgba(255,255,255,0.05); margin-bottom:15px; flex-wrap:wrap; perspective: 1000px;">
                         ${gd.phase === 'round_end' ? `
-                            <div style="text-align:center;">
-                                <h2 style="color:var(--accent)">انتهت الجولة!</h2>
-                                <p>النقاط الحالية: A:${gd.scores.A} | B:${gd.scores.B}</p>
+                            <div class="round-end-overlay" style="background:rgba(0,0,0,0.8); padding:30px; border-radius:20px; text-align:center; border:2px solid var(--accent); animation: popIn 0.5s ease;">
+                                <h2 style="color:var(--accent); margin-bottom:10px;">انتهت الجولة! 🏆</h2>
+                                <div style="display:flex; justify-content:center; gap:30px; margin:20px 0;">
+                                    <div>
+                                        <div style="color:#aaa;">فريق A</div>
+                                        <div style="font-size:30px; font-weight:900;">${scoreA}</div>
+                                        <div style="font-size:12px; color:#55efc4;">باقي له: ${winLimit - scoreA}</div>
+                                    </div>
+                                    <div style="border-left:1px solid #444;"></div>
+                                    <div>
+                                        <div style="color:#aaa;">فريق B</div>
+                                        <div style="font-size:30px; font-weight:900;">${scoreB}</div>
+                                        <div style="font-size:12px; color:#55efc4;">باقي له: ${winLimit - scoreB}</div>
+                                    </div>
+                                </div>
                                 ${room.host_id == currentUser.user_id ?
-                                    `<button onclick="startNextDominoRound()" style="background:var(--success)">جولة جديدة 🔄</button>` :
-                                    `<p style="color:#aaa;">بانتظار المضيف لبدء الجولة التالية...</p>`
+                                    `<button onclick="startNextDominoRound()" style="background:var(--success); width:100%; padding:15px; font-size:18px;">ابدأ الجولة التالية 🔄</button>` :
+                                    `<p style="color:#aaa; border-top:1px solid #333; pt-10">بانتظار المضيف لبدء الجولة التالية...</p>`
                                 }
                             </div>
-                        ` : (board.length === 0 ? '<div style="color:#555; font-size:20px;">الطاولة خالية.. ابدأ بوضع أول حجر</div>' :
-                          board.map((tile, idx) => `
-                            <div class="domino-tile ${tile[0]===tile[1]?'double':''}" style="margin:2px;">
+                        ` : (board.length === 0 ? '<div style="color:#555; font-size:18px; font-style:italic;">ضع أول حجر لتشكيل الأفعى..</div>' :
+                          board.map((tile, idx) => {
+                            const isDouble = tile[0] === tile[1];
+                            return `
+                            <div class="domino-tile ${isDouble?'double':''}" style="margin:2px; transform: scale(0.9);">
                                 <div class="domino-half">${tile[0]}</div>
                                 <div class="domino-line"></div>
                                 <div class="domino-half">${tile[1]}</div>
@@ -3115,15 +3179,15 @@ HTML_TEMPLATE = """
                         )}
                     </div>
 
-                    <!-- يد اللاعب -->
-                    <div style="background:rgba(255,255,255,0.05); padding:15px; border-radius:20px;">
-                        <div style="margin-bottom:10px; font-size:14px; display:flex; justify-content:space-between;">
-                            <span>أحجارك (${myHand.length})</span>
-                            <button onclick="drawDominoTile()" style="width:auto; padding:5px 15px; font-size:12px; background:var(--primary); display:${isMyTurn?'block':'none'}">➕ سحب حجر</button>
+                    <!-- يد اللاعب: أحجار واقفة ومرتبة -->
+                    <div style="background:rgba(0,0,0,0.3); padding:10px; border-radius:20px; border:1px solid rgba(255,255,255,0.05);">
+                        <div style="margin-bottom:8px; font-size:13px; display:flex; justify-content:space-between; align-items:center;">
+                            <span style="color:#aaa;">أحجارك (${myHand.length})</span>
+                            <button onclick="drawDominoTile()" id="draw-btn" style="width:auto; padding:4px 12px; font-size:12px; background:var(--primary); display:${isMyTurn?'block':'none'}; border-radius:10px;">➕ سحب حجر</button>
                         </div>
-                        <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:center;">
+                        <div style="display:flex; flex-wrap:nowrap; gap:6px; justify-content:center; overflow-x:auto; padding:10px 5px; min-height:90px;">
                             ${myHand.map((tile, idx) => `
-                                <div class="domino-tile playable" onclick="${isMyTurn ? `selectDominoTile(${JSON.stringify(tile)})` : ''}">
+                                <div class="domino-tile vertical playable" onclick="${isMyTurn ? `selectDominoTile(${JSON.stringify(tile)})` : ''}" style="flex-shrink:0;">
                                     <div class="domino-half">${tile[0]}</div>
                                     <div class="domino-line"></div>
                                     <div class="domino-half">${tile[1]}</div>
@@ -3188,11 +3252,11 @@ HTML_TEMPLATE = """
 
         async function drawDominoTile() {
             // إخفاء الزر مؤقتاً أو تعطيله لمنع السبام
-            const btn = document.querySelector('button[onclick="drawDominoTile()"]');
-            if(btn) {
-                btn.disabled = true;
-                btn.innerText = "⏳ جاري...";
-            }
+            const btn = document.getElementById("draw-btn");
+            if(!btn) return;
+
+            btn.disabled = true;
+            btn.innerText = "⏳...";
 
             try {
                 const res = await fetch('/api/domino/draw', {
@@ -3205,10 +3269,7 @@ HTML_TEMPLATE = """
                 if(!d.success) {
                     showToast(d.msg || "لا يمكنك السحب الآن", "error");
                 } else {
-                    if(d.msg) showToast(d.msg);
-                    else showToast("✅ تم سحب حجر", "success");
-
-                    // إجبار النظام على تحديث البيانات فوراً
+                    showToast("✅ تم السحب", "success");
                     lastStateHash = "";
                     await updateRoomState(true);
                 }
