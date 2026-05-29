@@ -561,12 +561,13 @@ async def create_domino_room_endpoint(data: dict):
     try:
         user_id = int(data['user_id'])
         player_name = data['player_name']
+        max_players = int(data.get('max_players', 4))
         room_code = ''.join(random.choices(string.ascii_uppercase, k=4))
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO rooms (room_code, host_id, status, game_type, win_limit)
-                VALUES (%s, %s, 'lobby', 'domino', 101)
-            """, (room_code, user_id))
+                INSERT INTO rooms (room_code, host_id, status, game_type, win_limit, max_players)
+                VALUES (%s, %s, 'lobby', 'domino', 101, %s)
+            """, (room_code, user_id, max_players))
             cur.execute("""
                 INSERT INTO room_players (room_code, user_id, player_name, join_order)
                 VALUES (%s, %s, %s, 0)
@@ -3173,19 +3174,108 @@ HTML_TEMPLATE = """
 
         async function createDominoRoom() {
             if (!currentUser) return alert("سجل دخولك أولاً");
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>إعداد طاولة الدومينو</h2>
+                    <p style="margin-bottom:20px;">اختر عدد اللاعبين المسموح به في الطاولة:</p>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:20px;">
+                        <button onclick="submitCreateDomino(2)" style="background:var(--success); font-size:18px;">👥 2 لاعبين</button>
+                        <button onclick="submitCreateDomino(4)" style="background:var(--primary); font-size:18px;">👨‍👩‍👧‍👦 4 لاعبين</button>
+                    </div>
+                    <button onclick="showDominoMenu()" style="background:#636e72;">إلغاء</button>
+                </div>`;
+        }
+
+        async function submitCreateDomino(maxPlayers) {
             try {
                 const res = await fetch('/api/domino/create', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({user_id: currentUser.user_id, player_name: currentUser.player_name})
+                    body: JSON.stringify({
+                        user_id: currentUser.user_id,
+                        player_name: currentUser.player_name,
+                        max_players: maxPlayers
+                    })
                 });
                 const d = await res.json();
                 if(d.success) {
                     currentRoom = d.room_code;
-                    startPolling();
+                    // عرض الرابط والرمز للمضيف قبل بدء Polling
+                    showDominoRoomInfo(d.room_code);
                 } else {
                     alert(d.msg);
                 }
+            } catch(e) { console.error(e); }
+        }
+
+        function showDominoRoomInfo(code) {
+            const joinLink = `${window.location.origin}/join/${code}`;
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2 style="color:var(--accent)">تم إنشاء الطاولة! ✨</h2>
+                    <p style="margin-bottom:10px;">رمز الطاولة:</p>
+                    <div style="font-size:40px; font-weight:900; background:rgba(255,255,255,0.05); padding:10px; border-radius:15px; margin-bottom:20px; letter-spacing:5px; border:2px dashed var(--accent);">${code}</div>
+
+                    <p style="margin-bottom:10px;">أرسل هذا الرابط لأصدقائك:</p>
+                    <div style="background:rgba(0,0,0,0.3); padding:10px; border-radius:10px; font-size:12px; margin-bottom:15px; word-break:break-all;">${joinLink}</div>
+
+                    <button onclick="copyToClipboard('${joinLink}')" style="background:var(--primary); margin-bottom:15px;">📋 نسخ رابط الدعوة</button>
+                    <button onclick="startPolling()" style="background:var(--success);">دخول لغرفة الانتظار 🚪</button>
+                </div>`;
+        }
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showToast("تم نسخ الرابط! أرسله الآن لأصدقائك 🚀");
+            });
+        }
+
+        function renderDominoLobby() {
+            const {room, players} = window.roomData;
+            const isHost = room.host_id == currentUser.user_id;
+            const joinLink = `${window.location.origin}/join/${room.room_code}`;
+
+            let playersHTML = players.map(p => `
+                <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:10px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>👤 ${p.player_name} ${p.user_id == room.host_id ? '👑' : ''}</span>
+                    <span style="color:var(--success); font-size:12px;">متصل</span>
+                </div>
+            `).join('');
+
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2 style="color:var(--accent)">غرفة انتظار الدومينو</h2>
+                    <p style="font-size:14px; color:#aaa;">الرمز: <b style="color:white; font-size:18px;">${room.room_code}</b></p>
+
+                    <div style="margin:20px 0; background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; text-align:right;">
+                        <h4 style="margin-top:0; border-bottom:1px solid #333; padding-bottom:5px;">اللاعبين (${players.length}/${room.max_players})</h4>
+                        ${playersHTML}
+                    </div>
+
+                    ${isHost ? `
+                        <button id="start-domino-btn" onclick="startDominoGame()" style="background:var(--success); margin-bottom:15px;" ${players.length < room.max_players ? 'disabled' : ''}>
+                            ${players.length < room.max_players ? `بانتظار اكتمال العدد (${room.max_players})` : 'ابدأ اللعب الآن! 🚀'}
+                        </button>
+                    ` : `
+                        <div style="background:rgba(241,196,15,0.1); color:#f1c40f; padding:10px; border-radius:10px; font-size:14px; margin-bottom:15px;">
+                            ⏳ بانتظار المضيف لبدء اللعبة...
+                        </div>
+                    `}
+
+                    <button onclick="copyToClipboard('${joinLink}')" style="background:rgba(255,255,255,0.1); font-size:14px; margin-bottom:10px;">📋 نسخ رابط الطاولة</button>
+                    <button onclick="leaveRoom()" style="background:var(--error); font-size:14px;">خروج</button>
+                </div>`;
+        }
+
+        async function startDominoGame() {
+            try {
+                const res = await fetch('/api/domino/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
+                });
+                const d = await res.json();
+                if(!d.success) alert(d.msg);
             } catch(e) { console.error(e); }
         }
 
