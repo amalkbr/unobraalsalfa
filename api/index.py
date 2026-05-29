@@ -3126,6 +3126,8 @@ HTML_TEMPLATE = """
                 if(!d.success) alert(d.msg);
             } catch(e) { console.error(e); }
         }
+
+        function showGameSelection() {
             history.pushState({screen: 'game_selection'}, "");
             document.getElementById('main-ui').innerHTML = `
                 <div class="card" style="padding: 30px 20px;">
