@@ -818,13 +818,19 @@ async def start_domino_game_endpoint(data: dict):
             if n not in [2, 4]:
                 return {"success": False, "msg": "يجب أن يكون عدد اللاعبين 2 أو 4"}
 
-            team_a = [p for p in players if p['team'] == 'A']
-            team_b = [p for p in players if p['team'] == 'B']
+            # توزيع الفرق تلقائياً إذا لم تكن موزعة بشكل صحيح
+            # نحتاج تقسيم اللاعبين لمجموعتين متساويتين
+            team_a = []
+            team_b = []
+            for i, p in enumerate(players):
+                if i % 2 == 0: team_a.append(p)
+                else: team_b.append(p)
 
-            if n == 4 and (len(team_a) != 2 or len(team_b) != 2):
-                return {"success": False, "msg": "توزيع الفرق غير عادل (يجب 2 ضد 2)"}
-            if n == 2 and (len(team_a) != 1 or len(team_b) != 1):
-                return {"success": False, "msg": "توزيع الفرق غير عادل (يجب 1 ضد 1)"}
+            # تحديث الفرق في قاعدة البيانات لضمان الاستمرارية
+            for p in team_a:
+                cur.execute("UPDATE room_players SET team = %s WHERE room_code = %s AND user_id = %s", ('A', room_code, p['user_id']))
+            for p in team_b:
+                cur.execute("UPDATE room_players SET team = %s WHERE room_code = %s AND user_id = %s", ('B', room_code, p['user_id']))
 
             # إنشاء وتوزيع الأحجار
             all_tiles = [[i, j] for i in range(7) for j in range(i, 7)]
@@ -4763,27 +4769,12 @@ HTML_TEMPLATE = """
         async function startDominoGame() {
             const {players} = window.roomData;
             const pCount = players.length;
-            const playersInTeams = players.filter(p => p.team).length;
 
             if (pCount !== 2 && pCount !== 4) {
-                return alert("يجب أن يكون عدد اللاعبين 2 أو 4 للعب الدومينو.");
+                return alert(`يجب أن يكون عدد اللاعبين 2 أو 4 (الموجود الآن: ${pCount})`);
             }
 
-            if (playersInTeams !== pCount) {
-                return alert("يجب على جميع اللاعبين اختيار فريق أولاً.");
-            }
-
-            const teamA = players.filter(p => p.team === 'A').length;
-            const teamB = players.filter(p => p.team === 'B').length;
-
-            if (pCount === 4 && (teamA !== 2 || teamB !== 2)) {
-                return alert("يجب أن يكون شخصين في كل فريق (2 ضد 2).");
-            }
-            if (pCount === 2 && (teamA !== 1 || teamB !== 1)) {
-                return alert("يجب أن يكون شخص واحد في كل فريق (1 ضد 1).");
-            }
-
-            showLoading("جاري توزيع الأحجار...");
+            showLoading("جاري توزيع الأحجار وبدء اللعبة...");
             try {
                 const res = await fetch('/api/domino/start', {
                     method: 'POST',
@@ -4791,7 +4782,15 @@ HTML_TEMPLATE = """
                     body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
                 });
                 const d = await res.json();
+                hideLoading();
                 if(!d.success) alert(d.msg || "فشل بدء اللعبة");
+                // التحديث التلقائي (Polling) سيتكفل بنقلك لشاشة اللعب
+            } catch(e) {
+                hideLoading();
+                console.error(e);
+                alert("حدث خطأ أثناء محاولة بدء اللعبة");
+            }
+        }
             } catch(e) { console.error(e); }
         }
 
