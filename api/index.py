@@ -3171,6 +3171,53 @@ HTML_TEMPLATE = """
             checkAnnouncements();
         }
 
+        async function createDominoRoom() {
+            if (!currentUser) return alert("سجل دخولك أولاً");
+            try {
+                const res = await fetch('/api/domino/create', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({user_id: currentUser.user_id, player_name: currentUser.player_name})
+                });
+                const d = await res.json();
+                if(d.success) {
+                    currentRoom = d.room_code;
+                    startPolling();
+                } else {
+                    alert(d.msg);
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        function showDominoJoinInput() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2>انضمام لطاولة دومينو</h2>
+                    <input id="domino_join_code" placeholder="رمز الطاولة" style="text-transform:uppercase; text-align:center; font-size:24px; margin-bottom:20px;">
+                    <button onclick="joinDominoRoom()" style="background:var(--success);">انضمام الآن 🚪</button>
+                    <button onclick="showDominoMenu()" style="background:#636e72; margin-top:10px;">رجوع</button>
+                </div>`;
+        }
+
+        async function joinDominoRoom() {
+            const code = document.getElementById('domino_join_code').value.trim().toUpperCase();
+            if(!code) return;
+            try {
+                const res = await fetch('/api/online/join', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room_code: code, user_id: currentUser.user_id, player_name: currentUser.player_name})
+                });
+                const d = await res.json();
+                if(d.success) {
+                    currentRoom = code;
+                    startPolling();
+                } else {
+                    alert(d.msg);
+                }
+            } catch(e) { console.error(e); }
+        }
+
         function showMenu(push = true) {
             if(timerInterval) clearInterval(timerInterval);
             if(push) history.pushState({screen: 'menu'}, "");
