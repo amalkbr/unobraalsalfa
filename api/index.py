@@ -986,32 +986,79 @@ async def join_room(data: dict):
         user_id = int(data['user_id'])
         player_name = data['player_name']
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT status FROM rooms WHERE room_code = %s", (room_code,))
+            # 1. فحص الأعمدة المتاحة في جدول الغرف
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'rooms'")
+            room_cols = [r[0] for r in cur.fetchall()]
+            id_col = 'room_code' if 'room_code' in room_cols else 'room_id'
+
+            cur.execute(f"SELECT status, game_type, max_players FROM rooms WHERE {id_col} = %s", (room_code,))
             room = cur.fetchone()
             if not room: return {"success": False, "msg": "الغرفة غير موجودة"}
 
-            # التحقق من وجود اللاعب مسبقاً للحفاظ على ترتيبه والسماح بإعادة الانضمام
-            cur.execute("SELECT join_order FROM room_players WHERE room_code = %s AND user_id = %s", (room_code, user_id))
+            game_type = room.get('game_type', 'spy')
+            status = room['status']
+
+            # السماح بالانضمام إذا كانت الحالة 'waiting' (برا السالفة) أو 'lobby' (دومينو)
+            is_open = (status == 'waiting' or status == 'lobby')
+
+            # 2. فحص إذا كان اللاعب موجود مسبقاً
+            cur.execute("SELECT join_order FROM room_players WHERE (room_code = %s OR room_id = %s) AND user_id = %s", (room_code, room_code, user_id))
             row = cur.fetchone()
 
-            if not row and room['status'] != 'waiting':
+            if not row and not is_open:
                 return {"success": False, "msg": "اللعبة بدأت بالفعل ولا يمكنك الانضمام كلاعب جديد"}
 
-            if row:
-                cur.execute("UPDATE room_players SET player_name = %s WHERE room_code = %s AND user_id = %s",
-                            (player_name, room_code, user_id))
-            else:
-                cur.execute("SELECT COALESCE(MAX(join_order), 0) + 1 as next_order FROM room_players WHERE room_code = %s", (room_code,))
+            if not row:
+                # التحقق من العدد الأقصى للاعبين
+                cur.execute("SELECT COUNT(*) as count FROM room_players WHERE (room_code = %s OR room_id = %s)", (room_code, room_code))
+                current_count = cur.fetchone()['count']
+                max_p = room.get('max_players') or (4 if game_type == 'domino' else 10)
+
+                if current_count >= max_p:
+                    return {"success": False, "msg": f"عذراً، الغرفة ممتلئة (الحد الأقصى {max_p} لاعبين)"}
+
+                # تحديد الترتيب القادم
+                cur.execute("SELECT COALESCE(MAX(join_order), 0) + 1 as next_order FROM room_players WHERE (room_code = %s OR room_id = %s)", (room_code, room_code))
                 next_order = cur.fetchone()['next_order']
-                cur.execute("""
-                    INSERT INTO room_players (room_code, room_id, user_id, player_name, join_order)
-                    VALUES (%s, %s, %s, %s, %s)
-                """, (room_code, room_code, user_id, player_name, next_order))
+
+                # 3. فحص أعمدة جدول اللاعبين ونوعها (خاصة الفريق)
+                cur.execute("SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'room_players'")
+                p_cols_info = {r[0]: r[1] for r in cur.fetchall()}
+
+                team_val = None
+                if game_type == 'domino' and 'team' in p_cols_info:
+                    # توزيع اللاعبين على فريقين (A, B) أو (0, 1) آلياً
+                    is_int = 'int' in p_cols_info['team'].lower()
+                    if is_int:
+                        team_val = current_count % 2
+                    else:
+                        team_val = 'A' if current_count % 2 == 0 else 'B'
+
+                player_vals = {
+                    'room_id': room_code,
+                    'room_code': room_code,
+                    'user_id': user_id,
+                    'player_name': player_name,
+                    'join_order': next_order,
+                    'team': team_val,
+                    'is_ready': True
+                }
+
+                valid_player_data = {k: v for k, v in player_vals.items() if k in p_cols_info}
+                cols_str = ", ".join(valid_player_data.keys())
+                placeholders = ", ".join(["%s"] * len(valid_player_data))
+
+                cur.execute(f"INSERT INTO room_players ({cols_str}) VALUES ({placeholders})", list(valid_player_data.values()))
+            else:
+                # تحديث اسم اللاعب إذا عاد للانضمام
+                cur.execute("UPDATE room_players SET player_name = %s WHERE (room_code = %s OR room_id = %s) AND user_id = %s",
+                            (player_name, room_code, room_code, user_id))
+
             conn.commit()
         return {"success": True}
     except Exception as e:
         print(f"Error in join_room: {e}")
-        return {"success": False, "msg": f"خطأ: {str(e)}"}
+        return {"success": False, "msg": f"خطأ تقني: {str(e)}"}
     finally:
         if conn: conn.close()
 
@@ -3343,32 +3390,61 @@ HTML_TEMPLATE = """
         }
 
         function showDominoJoinInput() {
+            console.log('Showing Domino Join Input');
             document.getElementById('main-ui').innerHTML = `
                 <div class="card">
-                    <h2>انضمام لطاولة دومينو</h2>
-                    <input id="domino_join_code" placeholder="رمز الطاولة" style="text-transform:uppercase; text-align:center; font-size:24px; margin-bottom:20px;">
-                    <button onclick="joinDominoRoom()" style="background:var(--success);">انضمام الآن 🚪</button>
+                    <h2 style="color:var(--accent)">انضمام لطاولة دومينو</h2>
+                    <p style="margin-bottom:15px; color:#aaa;">أدخل رمز الطاولة المكون من 4 أحرف</p>
+                    <input id="domino_join_code" placeholder="مثلاً: ABCD" style="text-transform:uppercase; text-align:center; font-size:24px; margin-bottom:20px; width:100%; letter-spacing:5px;">
+                    <button id="domino-join-btn-final" onclick="joinDominoRoom()" style="background:var(--success); font-weight:bold;">انضمام الآن 🚪</button>
                     <button onclick="showDominoMenu()" style="background:#636e72; margin-top:10px;">رجوع</button>
                 </div>`;
+
+            // تركيز تلقائي على الحقل
+            setTimeout(() => document.getElementById('domino_join_code').focus(), 100);
         }
 
         async function joinDominoRoom() {
-            const code = document.getElementById('domino_join_code').value.trim().toUpperCase();
-            if(!code) return;
+            const btn = document.getElementById('domino-join-btn-final');
+            const codeInput = document.getElementById('domino_join_code');
+            const code = codeInput.value.trim().toUpperCase();
+
+            if(!code) return alert("يرجى إدخال رمز الطاولة");
+            if(!currentUser) return alert("سجل دخولك أولاً");
+
+            console.log('Attempting to join Domino Room:', code);
+            btn.disabled = true;
+            btn.innerText = "جاري الانضمام...";
+
             try {
                 const res = await fetch('/api/online/join', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({room_code: code, user_id: currentUser.user_id, player_name: currentUser.player_name})
+                    body: JSON.stringify({
+                        room_code: code,
+                        user_id: currentUser.user_id,
+                        player_name: currentUser.player_name
+                    })
                 });
+
                 const d = await res.json();
+                console.log('Join response:', d);
+
                 if(d.success) {
                     currentRoom = code;
+                    showToast("تم الانضمام بنجاح! 🚀");
                     startPolling();
                 } else {
-                    alert(d.msg);
+                    alert(d.msg || "تعذر الانضمام للغرفة");
+                    btn.disabled = false;
+                    btn.innerText = "انضمام الآن 🚪";
                 }
-            } catch(e) { console.error(e); }
+            } catch(e) {
+                console.error('Join Error:', e);
+                alert("حدث خطأ أثناء الاتصال بالسيرفر");
+                btn.disabled = false;
+                btn.innerText = "انضمام الآن 🚪";
+            }
         }
 
         function showMenu(push = true) {
