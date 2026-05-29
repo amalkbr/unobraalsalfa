@@ -4774,7 +4774,7 @@ HTML_TEMPLATE = """
                 return alert(`يجب أن يكون عدد اللاعبين 2 أو 4 (الموجود الآن: ${pCount})`);
             }
 
-            showLoading("جاري توزيع الأحجار وبدء اللعبة...");
+            if(typeof showLoading === 'function') showLoading("جاري توزيع الأحجار وبدء اللعبة...");
             try {
                 const res = await fetch('/api/domino/start', {
                     method: 'POST',
@@ -4782,11 +4782,10 @@ HTML_TEMPLATE = """
                     body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
                 });
                 const d = await res.json();
-                hideLoading();
+                if(typeof hideLoading === 'function') hideLoading();
                 if(!d.success) alert(d.msg || "فشل بدء اللعبة");
-                // التحديث التلقائي (Polling) سيتكفل بنقلك لشاشة اللعب
             } catch(e) {
-                hideLoading();
+                if(typeof hideLoading === 'function') hideLoading();
                 console.error(e);
                 alert("حدث خطأ أثناء محاولة بدء اللعبة");
             }
