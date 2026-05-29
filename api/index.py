@@ -567,36 +567,67 @@ async def create_domino_room_endpoint(data: dict):
         player_name = data['player_name']
         max_players = int(data.get('max_players', 4))
         room_code = ''.join(random.choices(string.ascii_uppercase, k=4))
+
         with conn.cursor() as cur:
-            # التأكد من وجود الأعمدة الجديدة بشكل آمن خارج المعاملة الرئيسية إذا أمكن
-            # أو مع عمل rollback في حال الفشل لتجنب كسر المعاملة
+            # 1. تحديث الهيكل بشكل سريع وآمن
             for col_query in [
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS room_code TEXT",
                 "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS game_type TEXT DEFAULT 'spy'",
                 "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS max_players INTEGER DEFAULT 10",
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS host_id BIGINT",
+                "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS room_code TEXT",
                 "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS team TEXT"
             ]:
-                try:
-                    cur.execute(col_query)
-                except Exception as ex:
-                    print(f"Migration notice: {ex}")
-                    conn.rollback() # إعادة تعيين حالة المعاملة في حال فشل إضافة العمود (ربما موجود مسبقاً)
+                try: cur.execute(col_query)
+                except: conn.rollback()
 
-            cur.execute("""
-                INSERT INTO rooms (room_code, host_id, status, game_type, win_limit, max_players)
-                VALUES (%s, %s, 'lobby', 'domino', 101, %s)
-            """, (room_code, user_id, max_players))
+            # 2. فحص الأعمدة الموجودة فعلياً في جدول rooms لضمان الإدخال الصحيح
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'rooms'")
+            room_cols = [r[0] for r in cur.fetchall()]
 
-            cur.execute("""
-                INSERT INTO room_players (room_code, user_id, player_name, join_order, team)
-                VALUES (%s, %s, %s, 0, 'A')
-            """, (room_code, user_id, player_name))
+            room_vals = {
+                'room_id': room_code,
+                'room_code': room_code,
+                'host_id': user_id,
+                'creator_id': user_id,
+                'status': 'lobby',
+                'game_type': 'domino',
+                'win_limit': 101,
+                'max_players': max_players,
+                'category': 'domino'
+            }
+
+            # تصفية البيانات لتشمل فقط الأعمدة الموجودة في الجدول
+            valid_room_data = {k: v for k, v in room_vals.items() if k in room_cols}
+            cols_str = ", ".join(valid_room_data.keys())
+            placeholders = ", ".join(["%s"] * len(valid_room_data))
+
+            cur.execute(f"INSERT INTO rooms ({cols_str}) VALUES ({placeholders})", list(valid_room_data.values()))
+
+            # 3. نفس الشيء لجدول اللاعبين
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'room_players'")
+            player_cols = [r[0] for r in cur.fetchall()]
+
+            player_vals = {
+                'room_id': room_code,
+                'room_code': room_code,
+                'user_id': user_id,
+                'player_name': player_name,
+                'join_order': 0,
+                'team': 'A',
+                'is_ready': True
+            }
+
+            valid_player_data = {k: v for k, v in player_vals.items() if k in player_cols}
+            p_cols_str = ", ".join(valid_player_data.keys())
+            p_placeholders = ", ".join(["%s"] * len(valid_player_data))
+
+            cur.execute(f"INSERT INTO room_players ({p_cols_str}) VALUES ({p_placeholders})", list(valid_player_data.values()))
 
             conn.commit()
         return {"success": True, "room_code": room_code}
     except Exception as e:
         print(f"Error creating domino room: {e}")
-        import traceback
-        traceback.print_exc()
         return {"success": False, "msg": f"خطأ تقني: {str(e)}"}
     finally: conn.close()
 
