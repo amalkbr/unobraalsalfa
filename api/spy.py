@@ -63,7 +63,7 @@ async def _prepare_round_logic(room_code, conn):
                 "phase_start": time.time(), "phase_timeout": 0
             }
 
-            cur.execute("UPDATE rooms SET status = 'playing_questions', secret_word = %s, spy_id = %s, game_data = %s WHERE room_code = %s",
+            cur.execute("UPDATE rooms SET status = 'roles_prep', secret_word = %s, spy_id = %s, game_data = %s WHERE room_code = %s",
                         (correct, spy_id, json.dumps(game_data), room_code))
             conn.commit()
     except Exception as e:
@@ -323,7 +323,20 @@ async def online_action(data: dict):
                     if cq and cq['asker_id'] == user_id: cq['question'] = data['text']; cq['status'] = 'answering'; gd['phase_start'] = time.time()
                 elif action == "submit_answer":
                     cq = gd.get('current_q')
-                    if cq and cq['ans_id'] == user_id: cq['answer'] = data['text']; cq['status'] = 'done'; gd['current_q'] = None; gd['phase_start'] = time.time()
+                    if cq and cq['ans_id'] == user_id:
+                        cq['answer'] = data['text']
+                        cq['status'] = 'done'
+                        if 'q_seq' not in gd: gd['q_seq'] = []
+                        gd['q_seq'].append(cq)
+                        gd['current_asker_id'] = cq['ans_id']
+                        gd['current_asker_name'] = cq.get('ans_name', 'لاعب')
+                        gd['current_q'] = None
+                        gd['phase_start'] = time.time()
+                elif action == "start_voting":
+                    if room['host_id'] == user_id:
+                        cur.execute("UPDATE rooms SET status = 'voting_spy' WHERE room_code = %s", (room_code,))
+                        cur.execute("UPDATE room_players SET is_ready = FALSE WHERE room_code = %s", (room_code,))
+                        gd['phase_start'] = time.time()
                 elif action == "vote":
                     if 'votes' not in gd: gd['votes'] = {}
                     gd['votes'][str(user_id)] = int(data['target_id'])
