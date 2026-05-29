@@ -2711,11 +2711,11 @@ HTML_TEMPLATE = """
         .domino-tile {
             background: #eee;
             color: #222;
-            width: 90px; /* العادي بالعرض */
-            height: 45px;
+            width: 40px; /* تقليل العرض قليلاً */
+            height: 80px; /* تقليل الطول قليلاً */
             border-radius: 6px;
             display: inline-flex;
-            flex-direction: row; /* توزيع الأرقام بجانب بعض */
+            flex-direction: column; /* الأرقام فوق بعض بشكل افتراضي (واقف) */
             border: 2px solid #555;
             box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
             position: relative;
@@ -2725,9 +2725,9 @@ HTML_TEMPLATE = """
             align-items: center;
         }
         .domino-tile.double {
-            width: 45px; /* الصاير بالطول */
-            height: 90px;
-            flex-direction: column; /* توزيع الأرقام فوق بعض */
+            width: 40px;
+            height: 80px;
+            flex-direction: column;
         }
         .domino-half {
             flex: 1;
@@ -2735,17 +2735,33 @@ HTML_TEMPLATE = """
             align-items: center;
             justify-content: center;
             font-weight: 900;
-            font-size: 22px;
+            font-size: 18px; /* تقليل حجم الخط ليتناسب مع الحجم الجديد */
             font-family: 'Cairo', sans-serif;
         }
         .domino-line {
-            width: 2px; /* الخط الفاصل بالعرض يكون عمودي */
-            height: 80%;
+            width: 80%;
+            height: 2px;
             background: #555;
+            margin: 0 auto;
+        }
+        /* على الطاولة فقط: الحجر العادي يكون نائم (بالعرض) والدبل يكون واقف */
+        #domino-board .domino-tile {
+            flex-direction: row;
+            width: 80px;
+            height: 40px;
+        }
+        #domino-board .domino-tile .domino-line {
+            width: 2px;
+            height: 80%;
             margin: auto 0;
         }
-        .domino-tile.double .domino-line {
-            width: 80%; /* الخط الفاصل بالطول يكون أفقي */
+        #domino-board .domino-tile.double {
+            flex-direction: column;
+            width: 40px;
+            height: 80px;
+        }
+        #domino-board .domino-tile.double .domino-line {
+            width: 80%;
             height: 2px;
             margin: 0 auto;
         }
@@ -3121,7 +3137,7 @@ HTML_TEMPLATE = """
                             <span>أحجارك (${myHand.length})</span>
                             <button onclick="drawDominoTile()" style="width:auto; padding:5px 15px; font-size:12px; background:var(--primary); display:${isMyTurn?'block':'none'}">➕ سحب حجر</button>
                         </div>
-                        <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:center;">
+                        <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:center; padding:10px 0;">
                             ${myHand.map((tile, idx) => `
                                 <div class="domino-tile playable" onclick="${isMyTurn ? `selectDominoTile(${JSON.stringify(tile)})` : ''}">
                                     <div class="domino-half">${tile[0]}</div>
