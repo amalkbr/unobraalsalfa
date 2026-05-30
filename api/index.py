@@ -3120,6 +3120,7 @@ HTML_TEMPLATE = """
                             <span style="background:#e74c3c; padding:4px 10px; border-radius:10px; font-size:12px; margin-right:5px;">فريق B: ${gd.scores.B}</span>
                         </div>
                         <div style="color:var(--accent); font-weight:bold;">${isMyTurn ? "🔴 دورك الآن!" : `دور: ${players.find(p=>p.user_id == gd.ordered_ids[gd.turn_index])?.player_name}`}</div>
+                        <button onclick="copyToClipboard('${room.room_code}')" style="background:rgba(255,255,255,0.1); padding:4px 10px; border-radius:10px; font-size:12px; border:1px solid #555; width:auto; margin:0;">📋 ${room.room_code}</button>
                     </div>
 
                     <!-- طاولة اللعب -->
