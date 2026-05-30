@@ -623,6 +623,8 @@ async def domino_play_tile(data: dict):
             if not room or room['status'] != 'playing': return {"success": False, "msg": "اللعبة ليست جارية"}
 
             game_data = room['game_data']
+            if isinstance(game_data, str): game_data = json.loads(game_data)
+            
             if game_data['ordered_ids'][game_data['turn_index']] != user_id:
                 return {"success": False, "msg": "ليس دورك"}
 
@@ -725,6 +727,7 @@ async def domino_next_round(data: dict):
             if room['host_id'] != user_id: return {"success": False, "msg": "المضيف فقط يمكنه بدء جولة جديدة"}
 
             game_data = room['game_data']
+            if isinstance(game_data, str): game_data = json.loads(game_data)
             if game_data['phase'] != 'round_end': return {"success": False, "msg": "الجولة لم تنتهِ بعد"}
 
             # Get players to reshuffle
@@ -765,6 +768,7 @@ async def domino_draw_tile(data: dict):
             cur.execute("SELECT game_data FROM rooms WHERE room_code = %s", (room_code,))
             room = cur.fetchone()
             game_data = room['game_data']
+            if isinstance(game_data, str): game_data = json.loads(game_data)
 
             if game_data['ordered_ids'][game_data['turn_index']] != user_id:
                 return {"success": False, "msg": "ليس دورك"}
