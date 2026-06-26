@@ -4077,6 +4077,8 @@ HTML_TEMPLATE = """
 
                     <button onclick="showXOMenu()" style="margin-top: 15px; background: linear-gradient(135deg, #00d2ff, #9d50bb); border: 1px solid #444;">❌⭕ اكس او (أونلاين)</button>
 
+                    <button onclick="showUnoMenu()" style="margin-top: 15px; background: linear-gradient(135deg, #ff7675, #d63031); border: 1px solid #444;">🃏 أونو (أونلاين)</button>
+
                     <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.08);">
                         <p style="font-size: 20px; color:#fff;">صُممت لكم بايدي ابو الاكبر   ❤️</p>
                     </div>
