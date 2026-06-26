@@ -2817,43 +2817,66 @@ HTML_TEMPLATE = """
             to { opacity: 1; transform: scale(1); }
         }
 
-        /* تنسيق متجاوب للعبة الدومينو بالطول على الهواتف */
-        @media (max-width: 767px) {
+        /* تدوير شاشة الدومينو تلقائياً لتلعب بالعرض في الهواتف */
+        @media (max-width: 767px) and (orientation: portrait) {
+            html, body {
+                overflow: hidden !important;
+                position: fixed !important;
+                width: 100vw !important;
+                height: 100vh !important;
+            }
             .domino-game-card {
+                position: fixed !important;
+                top: 50% !important;
+                left: 50% !important;
+                width: 98vh !important;
+                height: 98vw !important;
+                max-width: none !important;
+                transform: translate(-50%, -50%) rotate(90deg) !important;
+                transform-origin: center !important;
+                z-index: 9999 !important;
+                border-radius: 12px !important;
+                box-shadow: 0 0 30px rgba(0,0,0,0.8) !important;
+                overflow: hidden !important;
+                margin: 0 !important;
                 padding: 10px !important;
-                width: 98vw !important;
-                min-height: 85vh !important;
+                box-sizing: border-box !important;
             }
             #domino-board {
-                min-height: 250px !important;
-                max-height: 380px !important;
-                padding: 15px 5px !important;
-                gap: 12px !important;
+                min-height: 140px !important;
+                height: 140px !important;
+                padding: 10px 5px !important;
+                gap: 5px !important;
+                margin-bottom: 8px !important;
                 overflow-y: auto !important;
                 overflow-x: hidden !important;
             }
+            #domino-player-hand-container {
+                padding: 8px !important;
+                border-radius: 12px !important;
+            }
             .domino-tile {
-                width: 32px !important;
-                height: 64px !important;
+                width: 30px !important;
+                height: 60px !important;
             }
             #domino-board .domino-tile {
-                width: 64px !important;
-                height: 32px !important;
+                width: 60px !important;
+                height: 30px !important;
             }
             #domino-board .domino-tile.double {
-                width: 32px !important;
-                height: 64px !important;
+                width: 30px !important;
+                height: 60px !important;
             }
             .domino-tile.double {
-                width: 32px !important;
-                height: 64px !important;
+                width: 30px !important;
+                height: 60px !important;
             }
             .domino-half {
-                font-size: 15px !important;
+                font-size: 14px !important;
             }
             .domino-line::after {
-                width: 4.5px !important;
-                height: 4.5px !important;
+                width: 4px !important;
+                height: 4px !important;
             }
         }
 
@@ -3303,18 +3326,16 @@ HTML_TEMPLATE = """
 
         function renderSnakeBoardHTML(board) {
             let html = "";
-            // تحديد عدد الأحجار في الصف ديناميكياً: 3 للهواتف و 6 للشاشات الكبيرة
-            let itemsPerRow = window.innerWidth < 600 ? 3 : 6; 
+            // كشف الهاتف بشكل ثابت لا يتأثر بالتدوير
+            let isMobile = Math.min(window.screen.width, window.screen.height) < 600;
+            let itemsPerRow = isMobile ? 5 : 8; 
             let rows = [];
             
-            // تقسيم الأحجار إلى صفوف تحتوي كل منها على itemsPerRow أحجار
             for (let i = 0; i < board.length; i += itemsPerRow) {
                 rows.push(board.slice(i, i + itemsPerRow));
             }
             
-            // رسم كل صف بشكل أفعواني متصل
             html = rows.map((rowTiles, rIdx) => {
-                // الصفوف الزوجية (0، 2، 4) تتجه لليمين، والفردية (1، 3) تتجه لليسار بـ row-reverse
                 let isReverse = rIdx % 2 !== 0;
                 let flexDir = isReverse ? 'row-reverse' : 'row';
                 
@@ -3332,15 +3353,15 @@ HTML_TEMPLATE = """
                     let isLastInGame = (rIdx * itemsPerRow + tIdx) === board.length - 1;
                     
                     if (isLastInRow && !isLastInGame) {
-                        // حجر ربط! يجب أن يقف ليربط بالصف السفلي
-                        tileClass += " double"; // نجعله واقفاً (عرضه 44 وارتفاعه 84)
+                        tileClass += " double"; // نجعله واقفاً ليربط بالصف السفلي
                         
-                        // إضافة هوامش سلبية لربطه بالصف الذي يليه
-                        extraStyle = "margin-top: 15px; margin-bottom: -15px; z-index: 2;";
+                        // إزاحة خفيفة وتنسيق متصل بالركن
+                        let offsetVal = isMobile ? '12px' : '18px';
+                        extraStyle = `margin-top: ${offsetVal}; margin-bottom: -${offsetVal}; z-index: 2;`;
                     }
                     
                     return `
-                        <div class="${tileClass}" style="margin: 0 4px; ${extraStyle}">
+                        <div class="${tileClass}" style="margin: 0 -2px; ${extraStyle}">
                             <div class="domino-half">${tile[0]}</div>
                             <div class="domino-line"></div>
                             <div class="domino-half">${tile[1]}</div>
@@ -3348,8 +3369,15 @@ HTML_TEMPLATE = """
                     `;
                 }).join('');
                 
+                // تنسيق الصف مع تداخل رأسي لضمان تراص الأركان والصفوف
+                let rowStyle = `display:flex; flex-direction:${flexDir}; align-items:center; justify-content:flex-start; width:100%; min-height:50px; padding: 0 45px; box-sizing:border-box; position:relative; z-index: 1;`;
+                if (rIdx > 0) {
+                    let overlap = isMobile ? '-18px' : '-28px';
+                    rowStyle += ` margin-top: ${overlap};`;
+                }
+                
                 return `
-                    <div class="domino-board-row" style="display:flex; flex-direction:${flexDir}; align-items:center; justify-content:center; width:100%; min-height:90px; padding: 0 20px;">
+                    <div class="domino-board-row" style="${rowStyle}">
                         ${tilesHTML}
                     </div>
                 `;
