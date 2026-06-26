@@ -8,9 +8,11 @@ import time
 import psycopg2
 from .database import get_db_conn, RealDictCursor
 from .domino import router as domino_router
+from .xo import router as xo_router
 
 app = FastAPI()
 app.include_router(domino_router)
+app.include_router(xo_router)
 
 # --- Database Connection ---
 DB_INITIALIZED = False
@@ -2713,24 +2715,24 @@ HTML_TEMPLATE = """
 
         /* Domino Styles */
         .domino-tile {
-            background: #eee;
-            color: #222;
-            width: 40px; /* تقليل العرض قليلاً */
-            height: 80px; /* تقليل الطول قليلاً */
-            border-radius: 6px;
+            background: linear-gradient(145deg, #ffffff, #f1efe9);
+            color: #2c3e50;
+            width: 44px;
+            height: 84px;
+            border-radius: 8px;
             display: inline-flex;
-            flex-direction: column; /* الأرقام فوق بعض بشكل افتراضي (واقف) */
-            border: 2px solid #555;
-            box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
+            flex-direction: column;
+            border: 1px solid #d5d0c5;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.15), 0 1px 3px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.8);
             position: relative;
             user-select: none;
             flex-shrink: 0;
-            transition: transform 0.2s;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
             align-items: center;
         }
         .domino-tile.double {
-            width: 40px;
-            height: 80px;
+            width: 44px;
+            height: 84px;
             flex-direction: column;
         }
         .domino-half {
@@ -2739,20 +2741,36 @@ HTML_TEMPLATE = """
             align-items: center;
             justify-content: center;
             font-weight: 900;
-            font-size: 18px; /* تقليل حجم الخط ليتناسب مع الحجم الجديد */
+            font-size: 20px;
             font-family: 'Cairo', sans-serif;
+            text-shadow: 1px 1px 0px rgba(255,255,255,0.8);
         }
         .domino-line {
             width: 80%;
             height: 2px;
-            background: #555;
+            background: #b2bec3;
             margin: 0 auto;
+            position: relative;
+        }
+        /* نقطة نحاسية كلاسيكية في منتصف الخط الفاصل للأحجار الفخمة */
+        .domino-line::after {
+            content: '';
+            position: absolute;
+            width: 6px;
+            height: 6px;
+            background: #d4af37; /* لون ذهبي نحاسي */
+            border-radius: 50%;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.4);
         }
         /* على الطاولة فقط: الحجر العادي يكون نائم (بالعرض) والدبل يكون واقف */
         #domino-board .domino-tile {
             flex-direction: row;
-            width: 80px;
-            height: 40px;
+            width: 84px;
+            height: 44px;
+            box-shadow: 0 6px 12px rgba(0,0,0,0.25), 0 2px 4px rgba(0,0,0,0.15);
         }
         #domino-board .domino-tile .domino-line {
             width: 2px;
@@ -2761,8 +2779,8 @@ HTML_TEMPLATE = """
         }
         #domino-board .domino-tile.double {
             flex-direction: column;
-            width: 40px;
-            height: 80px;
+            width: 44px;
+            height: 84px;
         }
         #domino-board .domino-tile.double .domino-line {
             width: 80%;
@@ -2772,17 +2790,18 @@ HTML_TEMPLATE = """
         .domino-tile.playable {
             cursor: pointer;
             border-color: #00ffaa;
-            box-shadow: 0 0 10px rgba(0, 255, 170, 0.8), inset 0 0 8px rgba(0, 255, 170, 0.5);
-            animation: pulse-glow-domino 1.5s infinite alternate;
+            box-shadow: 0 0 12px rgba(0, 255, 170, 0.7), inset 0 0 6px rgba(0, 255, 170, 0.4);
+            animation: pulse-glow-domino 1.2s infinite alternate;
         }
         @keyframes pulse-glow-domino {
-            from { box-shadow: 0 0 5px rgba(0, 255, 170, 0.5), inset 0 0 5px rgba(0, 255, 170, 0.3); border-color: #00cc88; }
-            to { box-shadow: 0 0 15px rgba(0, 255, 170, 1), inset 0 0 12px rgba(0, 255, 170, 0.8); border-color: #00ffaa; }
+            from { box-shadow: 0 0 6px rgba(0, 255, 170, 0.4), inset 0 0 4px rgba(0, 255, 170, 0.2); border-color: #00cc88; }
+            to { box-shadow: 0 0 18px rgba(0, 255, 170, 0.9), inset 0 0 10px rgba(0, 255, 170, 0.6); border-color: #00ffaa; }
         }
         .domino-tile.playable:hover {
-            transform: translateY(-5px) scale(1.05);
+            transform: translateY(-8px) scale(1.08);
             border-color: #00ffaa;
-            box-shadow: 0 0 20px rgba(0, 255, 170, 1), inset 0 0 15px rgba(0, 255, 170, 1);
+            box-shadow: 0 0 24px rgba(0, 255, 170, 1), inset 0 0 12px rgba(0, 255, 170, 0.8);
+            z-index: 10;
         }
         #domino-board {
             perspective: 1000px;
@@ -2807,6 +2826,57 @@ HTML_TEMPLATE = """
             h3 { font-size: 28px; }
             .vote-item { font-size: 20px; padding: 22px; }
             .qa-chat-body { max-height: 350px; }
+        }
+
+        /* XO Styles */
+        .xo-board {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            max-width: 320px;
+            margin: 20px auto;
+            background: rgba(255, 255, 255, 0.03);
+            padding: 12px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        .xo-cell {
+            aspect-ratio: 1;
+            background: rgba(255, 255, 255, 0.05);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            font-weight: 900;
+            cursor: pointer;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            user-select: none;
+        }
+        .xo-cell:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(255, 255, 255, 0.2);
+            transform: scale(1.05);
+        }
+        .xo-cell.x-symbol {
+            color: #00d2ff;
+            text-shadow: 0 0 15px rgba(0, 210, 255, 0.6);
+        }
+        .xo-cell.o-symbol {
+            color: #ff2d55;
+            text-shadow: 0 0 15px rgba(255, 45, 85, 0.6);
+        }
+        .xo-cell.disabled {
+            cursor: not-allowed;
+        }
+        .xo-cell.playable-cell {
+            animation: pulse-glow-xo 1.5s infinite alternate;
+        }
+        @keyframes pulse-glow-xo {
+            from { border-color: rgba(0, 210, 255, 0.2); }
+            to { border-color: rgba(0, 210, 255, 0.6); }
         }
     </style>
 </head>
@@ -3124,9 +3194,9 @@ HTML_TEMPLATE = """
                     </div>
 
                     <!-- طاولة اللعب -->
-                    <div id="domino-board" style="flex-grow:1; background:rgba(0,0,0,0.3); border-radius:20px; position:relative; overflow:auto; display:flex; align-items:center; justify-content:center; padding:40px; border:2px dashed rgba(255,255,255,0.1); margin-bottom:20px; min-height:200px; flex-wrap:wrap;">
+                    <div id="domino-board" style="direction:ltr; flex-grow:1; background:rgba(0,0,0,0.3); border-radius:20px; position:relative; overflow-x:auto; overflow-y:hidden; display:flex; align-items:center; justify-content:flex-start; padding:20px; border:2px dashed rgba(255,255,255,0.1); margin-bottom:20px; min-height:160px; gap:8px; width:100%; white-space:nowrap; box-sizing:border-box;">
                         ${gd.phase === 'round_end' ? `
-                            <div style="text-align:center;">
+                            <div style="text-align:center; width:100%;">
                                 <h2 style="color:var(--accent)">انتهت الجولة!</h2>
                                 <p>النقاط الحالية: A:${gd.scores.A} | B:${gd.scores.B}</p>
                                 ${room.host_id == currentUser.user_id ?
@@ -3134,9 +3204,9 @@ HTML_TEMPLATE = """
                                     `<p style="color:#aaa;">بانتظار المضيف لبدء الجولة التالية...</p>`
                                 }
                             </div>
-                        ` : (board.length === 0 ? '<div style="color:#555; font-size:20px;">الطاولة خالية.. ابدأ بوضع أول حجر</div>' :
+                        ` : (board.length === 0 ? '<div style="color:#555; font-size:20px; width:100%; text-align:center;">الطاولة خالية.. ابدأ بوضع أول حجر</div>' :
                           board.map((tile, idx) => `
-                            <div class="domino-tile ${tile[0]===tile[1]?'double':''}" style="margin:2px;">
+                            <div class="domino-tile ${tile[0]===tile[1]?'double':''}" style="margin:0 2px;">
                                 <div class="domino-half">${tile[0]}</div>
                                 <div class="domino-line"></div>
                                 <div class="domino-half">${tile[1]}</div>
@@ -3178,6 +3248,14 @@ HTML_TEMPLATE = """
                 </div>`;
 
             document.getElementById('main-ui').innerHTML = html;
+
+            // تمرير تلقائي لنهاية البورد بعد الرسم لكي يرى اللاعب أحدث حجر تم وضعه
+            setTimeout(() => {
+                const boardDiv = document.getElementById('domino-board');
+                if (boardDiv) {
+                    boardDiv.scrollLeft = boardDiv.scrollWidth;
+                }
+            }, 100);
         }
 
         let selectedTile = null;
@@ -3241,7 +3319,7 @@ HTML_TEMPLATE = """
                 if(!d.success) alert(d.msg);
                 else {
                     if(d.msg) showToast(d.msg);
-                    pollRoomState(); // تحديث الواجهة فوراً لرؤية الحجر الجديد
+                    updateRoomState(); // تحديث الواجهة فوراً لرؤية الحجر الجديد
                 }
             } catch(e) { console.error(e); }
         }
@@ -3274,6 +3352,8 @@ HTML_TEMPLATE = """
                     <button onclick="showBaraMenu()" style="margin-bottom: 15px; background: linear-gradient(135deg, #6c5ce7, #a29bfe);">🕵️‍♂️ برا السالفة</button>
 
                     <button onclick="showDominoMenu()" style="background: linear-gradient(135deg, #2d3436, #000); border: 1px solid #444;">🁔 دومينو (أونلاين)</button>
+
+                    <button onclick="showXOMenu()" style="margin-top: 15px; background: linear-gradient(135deg, #00d2ff, #9d50bb); border: 1px solid #444;">❌⭕ اكس او (أونلاين)</button>
 
                     <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.08);">
                         <p style="font-size: 20px; color:#fff;">صُممت لكم بايدي ابو الاكبر   ❤️</p>
@@ -3513,6 +3593,8 @@ HTML_TEMPLATE = """
                     <button onclick="showBaraMenu()" style="margin-bottom: 15px; background: linear-gradient(135deg, #6c5ce7, #a29bfe);">🕵️‍♂️ برا السالفة</button>
 
                     <button onclick="showDominoMenu()" style="background: linear-gradient(135deg, #2d3436, #000); border: 1px solid #444;">🁔 دومينو (أونلاين)</button>
+
+                    <button onclick="showXOMenu()" style="margin-top: 15px; background: linear-gradient(135deg, #00d2ff, #9d50bb); border: 1px solid #444;">❌⭕ اكس او (أونلاين)</button>
 
                     <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.08);">
                         <p style="font-size: 20px; color:#fff;">صُممت لكم بايدي ابو الاكبر   ❤️</p>
@@ -4017,13 +4099,15 @@ HTML_TEMPLATE = """
                     const d = await res.json();
                     if(d.success) {
                         // التحقق من تغير البيانات لمنع الوميض (الرمش)
+                        const myHand = d.room.game_data?.hands?.[currentUser?.user_id] || [];
                         const currentStateHash = JSON.stringify({
                             status: d.room.status,
                             p_count: d.players.length,
                             turn: d.room.game_data?.turn_index,
                             board_len: d.room.game_data?.board?.length,
                             scores: d.room.game_data?.scores,
-                            phase: d.room.game_data?.phase
+                            phase: d.room.game_data?.phase,
+                            hand_hash: myHand.map(t => t.join('-')).join(',')
                         });
 
                         if (currentStateHash === lastStateHash) {
