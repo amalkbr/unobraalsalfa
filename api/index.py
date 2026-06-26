@@ -3564,6 +3564,280 @@ HTML_TEMPLATE = """
             }
         }
 
+        /* XO Functions */
+        function showXOMenu() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <button id="announcement-bell" class="bell-btn" onclick="showAnnouncements()">
+                        🔔
+                        <div class="bell-badge"></div>
+                    </button>
+                    <h1>❌⭕ اكس او أونلاين</h1>
+                    <p style="color:#aaa; margin-bottom:20px;">العب مع صديقك مواجهة ثنائية حماسية!</p>
+
+                    <button onclick="createXORoom()" style="background:var(--success); margin-bottom:15px;">✨ إنشاء طاولة جديدة</button>
+                    <button onclick="showXOJoinInput()" style="background:var(--primary); margin-bottom:15px;">🚪 انضمام لطاولة</button>
+
+                    <button style="background:#636e72; margin-top:20px;" onclick="showGameSelection()">رجوع</button>
+                </div>`;
+            checkAnnouncements();
+        }
+
+        async function createXORoom() {
+            if (!currentUser) return alert("سجل دخولك أولاً");
+            
+            const mainUi = document.getElementById('main-ui');
+            const originalContent = mainUi.innerHTML;
+            mainUi.innerHTML = `
+                <div class="card">
+                    <div class="spinner" style="margin: 20px auto;"></div>
+                    <h2 style="color:var(--accent)">جاري إنشاء الطاولة...</h2>
+                    <p>لحظات ويجهز رمز اللعب 🚀</p>
+                </div>`;
+
+            try {
+                const res = await fetch('/api/xo/create', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        user_id: currentUser.user_id,
+                        player_name: currentUser.player_name
+                    })
+                });
+
+                if (!res.ok) throw new Error("Server response not ok");
+                const d = await res.json();
+
+                if(d.success) {
+                    currentRoom = d.room_code;
+                    startPolling();
+                } else {
+                    mainUi.innerHTML = originalContent;
+                    alert(d.msg || "فشل إنشاء الغرفة");
+                }
+            } catch(e) {
+                console.error(e);
+                mainUi.innerHTML = originalContent;
+                alert("حدث خطأ أثناء الاتصال بالسيرفر");
+            }
+        }
+
+        function showXOJoinInput() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2 style="color:var(--accent)">انضمام لطاولة اكس او</h2>
+                    <p style="margin-bottom:15px; color:#aaa;">أدخل رمز الطاولة المكون من 4 أحرف</p>
+                    <input id="xo_join_code" placeholder="مثلاً: ABCD" style="text-transform:uppercase; text-align:center; font-size:24px; margin-bottom:20px; width:100%; letter-spacing:5px;">
+                    <button id="xo-join-btn-final" onclick="joinXORoom()" style="background:var(--success); font-weight:bold;">انضمام الآن 🚪</button>
+                    <button onclick="showXOMenu()" style="background:#636e72; margin-top:10px;">رجوع</button>
+                </div>`;
+
+            setTimeout(() => {
+                const el = document.getElementById('xo_join_code');
+                if (el) el.focus();
+            }, 100);
+        }
+
+        async function joinXORoom() {
+            const btn = document.getElementById('xo-join-btn-final');
+            const codeInput = document.getElementById('xo_join_code');
+            const code = codeInput.value.trim().toUpperCase();
+
+            if(!code) return alert("يرجى إدخال رمز الطاولة");
+            if(!currentUser) return alert("سجل دخولك أولاً");
+
+            btn.disabled = true;
+            btn.innerText = "جاري الانضمام...";
+
+            try {
+                const res = await fetch('/api/online/join', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        room_code: code,
+                        user_id: currentUser.user_id,
+                        player_name: currentUser.player_name
+                    })
+                });
+
+                const d = await res.json();
+                if(d.success) {
+                    currentRoom = code;
+                    showToast("تم الانضمام بنجاح! 🚀");
+                    startPolling();
+                } else {
+                    alert(d.msg || "تعذر الانضمام للغرفة");
+                    btn.disabled = false;
+                    btn.innerText = "انضمام الآن 🚪";
+                }
+            } catch(e) {
+                console.error(e);
+                alert("حدث خطأ أثناء الاتصال بالسيرفر");
+                btn.disabled = false;
+                btn.innerText = "انضمام الآن 🚪";
+            }
+        }
+
+        function renderXOLobby() {
+            const {room, players} = window.roomData;
+            const isHost = room.host_id == currentUser.user_id;
+            const joinLink = `${window.location.origin}/join/${room.room_code}`;
+
+            let playersHTML = players.map(p => `
+                <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:10px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>👤 ${p.player_name} ${p.user_id == room.host_id ? '👑' : ''}</span>
+                    <span style="color:var(--success); font-size:12px;">متصل</span>
+                </div>
+            `).join('');
+
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <h2 style="color:var(--accent)">غرفة انتظار إكس أو</h2>
+                    <p style="font-size:14px; color:#aaa;">الرمز: <b style="color:white; font-size:18px;">${room.room_code}</b></p>
+
+                    <div style="margin:20px 0; background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; text-align:right;">
+                        <h4 style="margin-top:0; border-bottom:1px solid #333; padding-bottom:5px;">اللاعبين (${players.length}/2)</h4>
+                        ${playersHTML}
+                    </div>
+
+                    ${isHost ? `
+                        <button id="start-xo-btn" onclick="startXOGame()" style="background:var(--success); margin-bottom:15px;" ${players.length < 2 ? 'disabled' : ''}>
+                            ${players.length < 2 ? 'بانتظار انضمام لاعب آخر... ⏳' : 'ابدأ اللعب الآن! 🚀'}
+                        </button>
+                    ` : `
+                        <div style="background:rgba(241,196,15,0.1); color:#f1c40f; padding:10px; border-radius:10px; font-size:14px; margin-bottom:15px;">
+                            ⏳ بانتظار المضيف لبدء اللعبة...
+                        </div>
+                    `}
+
+                    <button onclick="copyToClipboard('${joinLink}')" style="background:rgba(255,255,255,0.1); font-size:14px; margin-bottom:10px;">📋 نسخ رابط الطاولة</button>
+                    <button onclick="leaveRoom()" style="background:var(--error); font-size:14px;">خروج</button>
+                </div>`;
+        }
+
+        async function startXOGame() {
+            try {
+                const res = await fetch('/api/xo/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
+                });
+                const d = await res.json();
+                if(!d.success) alert(d.msg);
+            } catch(e) { console.error(e); }
+        }
+
+        function renderXOGame() {
+            if(!window.roomData) return;
+            const {room, players} = window.roomData;
+            const gd = room.game_data;
+            const mySymbol = gd.symbols[currentUser.user_id] || "";
+            const isMyTurn = gd.ordered_ids[gd.turn_index] == currentUser.user_id;
+            const board = gd.board || ["", "", "", "", "", "", "", "", ""];
+            const currentTurnPlayer = players.find(p => p.user_id == gd.ordered_ids[gd.turn_index])?.player_name || "لاعب آخر";
+
+            let headerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; width: 100%;">
+                    <div>
+                        <span style="background:#3498db; padding:4px 10px; border-radius:10px; font-size:12px;">نقاط X: ${gd.scores.X}</span>
+                        <span style="background:#e74c3c; padding:4px 10px; border-radius:10px; font-size:12px; margin-right:5px;">نقاط O: ${gd.scores.O}</span>
+                    </div>
+                    <div style="font-size: 14px; color:#aaa;">رمزك: <span style="font-weight:bold; color:${mySymbol === 'X' ? '#00d2ff' : '#ff2d55'}">${mySymbol}</span></div>
+                    <button onclick="copyToClipboard('${room.room_code}')" style="background:rgba(255,255,255,0.1); padding:4px 10px; border-radius:10px; font-size:12px; border:1px solid #555; width:auto; margin:0;">📋 ${room.room_code}</button>
+                </div>
+            `;
+
+            let turnInfoHTML = `
+                <div style="color:var(--accent); font-weight:bold; font-size: 18px; margin-bottom: 20px; text-align: center;">
+                    ${isMyTurn ? "🔴 دورك الآن للعب!" : `انتظر دور: ${currentTurnPlayer}`}
+                </div>
+            `;
+
+            let boardHTML = `
+                <div class="xo-board">
+                    ${board.map((cell, idx) => {
+                        let cellClass = "xo-cell";
+                        if (cell === 'X') cellClass += " x-symbol";
+                        if (cell === 'O') cellClass += " o-symbol";
+                        
+                        let clickAction = "";
+                        if (cell === "" && isMyTurn && gd.phase === 'playing') {
+                            clickAction = `onclick="playXOMove(${idx})"`;
+                            cellClass += " playable-cell";
+                        } else {
+                            cellClass += " disabled";
+                        }
+
+                        return `<div class="${cellClass}" ${clickAction}>${cell}</div>`;
+                    }).join('')}
+                </div>
+            `;
+
+            let roundEndHTML = "";
+            if (gd.phase === 'ended') {
+                let statusText = "";
+                if (gd.winner_id === 'draw') {
+                    statusText = "تعادل الجولة! 🤝";
+                } else {
+                    const winnerName = players.find(p => p.user_id == gd.winner_id)?.player_name || "اللاعب";
+                    statusText = `الفائز في الجولة: ${winnerName} 🎉`;
+                }
+
+                roundEndHTML = `
+                    <div style="text-align:center; margin-top:20px; background:rgba(0,0,0,0.4); padding:15px; border-radius:20px; border:1px solid rgba(255,255,255,0.1);">
+                        <h3 style="color:var(--accent); margin-top:0;">${statusText}</h3>
+                        ${room.host_id == currentUser.user_id ?
+                            `<button onclick="startNextXORound()" style="background:var(--success); width:auto; padding:8px 25px;">جولة جديدة 🔄</button>` :
+                            `<p style="color:#aaa;">بانتظار المضيف لبدء الجولة التالية...</p>`
+                        }
+                    </div>
+                `;
+            }
+
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card" style="padding:15px; max-width:100%; width:98vw; min-height:80vh; display:flex; flex-direction:column; justify-content: space-between;">
+                    <div>
+                        ${headerHTML}
+                        ${gd.phase === 'playing' ? turnInfoHTML : ''}
+                        ${boardHTML}
+                    </div>
+                    <div>
+                        ${roundEndHTML}
+                        <button onclick="leaveRoom()" style="background:var(--error); margin-top:20px; font-size:14px; width:auto; padding:6px 20px; align-self:center;">انسحاب وخروج</button>
+                    </div>
+                </div>`;
+        }
+
+        async function playXOMove(idx) {
+            try {
+                const res = await fetch('/api/xo/play', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id, index: idx})
+                });
+                const d = await res.json();
+                if(!d.success) alert(d.msg);
+                else {
+                    await updateRoomState();
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function startNextXORound() {
+            try {
+                const res = await fetch('/api/xo/next_round', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({room_code: currentRoom, user_id: currentUser.user_id})
+                });
+                const d = await res.json();
+                if(!d.success) alert(d.msg);
+                else {
+                    await updateRoomState();
+                }
+            } catch(e) { console.error(e); }
+        }
+
         function showMenu(push = true) {
             if(timerInterval) clearInterval(timerInterval);
             if(push) history.pushState({screen: 'menu'}, "");
@@ -4124,10 +4398,12 @@ HTML_TEMPLATE = """
                         }
 
                         // التحديث البصري للحالة
-                        if(status === 'waiting' || (d.room.game_type === 'domino' && status === 'lobby')) {
+                        if(status === 'waiting' || (['domino', 'xo'].includes(d.room.game_type) && status === 'lobby')) {
                             renderRoom();
                         } else if(status === 'playing' && d.room.game_type === 'domino') {
                             renderDominoGame();
+                        } else if(status === 'playing' && d.room.game_type === 'xo') {
+                            renderXOGame();
                         } else if(status === 'voting_limit') {
                             renderVotingLimit();
                         } else if(status === 'voting_cat') {
@@ -4291,6 +4567,9 @@ HTML_TEMPLATE = """
             }
             if(window.roomData.room.game_type === 'domino' && window.roomData.room.status === 'lobby') {
                 return renderDominoLobby();
+            }
+            if(window.roomData.room.game_type === 'xo' && window.roomData.room.status === 'lobby') {
+                return renderXOLobby();
             }
             const {room, players} = window.roomData;
             const me = players.find(p => p.user_id == currentUser.user_id);
