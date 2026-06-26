@@ -4445,6 +4445,7 @@ HTML_TEMPLATE = """
         }
 
         function showGameSelection() {
+            stopPolling();
             if(timerInterval) clearInterval(timerInterval);
             history.pushState({screen: 'game_selection'}, "");
             document.getElementById('main-ui').innerHTML = `
@@ -7890,6 +7891,8 @@ HTML_TEMPLATE = """
 
         async function submitCreateUno(maxPlayers) {
             if (!currentUser) return alert("سجل دخولك أولاً");
+            
+            stopPolling();
             
             const mainUi = document.getElementById('main-ui');
             const originalContent = mainUi.innerHTML;
