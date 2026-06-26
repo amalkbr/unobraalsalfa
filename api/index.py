@@ -4970,6 +4970,13 @@ HTML_TEMPLATE = """
                     if(d.success) {
                         // التحقق من تغير البيانات لمنع الوميض (الرمش)
                         const myHand = d.room.game_data?.hands?.[currentUser?.user_id] || [];
+                        let handHash = "";
+                        if (d.room.game_type === 'domino') {
+                            handHash = myHand.map(t => Array.isArray(t) ? t.join('-') : t).join(',');
+                        } else {
+                            handHash = Array.isArray(myHand) ? myHand.join(',') : "";
+                        }
+                        
                         const currentStateHash = JSON.stringify({
                             status: d.room.status,
                             p_count: d.players.length,
@@ -4977,7 +4984,7 @@ HTML_TEMPLATE = """
                             board_len: d.room.game_data?.board?.length,
                             scores: d.room.game_data?.scores,
                             phase: d.room.game_data?.phase,
-                            hand_hash: myHand.map(t => t.join('-')).join(',')
+                            hand_hash: handHash
                         });
 
                         if (currentStateHash === lastStateHash) {
