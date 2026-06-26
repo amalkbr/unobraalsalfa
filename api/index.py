@@ -3688,6 +3688,46 @@ HTML_TEMPLATE = """
         }
 
         function renderXOOfflineGame() {
+            let wrapper = document.getElementById('xo-game-wrapper');
+            if (!wrapper) {
+                document.getElementById('main-ui').innerHTML = `
+                    <div id="xo-game-wrapper" class="card" style="padding:15px; max-width:100%; width:98vw; min-height:80vh; display:flex; flex-direction:column; justify-content: space-between;">
+                        <div>
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; width: 100%;">
+                                <div>
+                                    <span id="xo-score-x-badge" style="background:#3498db; padding:4px 10px; border-radius:10px; font-size:12px;">نقاط X: <span id="xo-score-x">0</span></span>
+                                    <span id="xo-score-o-badge" style="background:#e74c3c; padding:4px 10px; border-radius:10px; font-size:12px; margin-right:5px;">نقاط O: <span id="xo-score-o">0</span></span>
+                                </div>
+                                <div style="font-size: 14px; color:#aaa; font-weight:bold;">🎮 لعب أوفلاين (محلي)</div>
+                            </div>
+                            <div id="xo-turn-info" style="color:var(--accent); font-weight:bold; font-size: 18px; margin-bottom: 20px; text-align: center;"></div>
+                            
+                            <div class="xo-board">
+                                <div id="xo-cell-0" class="xo-cell"></div>
+                                <div id="xo-cell-1" class="xo-cell"></div>
+                                <div id="xo-cell-2" class="xo-cell"></div>
+                                <div id="xo-cell-3" class="xo-cell"></div>
+                                <div id="xo-cell-4" class="xo-cell"></div>
+                                <div id="xo-cell-5" class="xo-cell"></div>
+                                <div id="xo-cell-6" class="xo-cell"></div>
+                                <div id="xo-cell-7" class="xo-cell"></div>
+                                <div id="xo-cell-8" class="xo-cell"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <div id="xo-round-end-container"></div>
+                            <button onclick="showXOMenu()" style="background:#636e72; margin-top:20px; font-size:14px; width:auto; padding:6px 20px; align-self:center;">خروج للقائمة</button>
+                        </div>
+                    </div>`;
+            }
+
+            const fakeGD = {
+                scores: xoOfflineScores,
+                phase: xoOfflinePhase
+            };
+            updateXOGameDOM(fakeGD, [], false);
+            return;
+            // Logic below bypassed
             let headerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; width: 100%;">
                     <div>
@@ -3753,6 +3793,104 @@ HTML_TEMPLATE = """
                         <button onclick="showXOMenu()" style="background:#636e72; margin-top:20px; font-size:14px; width:auto; padding:6px 20px; align-self:center;">خروج للقائمة</button>
                     </div>
                 </div>`;
+        }
+
+        function updateXOGameDOM(gd, players, isOnline) {
+            const scoreXEl = document.getElementById('xo-score-x');
+            const scoreOEl = document.getElementById('xo-score-o');
+            if (scoreXEl) scoreXEl.innerText = gd.scores.X;
+            if (scoreOEl) scoreOEl.innerText = gd.scores.O;
+
+            if (isOnline) {
+                const mySymbolEl = document.getElementById('xo-my-symbol');
+                if (mySymbolEl) {
+                    const mySymbol = gd.symbols[currentUser.user_id] || "";
+                    mySymbolEl.innerText = mySymbol;
+                    mySymbolEl.style.color = mySymbol === 'X' ? '#00d2ff' : '#ff2d55';
+                }
+            }
+
+            const turnInfoEl = document.getElementById('xo-turn-info');
+            if (turnInfoEl) {
+                if (gd.phase === 'playing') {
+                    if (isOnline) {
+                        const isMyTurn = gd.ordered_ids[gd.turn_index] == currentUser.user_id;
+                        const currentTurnPlayer = players.find(p => p.user_id == gd.ordered_ids[gd.turn_index])?.player_name || "لاعب آخر";
+                        turnInfoEl.innerHTML = isMyTurn ? "🔴 دورك الآن للعب!" : `انتظر دور: ${currentTurnPlayer}`;
+                    } else {
+                        turnInfoEl.innerHTML = `دور اللاعب: <span style="color:${xoOfflineTurn === 'X' ? '#00d2ff' : '#ff2d55'}">${xoOfflineTurn}</span>`;
+                    }
+                    turnInfoEl.style.display = 'block';
+                } else {
+                    turnInfoEl.style.display = 'none';
+                }
+            }
+
+            const board = isOnline ? gd.board : xoOfflineBoard;
+            const isMyTurn = isOnline ? (gd.ordered_ids[gd.turn_index] == currentUser.user_id) : true;
+            const isPlaying = gd.phase === 'playing';
+
+            for (let idx = 0; idx < 9; idx++) {
+                const cellEl = document.getElementById(`xo-cell-${idx}`);
+                if (cellEl) {
+                    const val = board[idx];
+                    cellEl.innerText = val;
+
+                    let cellClass = "xo-cell";
+                    if (val === 'X') cellClass += " x-symbol";
+                    if (val === 'O') cellClass += " o-symbol";
+
+                    if (val === "" && isMyTurn && isPlaying) {
+                        cellClass += " playable-cell";
+                        cellEl.className = cellClass;
+                        cellEl.onclick = function() {
+                            if (isOnline) playXOMove(idx);
+                            else playXOOfflineMove(idx);
+                        };
+                    } else {
+                        cellClass += " disabled";
+                        cellEl.className = cellClass;
+                        cellEl.onclick = null;
+                    }
+                }
+            }
+
+            const roundEndEl = document.getElementById('xo-round-end-container');
+            if (roundEndEl) {
+                if (gd.phase === 'ended') {
+                    let statusText = "";
+                    if (isOnline) {
+                        if (gd.winner_id === 'draw') statusText = "تعادل الجولة! 🤝";
+                        else {
+                            const winnerName = players.find(p => p.user_id == gd.winner_id)?.player_name || "اللاعب";
+                            statusText = `الفائز في الجولة: ${winnerName} 🎉`;
+                        }
+                    } else {
+                        if (xoOfflineWinner === 'draw') statusText = "تعادل الجولة! 🤝";
+                        else statusText = `الفائز في الجولة: ${xoOfflineWinner} 🎉`;
+                    }
+
+                    let btnHTML = "";
+                    if (isOnline) {
+                        const {room} = window.roomData;
+                        const isHost = room.host_id == currentUser.user_id;
+                        btnHTML = isHost ? `<button onclick="startNextXORound()" style="background:var(--success); width:auto; padding:8px 25px;">جولة جديدة 🔄</button>` : `<p style="color:#aaa;">بانتظار المضيف لبدء الجولة التالية...</p>`;
+                    } else {
+                        btnHTML = `<button onclick="startXOOfflineGame()" style="background:var(--success); width:auto; padding:8px 25px;">جولة جديدة 🔄</button>`;
+                    }
+
+                    roundEndEl.innerHTML = `
+                        <div style="text-align:center; margin-top:20px; background:rgba(0,0,0,0.4); padding:15px; border-radius:20px; border:1px solid rgba(255,255,255,0.1);">
+                            <h3 style="color:var(--accent); margin-top:0;">${statusText}</h3>
+                            ${btnHTML}
+                        </div>
+                    `;
+                    roundEndEl.style.display = 'block';
+                } else {
+                    roundEndEl.innerHTML = "";
+                    roundEndEl.style.display = 'none';
+                }
+            }
         }
 
         function checkOfflineWin(board) {
@@ -3938,10 +4076,44 @@ HTML_TEMPLATE = """
             if(!window.roomData) return;
             const {room, players} = window.roomData;
             const gd = room.game_data;
-            const mySymbol = gd.symbols[currentUser.user_id] || "";
-            const isMyTurn = gd.ordered_ids[gd.turn_index] == currentUser.user_id;
-            const board = gd.board || ["", "", "", "", "", "", "", "", ""];
-            const currentTurnPlayer = players.find(p => p.user_id == gd.ordered_ids[gd.turn_index])?.player_name || "لاعب آخر";
+
+            let wrapper = document.getElementById('xo-game-wrapper');
+            if (!wrapper) {
+                document.getElementById('main-ui').innerHTML = `
+                    <div id="xo-game-wrapper" class="card" style="padding:15px; max-width:100%; width:98vw; min-height:80vh; display:flex; flex-direction:column; justify-content: space-between;">
+                        <div>
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; width: 100%;">
+                                <div>
+                                    <span id="xo-score-x-badge" style="background:#3498db; padding:4px 10px; border-radius:10px; font-size:12px;">نقاط X: <span id="xo-score-x">0</span></span>
+                                    <span id="xo-score-o-badge" style="background:#e74c3c; padding:4px 10px; border-radius:10px; font-size:12px; margin-right:5px;">نقاط O: <span id="xo-score-o">0</span></span>
+                                </div>
+                                <div style="font-size: 14px; color:#aaa;">رمزك: <span id="xo-my-symbol" style="font-weight:bold;"></span></div>
+                                <button onclick="copyToClipboard('${room.room_code}')" style="background:rgba(255,255,255,0.1); padding:4px 10px; border-radius:10px; font-size:12px; border:1px solid #555; width:auto; margin:0;">📋 ${room.room_code}</button>
+                            </div>
+                            <div id="xo-turn-info" style="color:var(--accent); font-weight:bold; font-size: 18px; margin-bottom: 20px; text-align: center;"></div>
+                            
+                            <div class="xo-board">
+                                <div id="xo-cell-0" class="xo-cell"></div>
+                                <div id="xo-cell-1" class="xo-cell"></div>
+                                <div id="xo-cell-2" class="xo-cell"></div>
+                                <div id="xo-cell-3" class="xo-cell"></div>
+                                <div id="xo-cell-4" class="xo-cell"></div>
+                                <div id="xo-cell-5" class="xo-cell"></div>
+                                <div id="xo-cell-6" class="xo-cell"></div>
+                                <div id="xo-cell-7" class="xo-cell"></div>
+                                <div id="xo-cell-8" class="xo-cell"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <div id="xo-round-end-container"></div>
+                            <button onclick="leaveRoom()" style="background:var(--error); margin-top:20px; font-size:14px; width:auto; padding:6px 20px; align-self:center;">انسحاب وخروج</button>
+                        </div>
+                    </div>`;
+            }
+
+            updateXOGameDOM(gd, players, true);
+            return;
+            // Logic below bypassed
 
             let headerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; width: 100%;">
