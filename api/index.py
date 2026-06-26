@@ -7916,34 +7916,66 @@ HTML_TEMPLATE = """
                     </div>
 
                     ${isHost ? `
-                        <button id="start-uno-btn" onclick="startUnoGame()" style="background:var(--success); margin-bottom:15px;" ${players.length < 2 ? 'disabled' : ''}>
-                            ${players.length < 2 ? `بانتظار انضمام لاعبين (2 على الأقل)` : 'ابدأ اللعب الآن! 🚀'}
+                        <button id="start-uno-btn" onclick="startUnoGame()" style="background:var(--success); margin-bottom:15px; cursor: pointer; touch-action: manipulation; font-weight: bold; font-size: 18px; padding: 16px; border-radius: 18px;">
+                            🚀 ابدأ اللعب الآن!
                         </button>
                     ` : `
-                        <div style="background:rgba(241,196,15,0.1); color:#f1c40f; padding:10px; border-radius:10px; font-size:14px; margin-bottom:15px;">
+                        <div style="background:rgba(241,196,15,0.1); color:#f1c40f; padding:12px; border-radius:12px; font-size:15px; margin-bottom:15px; font-weight: bold; text-align: center;">
                             ⏳ بانتظار المضيف لبدء اللعبة...
                         </div>
                     `}
-                    <button onclick="leaveRoom()" style="background:var(--error); width:100%;">🚪 مغادرة الغرفة</button>
+                    <button onclick="leaveRoom()" style="background:var(--error); width:100%; cursor: pointer; touch-action: manipulation; font-weight: bold; border-radius: 18px; padding: 14px;">🚪 مغادرة الغرفة</button>
                 </div>`;
         }
 
         async function startUnoGame() {
+            const roomCode = currentRoom || (window.roomData && window.roomData.room && window.roomData.room.room_code);
+            const userId = currentUser && currentUser.user_id;
+            const { players } = window.roomData || { players: [] };
+            
+            if (players.length < 2) {
+                alert("يجب انضمام لاعبين اثنين على الأقل لبدء اللعب 👥. شارك رمز الغرفة مع أصدقائك!");
+                return;
+            }
+            
+            if (!roomCode || !userId) {
+                alert("تعذر تحديد بيانات الغرفة أو المستخدم. يرجى محاولة إعادة الدخول.");
+                return;
+            }
+            
+            const startBtn = document.getElementById('start-uno-btn');
+            if (startBtn) {
+                startBtn.disabled = true;
+                startBtn.innerHTML = "🌀 جاري بدء اللعبة وتوزيع الكروت...";
+            }
+            
             try {
                 const res = await fetch('/api/uno/start', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        room_code: currentRoom,
-                        user_id: currentUser.user_id
+                        room_code: roomCode,
+                        user_id: userId
                     })
                 });
                 const d = await res.json();
-                if(!d.success) alert(d.msg || "حدث خطأ");
-                else {
+                if(!d.success) {
+                    alert(d.msg || "حدث خطأ");
+                    if (startBtn) {
+                        startBtn.disabled = false;
+                        startBtn.innerHTML = "🚀 ابدأ اللعب الآن!";
+                    }
+                } else {
                     await updateRoomState();
                 }
-            } catch(e) { console.error(e); }
+            } catch(e) { 
+                console.error(e); 
+                alert("حدث خطأ في الاتصال بالسيرفر. يرجى المحاولة مرة أخرى.");
+                if (startBtn) {
+                    startBtn.disabled = false;
+                    startBtn.innerHTML = "🚀 ابدأ اللعب الآن!";
+                }
+            }
         }
 
         function checkUnoValidityJS(card, topCard, currentColor) {
