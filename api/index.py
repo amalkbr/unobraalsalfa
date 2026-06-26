@@ -7875,6 +7875,16 @@ HTML_TEMPLATE = """
 
         async function submitCreateUno(maxPlayers) {
             if (!currentUser) return alert("سجل دخولك أولاً");
+            
+            const mainUi = document.getElementById('main-ui');
+            const originalContent = mainUi.innerHTML;
+            mainUi.innerHTML = `
+                <div class="card" style="border-color: #ff7675;">
+                    <div class="loading-spinner" style="margin: 20px auto; border-top-color: #ff7675;"></div>
+                    <h2 style="color:#ff7675">جاري إنشاء الغرفة...</h2>
+                    <p style="color:#aaa;">لحظات ويجهز رمز اللعب 🚀</p>
+                </div>`;
+            
             try {
                 const res = await fetch('/api/uno/create', {
                     method: 'POST',
@@ -7890,8 +7900,13 @@ HTML_TEMPLATE = """
                     enterRoom(d.room_code);
                 } else {
                     alert(d.msg || "حدث خطأ");
+                    mainUi.innerHTML = originalContent;
                 }
-            } catch(e) { console.error(e); }
+            } catch(e) { 
+                console.error(e); 
+                alert("حدث خطأ في الاتصال بالسيرفر. يرجى المحاولة مرة أخرى.");
+                mainUi.innerHTML = originalContent;
+            }
         }
 
         function showUnoJoinInput() {
@@ -7900,16 +7915,25 @@ HTML_TEMPLATE = """
                     <h2 style="color:#ff7675">انضمام لغرفة أونو</h2>
                     <p style="margin-bottom:20px;">أدخل رمز الغرفة المكون من 4 أحرف:</p>
                     <input id="uno_join_code" placeholder="مثلاً: ABCD" style="text-transform:uppercase; text-align:center; font-size:24px; margin-bottom:20px; width:100%; letter-spacing:5px;">
-                    <button id="uno-join-btn-final" onclick="joinUnoRoom()" style="background:var(--success); font-weight:bold;">انضمام الآن 🚪</button>
-                    <button onclick="showUnoMenu()" style="background:#636e72; margin-top:10px;">رجوع</button>
+                    <button id="uno-join-btn-final" onclick="joinUnoRoom()" style="background:var(--success); font-weight:bold; cursor: pointer; touch-action: manipulation; border-radius: 18px; padding: 14px; width:100%; border:none; color:white;">انضمام الآن 🚪</button>
+                    <button onclick="showUnoMenu()" style="background:#636e72; margin-top:10px; cursor: pointer; touch-action: manipulation; border-radius: 18px; padding: 12px; width:100%; border:none; color:white; font-weight:bold;">رجوع</button>
                 </div>`;
             setTimeout(() => document.getElementById('uno_join_code').focus(), 100);
         }
 
         async function joinUnoRoom() {
+            if (!currentUser) return alert("سجل دخولك أولاً");
+            
             const codeInput = document.getElementById('uno_join_code');
             const code = codeInput.value.trim().toUpperCase();
             if(!code) return alert("الرجاء إدخال رمز الغرفة");
+            
+            const joinBtn = document.getElementById('uno-join-btn-final');
+            const originalText = joinBtn ? joinBtn.innerHTML : "انضمام الآن 🚪";
+            if (joinBtn) {
+                joinBtn.disabled = true;
+                joinBtn.innerHTML = "🌀 جاري الانضمام...";
+            }
             
             try {
                 const res = await fetch('/api/online/join', {
@@ -7926,8 +7950,19 @@ HTML_TEMPLATE = """
                     enterRoom(code);
                 } else {
                     alert(d.msg || "تعذر الانضمام");
+                    if (joinBtn) {
+                        joinBtn.disabled = false;
+                        joinBtn.innerHTML = originalText;
+                    }
                 }
-            } catch(e) { console.error(e); }
+            } catch(e) { 
+                console.error(e); 
+                alert("حدث خطأ في الاتصال بالسيرفر. يرجى المحاولة مرة أخرى.");
+                if (joinBtn) {
+                    joinBtn.disabled = false;
+                    joinBtn.innerHTML = originalText;
+                }
+            }
         }
 
         function renderUnoLobby() {
