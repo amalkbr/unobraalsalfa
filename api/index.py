@@ -2817,6 +2817,48 @@ HTML_TEMPLATE = """
             to { opacity: 1; transform: scale(1); }
         }
 
+        /* تدوير شاشة الدومينو تلقائياً لتلعب بالعرض في الهواتف */
+        @media (max-width: 767px) and (orientation: portrait) {
+            .domino-game-card {
+                position: fixed !important;
+                top: 50% !important;
+                left: 50% !important;
+                width: 95vh !important;
+                height: 95vw !important;
+                max-width: none !important;
+                transform: translate(-50%, -50%) rotate(90deg) !important;
+                transform-origin: center !important;
+                z-index: 9999 !important;
+                border-radius: 15px !important;
+                box-shadow: 0 0 30px rgba(0,0,0,0.8) !important;
+                overflow: hidden !important;
+                margin: 0 !important;
+            }
+            #domino-board {
+                min-height: 120px !important;
+                padding: 10px !important;
+            }
+            .domino-tile {
+                width: 32px !important;
+                height: 64px !important;
+            }
+            #domino-board .domino-tile {
+                width: 64px !important;
+                height: 32px !important;
+            }
+            #domino-board .domino-tile.double {
+                width: 32px !important;
+                height: 64px !important;
+            }
+            .domino-tile.double {
+                width: 32px !important;
+                height: 64px !important;
+            }
+            .domino-half {
+                font-size: 14px !important;
+            }
+        }
+
         /* Responsive styling for larger screen devices */
         @media (min-width: 600px) {
             .container { max-width: 100%; width: 100%; padding: 0; }
@@ -3242,6 +3284,62 @@ HTML_TEMPLATE = """
             }
         }
 
+        function renderSnakeBoardHTML(board) {
+            let html = "";
+            let itemsPerRow = 5; // عدد الأحجار في كل صف (5 أحجار ممتاز لعرض شاشة الهاتف بالعرض)
+            let rows = [];
+            
+            // تقسيم الأحجار إلى صفوف تحتوي كل منها على itemsPerRow أحجار
+            for (let i = 0; i < board.length; i += itemsPerRow) {
+                rows.push(board.slice(i, i + itemsPerRow));
+            }
+            
+            // رسم كل صف بشكل أفعواني متصل
+            html = rows.map((rowTiles, rIdx) => {
+                // الصفوف الزوجية (0، 2، 4) تتجه لليمين، والفردية (1، 3) تتجه لليسار بـ row-reverse
+                let isReverse = rIdx % 2 !== 0;
+                let flexDir = isReverse ? 'row-reverse' : 'row';
+                
+                let tilesHTML = rowTiles.map((tile, tIdx) => {
+                    let isDouble = tile[0] === tile[1];
+                    let tileClass = "domino-tile";
+                    let extraStyle = "";
+                    
+                    if (isDouble) {
+                        tileClass += " double";
+                    }
+                    
+                    // التحقق من حجر الربط (آخر حجر في الصف إذا لم يكن الحجر الأخير في اللعبة كلها)
+                    let isLastInRow = tIdx === rowTiles.length - 1;
+                    let isLastInGame = (rIdx * itemsPerRow + tIdx) === board.length - 1;
+                    
+                    if (isLastInRow && !isLastInGame) {
+                        // حجر ربط! يجب أن يقف ليربط بالصف السفلي
+                        tileClass += " double"; // نجعله واقفاً (عرضه 44 وارتفاعه 84)
+                        
+                        // إضافة هوامش سلبية لربطه بالصف الذي يليه
+                        extraStyle = "margin-top: 15px; margin-bottom: -15px; z-index: 2;";
+                    }
+                    
+                    return `
+                        <div class="${tileClass}" style="margin: 0 4px; ${extraStyle}">
+                            <div class="domino-half">${tile[0]}</div>
+                            <div class="domino-line"></div>
+                            <div class="domino-half">${tile[1]}</div>
+                        </div>
+                    `;
+                }).join('');
+                
+                return `
+                    <div class="domino-board-row" style="display:flex; flex-direction:${flexDir}; align-items:center; justify-content:center; width:100%; min-height:90px; padding: 0 20px;">
+                        ${tilesHTML}
+                    </div>
+                `;
+            }).join('');
+            
+            return html;
+        }
+
         function renderDominoGame() {
             if(!window.roomData) return;
             const {room, players} = window.roomData;
@@ -3251,78 +3349,102 @@ HTML_TEMPLATE = """
             const isMyTurn = gd.ordered_ids[gd.turn_index] == currentUser.user_id;
             const board = gd.board || [];
 
-            let html = `
-                <div class="card domino-game-card" style="padding:15px; max-width:100%; width:98vw; min-height:80vh; display:flex; flex-direction:column;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-                        <div>
-                            <span style="background:#3498db; padding:4px 10px; border-radius:10px; font-size:12px;">فريق A: ${gd.scores.A}</span>
-                            <span style="background:#e74c3c; padding:4px 10px; border-radius:10px; font-size:12px; margin-right:5px;">فريق B: ${gd.scores.B}</span>
-                        </div>
-                        <div style="color:var(--accent); font-weight:bold;">${isMyTurn ? "🔴 دورك الآن!" : `دور: ${players.find(p=>p.user_id == gd.ordered_ids[gd.turn_index])?.player_name}`}</div>
-                        <button onclick="copyToClipboard('${room.room_code}')" style="background:rgba(255,255,255,0.1); padding:4px 10px; border-radius:10px; font-size:12px; border:1px solid #555; width:auto; margin:0;">📋 ${room.room_code}</button>
-                    </div>
-
-                    <!-- طاولة اللعب -->
-                    <div id="domino-board" style="direction:ltr; flex-grow:1; background:rgba(0,0,0,0.3); border-radius:20px; position:relative; overflow-x:auto; overflow-y:hidden; display:flex; align-items:center; justify-content:flex-start; padding:20px; border:2px dashed rgba(255,255,255,0.1); margin-bottom:20px; min-height:160px; gap:8px; width:100%; white-space:nowrap; box-sizing:border-box;">
-                        ${gd.phase === 'round_end' ? `
-                            <div style="text-align:center; width:100%;">
-                                <h2 style="color:var(--accent)">انتهت الجولة!</h2>
-                                <p>النقاط الحالية: A:${gd.scores.A} | B:${gd.scores.B}</p>
-                                ${room.host_id == currentUser.user_id ?
-                                    `<button onclick="startNextDominoRound()" style="background:var(--success)">جولة جديدة 🔄</button>` :
-                                    `<p style="color:#aaa;">بانتظار المضيف لبدء الجولة التالية...</p>`
-                                }
+            // التحقق من وجود هيكل اللعبة في الصفحة لتفادي الوميض
+            let gameCard = document.querySelector('.domino-game-card');
+            if (!gameCard) {
+                // رسم الهيكل العام لأول مرة فقط
+                let html = `
+                    <div class="card domino-game-card" style="padding:15px; max-width:100%; width:98vw; min-height:80vh; display:flex; flex-direction:column;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                            <div>
+                                <span id="domino-score-a" style="background:#3498db; padding:4px 10px; border-radius:10px; font-size:12px;">فريق A: ${gd.scores.A}</span>
+                                <span id="domino-score-b" style="background:#e74c3c; padding:4px 10px; border-radius:10px; font-size:12px; margin-right:5px;">فريق B: ${gd.scores.B}</span>
                             </div>
-                        ` : (board.length === 0 ? '<div style="color:#555; font-size:20px; width:100%; text-align:center;">الطاولة خالية.. ابدأ بوضع أول حجر</div>' :
-                          board.map((tile, idx) => `
-                            <div class="domino-tile ${tile[0]===tile[1]?'double':''}" style="margin:0 2px;">
+                            <div id="domino-turn-info" style="color:var(--accent); font-weight:bold;"></div>
+                            <button onclick="copyToClipboard('${room.room_code}')" style="background:rgba(255,255,255,0.1); padding:4px 10px; border-radius:10px; font-size:12px; border:1px solid #555; width:auto; margin:0;">📋 ${room.room_code}</button>
+                        </div>
+
+                        <!-- طاولة اللعب الأفعوانية القابلة للتمرير عمودياً -->
+                        <div id="domino-board" style="direction:ltr; flex-grow:1; background:rgba(0,0,0,0.3); border-radius:20px; position:relative; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:20px; border:2px dashed rgba(255,255,255,0.1); margin-bottom:20px; min-height:220px; gap:15px; width:100%; box-sizing:border-box;">
+                        </div>
+
+                        <!-- يد اللاعب -->
+                        <div id="domino-player-hand-container" style="background:rgba(255,255,255,0.05); padding:15px; border-radius:20px;">
+                        </div>
+                    </div>`;
+                document.getElementById('main-ui').innerHTML = html;
+            }
+
+            // تحديث العناصر المتغيرة ديناميكياً بدون وميض
+            const scoreAEl = document.getElementById('domino-score-a');
+            const scoreBEl = document.getElementById('domino-score-b');
+            if (scoreAEl) scoreAEl.innerText = `فريق A: ${gd.scores.A}`;
+            if (scoreBEl) scoreBEl.innerText = `فريق B: ${gd.scores.B}`;
+
+            const turnInfoEl = document.getElementById('domino-turn-info');
+            if (turnInfoEl) {
+                turnInfoEl.innerHTML = isMyTurn ? "🔴 دورك الآن!" : `دور: ${players.find(p=>p.user_id == gd.ordered_ids[gd.turn_index])?.player_name}`;
+            }
+
+            const boardEl = document.getElementById('domino-board');
+            if (boardEl) {
+                if (gd.phase === 'round_end') {
+                    boardEl.innerHTML = `
+                        <div style="text-align:center; width:100%; margin: auto 0;">
+                            <h2 style="color:var(--accent)">انتهت الجولة!</h2>
+                            <p>النقاط الحالية: A:${gd.scores.A} | B:${gd.scores.B}</p>
+                            ${room.host_id == currentUser.user_id ?
+                                `<button onclick="startNextDominoRound()" style="background:var(--success)">جولة جديدة 🔄</button>` :
+                                `<p style="color:#aaa;">بانتظار المضيف لبدء الجولة التالية...</p>`
+                            }
+                        </div>
+                    `;
+                } else if (board.length === 0) {
+                    boardEl.innerHTML = '<div style="color:#555; font-size:20px; width:100%; text-align:center; margin: auto 0;">الطاولة خالية.. ابدأ بوضع أول حجر</div>';
+                } else {
+                    boardEl.innerHTML = renderSnakeBoardHTML(board);
+                }
+            }
+
+            const handContainerEl = document.getElementById('domino-player-hand-container');
+            if (handContainerEl) {
+                let handHTML = `
+                    <div style="margin-bottom:10px; font-size:14px; display:flex; justify-content:space-between;">
+                        <span>أحجارك (${myHand.length})</span>
+                        <button onclick="drawDominoTile()" style="width:auto; padding:5px 15px; font-size:12px; background:var(--primary); display:${isMyTurn?'block':'none'}">➕ سحب حجر</button>
+                    </div>
+                    <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:center; padding:10px 0;">
+                        ${myHand.map((tile, idx) => {
+                            let isPlayable = false;
+                            if (isMyTurn) {
+                                if (board.length === 0) {
+                                    isPlayable = true;
+                                } else {
+                                    const leftVal = board[0][0];
+                                    const rightVal = board[board.length - 1][1];
+                                    if (tile[0] === leftVal || tile[1] === leftVal || tile[0] === rightVal || tile[1] === rightVal) {
+                                        isPlayable = true;
+                                    }
+                                }
+                            }
+                            return `
+                            <div class="domino-tile ${isPlayable ? 'playable' : ''}" onclick="${isPlayable ? `selectDominoTile(${JSON.stringify(tile)})` : ''}" style="${!isPlayable && isMyTurn ? 'opacity:0.6; cursor:not-allowed;' : ''}">
                                 <div class="domino-half">${tile[0]}</div>
                                 <div class="domino-line"></div>
                                 <div class="domino-half">${tile[1]}</div>
                             </div>
-                          `).join('')
-                        )}
+                            `;
+                        }).join('')}
                     </div>
+                `;
+                handContainerEl.innerHTML = handHTML;
+            }
 
-                    <!-- يد اللاعب -->
-                    <div style="background:rgba(255,255,255,0.05); padding:15px; border-radius:20px;">
-                        <div style="margin-bottom:10px; font-size:14px; display:flex; justify-content:space-between;">
-                            <span>أحجارك (${myHand.length})</span>
-                            <button onclick="drawDominoTile()" style="width:auto; padding:5px 15px; font-size:12px; background:var(--primary); display:${isMyTurn?'block':'none'}">➕ سحب حجر</button>
-                        </div>
-                        <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:center; padding:10px 0;">
-                            ${myHand.map((tile, idx) => {
-                                let isPlayable = false;
-                                if (isMyTurn) {
-                                    if (board.length === 0) {
-                                        isPlayable = true;
-                                    } else {
-                                        const leftVal = board[0][0];
-                                        const rightVal = board[board.length - 1][1];
-                                        if (tile[0] === leftVal || tile[1] === leftVal || tile[0] === rightVal || tile[1] === rightVal) {
-                                            isPlayable = true;
-                                        }
-                                    }
-                                }
-                                return `
-                                <div class="domino-tile ${isPlayable ? 'playable' : ''}" onclick="${isPlayable ? `selectDominoTile(${JSON.stringify(tile)})` : ''}" style="${!isPlayable && isMyTurn ? 'opacity:0.6; cursor:not-allowed;' : ''}">
-                                    <div class="domino-half">${tile[0]}</div>
-                                    <div class="domino-line"></div>
-                                    <div class="domino-half">${tile[1]}</div>
-                                </div>
-                                `;
-                            }).join('')}
-                        </div>
-                    </div>
-                </div>`;
-
-            document.getElementById('main-ui').innerHTML = html;
-
-            // تمرير تلقائي لنهاية البورد بعد الرسم لكي يرى اللاعب أحدث حجر تم وضعه
+            // تمرير تلقائي للأسفل لمتابعة أحدث حجر في الأفعى
             setTimeout(() => {
                 const boardDiv = document.getElementById('domino-board');
                 if (boardDiv) {
-                    boardDiv.scrollLeft = boardDiv.scrollWidth;
+                    boardDiv.scrollTop = boardDiv.scrollHeight;
                 }
             }, 100);
         }
