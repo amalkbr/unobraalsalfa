@@ -102,7 +102,7 @@ async def start_uno_game_endpoint(data: dict):
     conn = get_db_conn()
     if not conn: return {"success": False, "msg": "Database connection error"}
     try:
-        room_code = data['room_code'].upper()
+        room_code = data['room_code'].strip().upper()
         user_id = int(data['user_id'])
 
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -110,7 +110,7 @@ async def start_uno_game_endpoint(data: dict):
             room = cur.fetchone()
             if not room or room['game_type'] != 'uno':
                 return {"success": False, "msg": "الغرفة غير موجودة"}
-            if room['host_id'] != user_id:
+            if int(room['host_id']) != int(user_id):
                 return {"success": False, "msg": "المضيف فقط يمكنه بدء اللعبة"}
 
             cur.execute("SELECT user_id, player_name FROM room_players WHERE room_code = %s ORDER BY join_order", (room_code,))

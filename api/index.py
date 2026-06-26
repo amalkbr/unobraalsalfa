@@ -2874,6 +2874,15 @@ HTML_TEMPLATE = """
         }
 
         /* XO Styles */
+        .xo-my-turn-active {
+            animation: xo-turn-glow-pulse 1.8s infinite alternate;
+            border-color: #00ff88 !important;
+        }
+        @keyframes xo-turn-glow-pulse {
+            from { box-shadow: 0 0 12px rgba(0, 255, 136, 0.25), inset 0 0 6px rgba(0, 255, 136, 0.15); }
+            to { box-shadow: 0 0 28px rgba(0, 255, 136, 0.7), inset 0 0 14px rgba(0, 255, 136, 0.45); }
+        }
+
         .xo-board {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
@@ -2942,6 +2951,7 @@ HTML_TEMPLATE = """
             border: 2px solid rgba(255,255,255,0.25);
             user-select: none;
             flex-shrink: 0;
+            touch-action: manipulation;
         }
         .uno-card-element:hover {
             transform: translateY(-8px);
@@ -3918,6 +3928,37 @@ HTML_TEMPLATE = """
         }
 
         function updateXOGameDOM(gd, players, isOnline) {
+            // تفعيل الإنارة المتوهجة والاهتزاز لتنبيه اللاعبين عند بدء دورهم
+            const wrapper = document.getElementById('xo-game-wrapper');
+            if (wrapper) {
+                if (gd.phase === 'playing') {
+                    if (isOnline) {
+                        const isMyTurn = gd.ordered_ids[gd.turn_index] == currentUser.user_id;
+                        if (isMyTurn) {
+                            wrapper.classList.add('xo-my-turn-active');
+                            if (!window.wasMyXOTurn) {
+                                if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+                                window.wasMyXOTurn = true;
+                            }
+                        } else {
+                            wrapper.classList.remove('xo-my-turn-active');
+                            window.wasMyXOTurn = false;
+                        }
+                    } else {
+                        // وضع أوفلاين: تفعيل التوهج وتنبيه اللاعبين بالاهتزاز عند تبادل الأدوار
+                        wrapper.classList.add('xo-my-turn-active');
+                        if (window.wasMyXOOfflineTurn !== xoOfflineTurn) {
+                            if (navigator.vibrate) navigator.vibrate(200);
+                            window.wasMyXOOfflineTurn = xoOfflineTurn;
+                        }
+                    }
+                } else {
+                    wrapper.classList.remove('xo-my-turn-active');
+                    window.wasMyXOTurn = false;
+                    window.wasMyXOOfflineTurn = "";
+                }
+            }
+
             const scoreXEl = document.getElementById('xo-score-x');
             const scoreOEl = document.getElementById('xo-score-o');
             if (scoreXEl) scoreXEl.innerText = gd.scores.X;
