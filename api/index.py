@@ -3424,6 +3424,8 @@ HTML_TEMPLATE = """
 
                     <button onclick="showXOMenu()" style="margin-top: 15px; background: linear-gradient(135deg, #00d2ff, #9d50bb); border: 1px solid #444;">❌⭕ اكس او (أونلاين)</button>
 
+                    <button onclick="showUnoMenu()" style="margin-top: 15px; background: linear-gradient(135deg, #ff7675, #d63031); border: 1px solid #444;">🃏 أونو (أونلاين)</button>
+
                     <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.08);">
                         <p style="font-size: 20px; color:#fff;">صُممت لكم بايدي ابو الاكبر   ❤️</p>
                     </div>
@@ -3641,16 +3643,152 @@ HTML_TEMPLATE = """
                         🔔
                         <div class="bell-badge"></div>
                     </button>
-                    <h1>❌⭕ اكس او أونلاين</h1>
-                    <p style="color:#aaa; margin-bottom:20px;">العب مع صديقك مواجهة ثنائية حماسية!</p>
+                    <h1>❌⭕ لعبة اكس او</h1>
+                    <p style="color:#aaa; margin-bottom:20px;">اختر طريقة اللعب المفضلة لديك:</p>
 
-                    <button onclick="createXORoom()" style="background:var(--success); margin-bottom:15px;">✨ إنشاء طاولة جديدة</button>
-                    <button onclick="showXOJoinInput()" style="background:var(--primary); margin-bottom:15px;">🚪 انضمام لطاولة</button>
+                    <button onclick="showXOOnlineMenu()" style="background:var(--success); margin-bottom:15px; font-weight:bold;">🌐 لعب أونلاين (مع صديق)</button>
+                    <button onclick="startXOOfflineGame()" style="background:linear-gradient(135deg, #e056fd, #be2edd); margin-bottom:15px; font-weight:bold;">👥 لعب أوفلاين (مع شخص بجانبك)</button>
 
                     <button style="background:#636e72; margin-top:20px;" onclick="showGameSelection()">رجوع</button>
                 </div>`;
             checkAnnouncements();
         }
+
+        function showXOOnlineMenu() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card">
+                    <button id="announcement-bell" class="bell-btn" onclick="showAnnouncements()">
+                        🔔
+                        <div class="bell-badge"></div>
+                    </button>
+                    <h1>❌⭕ اكس او أونلاين</h1>
+                    <p style="color:#aaa; margin-bottom:20px;">العب مع صديقك مواجهة ثنائية حماسية أونلاين!</p>
+
+                    <button onclick="createXORoom()" style="background:var(--success); margin-bottom:15px;">✨ إنشاء غرفة جديدة</button>
+                    <button onclick="showXOJoinInput()" style="background:var(--primary); margin-bottom:15px;">🚪 انضمام لغرفة</button>
+
+                    <button style="background:#636e72; margin-top:20px;" onclick="showXOMenu()">رجوع</button>
+                </div>`;
+            checkAnnouncements();
+        }
+
+        /* XO Offline Mode Functions */
+        let xoOfflineBoard = ["", "", "", "", "", "", "", "", ""];
+        let xoOfflineTurn = "X";
+        let xoOfflineScores = {X: 0, O: 0};
+        let xoOfflinePhase = "playing";
+        let xoOfflineWinner = null;
+
+        function startXOOfflineGame() {
+            xoOfflineBoard = ["", "", "", "", "", "", "", "", ""];
+            xoOfflineTurn = "X";
+            xoOfflinePhase = "playing";
+            xoOfflineWinner = null;
+            renderXOOfflineGame();
+        }
+
+        function renderXOOfflineGame() {
+            let headerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; width: 100%;">
+                    <div>
+                        <span style="background:#3498db; padding:4px 10px; border-radius:10px; font-size:12px;">نقاط X: ${xoOfflineScores.X}</span>
+                        <span style="background:#e74c3c; padding:4px 10px; border-radius:10px; font-size:12px; margin-right:5px;">نقاط O: ${xoOfflineScores.O}</span>
+                    </div>
+                    <div style="font-size: 14px; color:#aaa; font-weight:bold;">🎮 لعب أوفلاين (محلي)</div>
+                </div>
+            `;
+
+            let turnInfoHTML = `
+                <div style="color:var(--accent); font-weight:bold; font-size: 18px; margin-bottom: 20px; text-align: center;">
+                    ${xoOfflinePhase === 'playing' ? `دور اللاعب: <span style="color:${xoOfflineTurn === 'X' ? '#00d2ff' : '#ff2d55'}">${xoOfflineTurn}</span>` : 'انتهت الجولة!'}
+                </div>
+            `;
+
+            let boardHTML = `
+                <div class="xo-board">
+                    ${xoOfflineBoard.map((cell, idx) => {
+                        let cellClass = "xo-cell";
+                        if (cell === 'X') cellClass += " x-symbol";
+                        if (cell === 'O') cellClass += " o-symbol";
+                        
+                        let clickAction = "";
+                        if (cell === "" && xoOfflinePhase === 'playing') {
+                            clickAction = `onclick="playXOOfflineMove(${idx})"`;
+                            cellClass += " playable-cell";
+                        } else {
+                            cellClass += " disabled";
+                        }
+
+                        return `<div class="${cellClass}" ${clickAction}>${cell}</div>`;
+                    }).join('')}
+                </div>
+            `;
+
+            let roundEndHTML = "";
+            if (xoOfflinePhase === 'ended') {
+                let statusText = "";
+                if (xoOfflineWinner === 'draw') {
+                    statusText = "تعادل الجولة! 🤝";
+                } else {
+                    statusText = `الفائز في الجولة: ${xoOfflineWinner} 🎉`;
+                }
+
+                roundEndHTML = `
+                    <div style="text-align:center; margin-top:20px; background:rgba(0,0,0,0.4); padding:15px; border-radius:20px; border:1px solid rgba(255,255,255,0.1);">
+                        <h3 style="color:var(--accent); margin-top:0;">${statusText}</h3>
+                        <button onclick="startXOOfflineGame()" style="background:var(--success); width:auto; padding:8px 25px;">جولة جديدة 🔄</button>
+                    </div>
+                `;
+            }
+
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card" style="padding:15px; max-width:100%; width:98vw; min-height:80vh; display:flex; flex-direction:column; justify-content: space-between;">
+                    <div>
+                        ${headerHTML}
+                        ${turnInfoHTML}
+                        ${boardHTML}
+                    </div>
+                    <div>
+                        ${roundEndHTML}
+                        <button onclick="showXOMenu()" style="background:#636e72; margin-top:20px; font-size:14px; width:auto; padding:6px 20px; align-self:center;">خروج للقائمة</button>
+                    </div>
+                </div>`;
+        }
+
+        function checkOfflineWin(board) {
+            const winCombinations = [
+                [0, 1, 2], [3, 4, 5], [6, 7, 8],
+                [0, 3, 6], [1, 4, 7], [2, 5, 8],
+                [0, 4, 8], [2, 4, 6]
+            ];
+            for (let combo of winCombinations) {
+                if (board[combo[0]] !== "" && board[combo[0]] === board[combo[1]] && board[combo[0]] === board[combo[2]]) {
+                    return board[combo[0]];
+                }
+            }
+            return null;
+        }
+
+        function playXOOfflineMove(idx) {
+            if (xoOfflineBoard[idx] !== "" || xoOfflinePhase !== 'playing') return;
+            
+            xoOfflineBoard[idx] = xoOfflineTurn;
+            
+            const winner = checkOfflineWin(xoOfflineBoard);
+            if (winner) {
+                xoOfflinePhase = "ended";
+                xoOfflineWinner = winner;
+                xoOfflineScores[winner] += 1;
+            } else if (!xoOfflineBoard.includes("")) {
+                xoOfflinePhase = "ended";
+                xoOfflineWinner = "draw";
+            } else {
+                xoOfflineTurn = xoOfflineTurn === "X" ? "O" : "X";
+            }
+            
+            renderXOOfflineGame();
+        }
+
 
         async function createXORoom() {
             if (!currentUser) return alert("سجل دخولك أولاً");
@@ -3698,7 +3836,7 @@ HTML_TEMPLATE = """
                     <p style="margin-bottom:15px; color:#aaa;">أدخل رمز الطاولة المكون من 4 أحرف</p>
                     <input id="xo_join_code" placeholder="مثلاً: ABCD" style="text-transform:uppercase; text-align:center; font-size:24px; margin-bottom:20px; width:100%; letter-spacing:5px;">
                     <button id="xo-join-btn-final" onclick="joinXORoom()" style="background:var(--success); font-weight:bold;">انضمام الآن 🚪</button>
-                    <button onclick="showXOMenu()" style="background:#636e72; margin-top:10px;">رجوع</button>
+                    <button onclick="showXOOnlineMenu()" style="background:#636e72; margin-top:10px;">رجوع</button>
                 </div>`;
 
             setTimeout(() => {
