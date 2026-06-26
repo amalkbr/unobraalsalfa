@@ -7464,10 +7464,12 @@ HTML_TEMPLATE = """
                     <h2>إعداد غرفة الأونو</h2>
                     <p style="margin-bottom:20px;">اختر الحد الأقصى لعدد اللاعبين:</p>
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:20px;">
-                        <button onclick="submitCreateUno(2)" style="background:var(--success); font-size:18px;">👥 2 لاعبين</button>
-                        <button onclick="submitCreateUno(4)" style="background:var(--primary); font-size:18px;">👨‍👩‍👧‍👦 4 لاعبين</button>
+                        <button onclick="submitCreateUno(2)" style="background:var(--success); font-size:18px; padding: 15px 10px; cursor: pointer; touch-action: manipulation;">👥 2 لاعبين</button>
+                        <button onclick="submitCreateUno(4)" style="background:var(--primary); font-size:18px; padding: 15px 10px; cursor: pointer; touch-action: manipulation;">👨‍👩‍👧‍👦 4 لاعبين</button>
+                        <button onclick="submitCreateUno(6)" style="background:#0984e3; font-size:18px; padding: 15px 10px; cursor: pointer; touch-action: manipulation;">👥 6 لاعبين</button>
+                        <button onclick="submitCreateUno(10)" style="background:#6c5ce7; font-size:18px; padding: 15px 10px; cursor: pointer; touch-action: manipulation;">🔥 10 لاعبين</button>
                     </div>
-                    <button onclick="showUnoMenu()" style="background:#636e72;">إلغاء</button>
+                    <button onclick="showUnoMenu()" style="background:#636e72; padding: 12px; cursor: pointer; touch-action: manipulation; width: 100%;">إلغاء</button>
                 </div>`;
         }
 
