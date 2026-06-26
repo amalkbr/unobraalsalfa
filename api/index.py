@@ -9,10 +9,12 @@ import psycopg2
 from .database import get_db_conn, RealDictCursor
 from .domino import router as domino_router
 from .xo import router as xo_router
+from .uno import router as uno_router
 
 app = FastAPI()
 app.include_router(domino_router)
 app.include_router(xo_router)
+app.include_router(uno_router)
 
 # --- Database Connection ---
 DB_INITIALIZED = False
@@ -152,7 +154,8 @@ def init_db():
                 "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS room_code TEXT",
                 "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS host_id BIGINT",
                 "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS team TEXT",
-                "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS room_code TEXT"
+                "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS room_code TEXT",
+                "ALTER TABLE room_players ADD COLUMN IF NOT EXISTS said_uno BOOLEAN DEFAULT FALSE"
             ]
 
             for step in migration_steps:
@@ -2878,6 +2881,72 @@ HTML_TEMPLATE = """
             from { border-color: rgba(0, 210, 255, 0.2); }
             to { border-color: rgba(0, 210, 255, 0.6); }
         }
+
+        /* Uno CSS Styles */
+        .uno-card-element {
+            width: 75px;
+            height: 110px;
+            border-radius: 12px;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0 4px;
+            font-weight: 900;
+            font-size: 16px;
+            color: white;
+            position: relative;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            border: 2px solid rgba(255,255,255,0.25);
+            user-select: none;
+            flex-shrink: 0;
+        }
+        .uno-card-element:hover {
+            transform: translateY(-8px);
+        }
+        .uno-card-inner {
+            width: 86%;
+            height: 86%;
+            border: 2px dashed rgba(255,255,255,0.3);
+            border-radius: 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0,0,0,0.15);
+        }
+        .uno-card-value {
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.6);
+            font-size: 18px;
+        }
+        .uno-color-dot {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-left: 6px;
+            vertical-align: middle;
+            border: 2.5px solid rgba(255,255,255,0.8);
+            box-shadow: 0 0 6px rgba(0,0,0,0.6);
+        }
+        .uno-color-choice-btn {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: 3px solid rgba(255,255,255,0.4);
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+        .uno-color-choice-btn:hover {
+            transform: scale(1.15);
+            border-color: white;
+        }
+        .uno-neon-glow {
+            animation: uno-neon 1.2s infinite alternate;
+        }
+        @keyframes uno-neon {
+            from { box-shadow: 0 0 10px rgba(255, 118, 117, 0.4), inset 0 0 5px rgba(255, 118, 117, 0.2); }
+            to { box-shadow: 0 0 25px rgba(255, 118, 117, 0.9), inset 0 0 10px rgba(255, 118, 117, 0.5); }
+        }
     </style>
 </head>
 <body>
@@ -4398,12 +4467,14 @@ HTML_TEMPLATE = """
                         }
 
                         // التحديث البصري للحالة
-                        if(status === 'waiting' || (['domino', 'xo'].includes(d.room.game_type) && status === 'lobby')) {
+                        if(status === 'waiting' || (['domino', 'xo', 'uno'].includes(d.room.game_type) && status === 'lobby')) {
                             renderRoom();
                         } else if(status === 'playing' && d.room.game_type === 'domino') {
                             renderDominoGame();
                         } else if(status === 'playing' && d.room.game_type === 'xo') {
                             renderXOGame();
+                        } else if((status === 'playing' || status === 'finished') && d.room.game_type === 'uno') {
+                            renderUnoGame();
                         } else if(status === 'voting_limit') {
                             renderVotingLimit();
                         } else if(status === 'voting_cat') {
@@ -4570,6 +4641,9 @@ HTML_TEMPLATE = """
             }
             if(window.roomData.room.game_type === 'xo' && window.roomData.room.status === 'lobby') {
                 return renderXOLobby();
+            }
+            if(window.roomData.room.game_type === 'uno' && window.roomData.room.status === 'lobby') {
+                return renderUnoLobby();
             }
             const {room, players} = window.roomData;
             const me = players.find(p => p.user_id == currentUser.user_id);
@@ -7218,6 +7292,479 @@ HTML_TEMPLATE = """
                 </div>
             `;
             document.body.appendChild(banner);
+        }
+
+        // ==========================================
+        //         لعبة الأونو أونلاين (UNO ONLINE)
+        // ==========================================
+
+        function showUnoMenu() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card" style="border-color: #ff7675; box-shadow: 0 0 30px rgba(255, 118, 117, 0.25);">
+                    <button id="announcement-bell" class="bell-btn" onclick="showAnnouncements()">
+                        🔔
+                        <div class="bell-badge"></div>
+                    </button>
+                    <div style="font-size: 60px; margin-bottom: 20px;">🃏</div>
+                    <h1 style="color:#ff7675; margin-bottom:10px;">أونو أونلاين</h1>
+                    <p style="color:#aaa; margin-bottom:25px;">العب أونو مع أصدقائك مباشرة وتنافس للفوز بالنقاط!</p>
+
+                    <button onclick="createUnoRoom()" style="background: linear-gradient(135deg, #ff7675, #d63031); margin-bottom:15px; font-weight: bold;">✨ إنشاء غرفة جديدة</button>
+                    <button onclick="showUnoJoinInput()" style="background:var(--primary); margin-bottom:15px;">🚪 انضمام لغرفة</button>
+
+                    <button style="background:#636e72; margin-top:20px;" onclick="showGameSelection()">رجوع</button>
+                </div>`;
+            checkAnnouncements();
+        }
+
+        function createUnoRoom() {
+            if (!currentUser) return alert("سجل دخولك أولاً");
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card" style="border-color: #ff7675;">
+                    <h2>إعداد غرفة الأونو</h2>
+                    <p style="margin-bottom:20px;">اختر الحد الأقصى لعدد اللاعبين:</p>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:20px;">
+                        <button onclick="submitCreateUno(2)" style="background:var(--success); font-size:18px;">👥 2 لاعبين</button>
+                        <button onclick="submitCreateUno(4)" style="background:var(--primary); font-size:18px;">👨‍👩‍👧‍👦 4 لاعبين</button>
+                    </div>
+                    <button onclick="showUnoMenu()" style="background:#636e72;">إلغاء</button>
+                </div>`;
+        }
+
+        async function submitCreateUno(maxPlayers) {
+            if (!currentUser) return alert("سجل دخولك أولاً");
+            try {
+                const res = await fetch('/api/uno/create', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        user_id: currentUser.user_id,
+                        player_name: currentUser.player_name,
+                        max_players: maxPlayers
+                    })
+                });
+                const d = await res.json();
+                if(d.success) {
+                    enterRoom(d.room_code);
+                } else {
+                    alert(d.msg || "حدث خطأ");
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        function showUnoJoinInput() {
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card" style="border-color: #ff7675;">
+                    <h2 style="color:#ff7675">انضمام لغرفة أونو</h2>
+                    <p style="margin-bottom:20px;">أدخل رمز الغرفة المكون من 4 أحرف:</p>
+                    <input id="uno_join_code" placeholder="مثلاً: ABCD" style="text-transform:uppercase; text-align:center; font-size:24px; margin-bottom:20px; width:100%; letter-spacing:5px;">
+                    <button id="uno-join-btn-final" onclick="joinUnoRoom()" style="background:var(--success); font-weight:bold;">انضمام الآن 🚪</button>
+                    <button onclick="showUnoMenu()" style="background:#636e72; margin-top:10px;">رجوع</button>
+                </div>`;
+            setTimeout(() => document.getElementById('uno_join_code').focus(), 100);
+        }
+
+        async function joinUnoRoom() {
+            const codeInput = document.getElementById('uno_join_code');
+            const code = codeInput.value.trim().toUpperCase();
+            if(!code) return alert("الرجاء إدخال رمز الغرفة");
+            
+            try {
+                const res = await fetch('/api/online/join', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        room_code: code,
+                        user_id: currentUser.user_id,
+                        player_name: currentUser.player_name
+                    })
+                });
+                const d = await res.json();
+                if(d.success) {
+                    enterRoom(code);
+                } else {
+                    alert(d.msg || "تعذر الانضمام");
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        function renderUnoLobby() {
+            const {room, players} = window.roomData;
+            const isHost = room.host_id == currentUser.user_id;
+
+            let playersHTML = players.map(p => `
+                <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:10px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>👤 ${p.player_name} ${p.user_id == room.host_id ? '👑' : ''}</span>
+                    <span style="color:var(--success); font-size:12px;">متصل</span>
+                </div>
+            `).join('');
+
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card" style="border-color: #ff7675;">
+                    <h2 style="color:#ff7675">غرفة انتظار أونو 🃏</h2>
+                    <p style="font-size:14px; color:#aaa;">الرمز: <b style="color:white; font-size:18px;">${room.room_code}</b></p>
+
+                    <div style="margin:20px 0; background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; text-align:right;">
+                        <h4 style="margin-top:0; border-bottom:1px solid #333; padding-bottom:5px;">اللاعبين (${players.length}/${room.max_players})</h4>
+                        ${playersHTML}
+                    </div>
+
+                    ${isHost ? `
+                        <button id="start-uno-btn" onclick="startUnoGame()" style="background:var(--success); margin-bottom:15px;" ${players.length < 2 ? 'disabled' : ''}>
+                            ${players.length < 2 ? `بانتظار انضمام لاعبين (2 على الأقل)` : 'ابدأ اللعب الآن! 🚀'}
+                        </button>
+                    ` : `
+                        <div style="background:rgba(241,196,15,0.1); color:#f1c40f; padding:10px; border-radius:10px; font-size:14px; margin-bottom:15px;">
+                            ⏳ بانتظار المضيف لبدء اللعبة...
+                        </div>
+                    `}
+                    <button onclick="leaveRoom()" style="background:var(--error); width:100%;">🚪 مغادرة الغرفة</button>
+                </div>`;
+        }
+
+        async function startUnoGame() {
+            try {
+                const res = await fetch('/api/uno/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        room_code: currentRoom,
+                        user_id: currentUser.user_id
+                    })
+                });
+                const d = await res.json();
+                if(!d.success) alert(d.msg || "حدث خطأ");
+                else {
+                    await updateRoomState();
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        function checkUnoValidityJS(card, topCard, currentColor) {
+            if (card.includes("جوكر") || card.includes("🌈") || card.includes("🔥") || card.includes("💧") || card.includes("🌊")) return true;
+            const parts = card.split(" ");
+            if (parts.length < 2) return false;
+            const cColor = parts[0];
+            const cValue = parts[1];
+            if (cColor === currentColor) return true;
+            
+            const topParts = topCard.split(" ");
+            const topValue = topParts.length > 1 ? topParts[1] : topParts[0];
+            if (cValue === topValue) return true;
+            return false;
+        }
+
+        function getUnoCardColorHex(card) {
+            if (card.startsWith("🔴")) return "#d63031";
+            if (card.startsWith("🔵")) return "#0984e3";
+            if (card.startsWith("🟡")) return "#fdcb6e";
+            if (card.startsWith("🟢")) return "#2ecc71";
+            return "linear-gradient(135deg, #2d3436 0%, #000 100%)";
+        }
+
+        function getUnoCardHTML(card, isPlayable, onClickAction) {
+            let color = getUnoCardColorHex(card);
+            let label = card;
+            let borderStyle = "";
+            let textColor = "white";
+            
+            if (card.startsWith("🔴")) label = card.replace("🔴", "").trim();
+            else if (card.startsWith("🔵")) label = card.replace("🔵", "").trim();
+            else if (card.startsWith("🟡")) { label = card.replace("🟡", "").trim(); textColor = "#2d3436"; }
+            else if (card.startsWith("🟢")) label = card.replace("🟢", "").trim();
+            else if (card.includes("جوكر")) {
+                borderStyle = "border: 2px solid #ff7675;";
+            }
+            
+            const cursorStyle = isPlayable ? "cursor: pointer;" : "opacity: 0.55; cursor: not-allowed; transform: scale(0.95);";
+            const clickAttr = isPlayable && onClickAction ? `onclick="${onClickAction}"` : "";
+            const glowStyle = isPlayable ? "box-shadow: 0 0 15px rgba(255,255,255,0.4);" : "";
+            
+            return `
+                <div class="uno-card-element" ${clickAttr} style="background: ${color}; ${cursorStyle} ${glowStyle} ${borderStyle} color: ${textColor};">
+                    <div class="uno-card-inner" style="border-color: ${textColor === 'white' ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)'};">
+                        <span class="uno-card-value">${label}</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderUnoGame() {
+            if(!window.roomData) return;
+            const {room, players} = window.roomData;
+            const gd = room.game_data;
+            const me = players.find(p => p.user_id == currentUser.user_id);
+            const myId = String(currentUser.user_id);
+            const myHand = gd.hands[myId] || [];
+
+            const isMyTurn = gd.ordered_ids[gd.turn_index] == currentUser.user_id;
+            const currentTurnPlayer = players.find(p => p.user_id == gd.ordered_ids[gd.turn_index]);
+
+            // 1. Finished State View
+            if (room.status === 'finished' || gd.phase === 'finished') {
+                const winner = players.find(p => p.user_id == gd.winner_id);
+                
+                let scoresHTML = players.map(p => `
+                    <div style="background:rgba(255,255,255,0.05); padding:10px; border-radius:10px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+                        <span>👤 ${p.player_name}</span>
+                        <span style="font-weight:bold; color:var(--accent);">${p.score} نقطة</span>
+                    </div>
+                `).join('');
+
+                document.getElementById('main-ui').innerHTML = `
+                    <div class="card" style="border-color: var(--success); text-align:center;">
+                        <h1 style="color:var(--success); font-size:40px; margin-bottom:10px;">🎉 الجولة انتهت!</h1>
+                        <p style="font-size:18px;">الفائز في هذه الجولة هو: <b style="color:var(--accent); font-size:24px;">${winner ? winner.player_name : 'غير معروف'}</b></p>
+                        
+                        <div style="margin:25px 0; background:rgba(0,0,0,0.2); padding:15px; border-radius:15px; text-align:right;">
+                            <h4 style="margin-top:0; border-bottom:1px solid #333; padding-bottom:5px;">جدول النقاط الحالي</h4>
+                            ${scoresHTML}
+                        </div>
+
+                        ${room.host_id == currentUser.user_id ? `
+                            <button onclick="startUnoGame()" style="background:var(--success); margin-bottom:15px; width:100%;">🔄 جولة جديدة</button>
+                        ` : `
+                            <div style="background:rgba(241,196,15,0.1); color:#f1c40f; padding:10px; border-radius:10px; font-size:14px; margin-bottom:15px;">
+                                ⏳ بانتظار مضيف الغرفة لبدء جولة جديدة...
+                            </div>
+                        `}
+                        <button onclick="leaveRoom()" style="background:var(--error); width:100%;">🚪 مغادرة الغرفة</button>
+                    </div>`;
+                return;
+            }
+
+            // 2. Play State View
+            // Opponents list rendering
+            let opponentsHTML = players.filter(p => p.user_id != currentUser.user_id).map(p => {
+                const isOpponentTurn = gd.ordered_ids[gd.turn_index] == p.user_id;
+                const oppHand = gd.hands[String(p.user_id)] || [];
+                const hasOneCard = oppHand.length === 1;
+                
+                // Catcher logic: if opponent has 1 card and hasn't said uno, show catch button
+                const canCatch = hasOneCard && !p.said_uno;
+
+                return `
+                    <div style="background:rgba(255,255,255,0.05); padding:12px; border-radius:15px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; border: 1.5px solid ${isOpponentTurn ? 'var(--accent)' : 'transparent'};">
+                        <div style="display:flex; flex-direction:column; text-align:right;">
+                            <span style="font-weight:bold;">👤 ${p.player_name} ${isOpponentTurn ? '🟢 (دوره)' : ''}</span>
+                            <span style="font-size:13px; color:#aaa;">الأوراق المتبقية: <b style="color:white;">${oppHand.length}</b></span>
+                        </div>
+                        <div style="display:flex; gap:8px;">
+                            ${p.said_uno ? `<span style="background:rgba(255,118,117,0.2); color:#ff7675; padding:3px 8px; border-radius:8px; font-size:11px; font-weight:bold; animation:pulse 1s infinite;">🚨 أونو!</span>` : ''}
+                            ${canCatch ? `<button onclick="catchUnoPlayer(${p.user_id})" style="background: linear-gradient(135deg, #e67e22, #d35400); margin:0; padding:5px 12px; font-size:12px; width:auto; font-weight:bold;">🪤 صيده!</button>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Rendering top discard card
+            const topCard = gd.top_card;
+            const currentColor = gd.current_color;
+            let colorDisplay = "أسود";
+            let colorDotHex = "#2d3436";
+            if (currentColor === '🔴') { colorDisplay = "أحمر"; colorDotHex = "#d63031"; }
+            else if (currentColor === '🔵') { colorDisplay = "أزرق"; colorDotHex = "#0984e3"; }
+            else if (currentColor === '🟡') { colorDisplay = "أصفر"; colorDotHex = "#fdcb6e"; }
+            else if (currentColor === '🟢') { colorDisplay = "أخضر"; colorDotHex = "#2ecc71"; }
+
+            const topCardHTML = getUnoCardHTML(topCard, false, null);
+
+            // My hand rendering
+            let handHTML = myHand.map(card => {
+                const isPlayable = isMyTurn && checkUnoValidityJS(card, topCard, currentColor);
+                return getUnoCardHTML(card, isPlayable, `playUnoCard('${card.replace(/'/g, "\\'")}')`);
+            }).join('');
+
+            // Direction indicator
+            const dirText = gd.direction === 1 ? "🔄 اتجاه اللعب: مع عقارب الساعة" : "🔄 اتجاه اللعب: عكس عقارب الساعة";
+
+            document.getElementById('main-ui').innerHTML = `
+                <div class="card domino-game-card" style="padding:15px; max-width:100%; width:98vw; min-height:85vh; display:flex; flex-direction:column; border-color:#ff7675;">
+                    
+                    <!-- الخصوم والاتجاه -->
+                    <div style="margin-bottom:15px;">
+                        <div style="font-size:12px; color:#aaa; margin-bottom:10px; text-align:center;">${dirText}</div>
+                        ${opponentsHTML}
+                    </div>
+
+                    <!-- الساحة والورقة المكشوفة -->
+                    <div style="flex-grow:1; background:rgba(0,0,0,0.3); border-radius:20px; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px; border:2px dashed rgba(255,255,255,0.1); margin-bottom:15px; min-height:180px;">
+                        <div style="font-size:13px; color:#aaa; margin-bottom:8px;">الورقة المكشوفة حالياً</div>
+                        <div style="margin-bottom:10px;">
+                            ${topCardHTML}
+                        </div>
+                        <div style="font-size:14px; font-weight:bold; display:flex; align-items:center; justify-content:center;">
+                            اللون الحالي: 
+                            <span class="uno-color-dot" style="background:${colorDotHex}"></span> 
+                            <span>${colorDisplay}</span>
+                        </div>
+                    </div>
+
+                    <!-- إعلانات الدور وحالة أونو الخاصة بي -->
+                    <div style="text-align:center; margin-bottom:10px;">
+                        ${isMyTurn ? `
+                            <div style="background:rgba(46,204,113,0.15); color:#2ecc71; padding:8px; border-radius:10px; font-weight:bold; font-size:15px; animation:pulse 1.5s infinite;">
+                                👉 دورك الآن! العب ورقة أو اسحب.
+                            </div>
+                        ` : `
+                            <div style="background:rgba(255,255,255,0.05); color:#ccc; padding:8px; border-radius:10px; font-size:14px;">
+                                بانتظار دور الخصم: <b style="color:var(--accent);">${currentTurnPlayer ? currentTurnPlayer.player_name : ''}</b>
+                            </div>
+                        `}
+                    </div>
+
+                    <!-- لوحة التحكم والأوراق -->
+                    <div style="background:rgba(0,0,0,0.2); padding:12px; border-radius:15px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:10px;">
+                            <div style="font-size:13px; color:#aaa;">أوراقك (${myHand.length})</div>
+                            <div style="display:flex; gap:8px;">
+                                ${isMyTurn ? `<button onclick="drawUnoCard()" style="background:#0984e3; margin:0; padding:6px 12px; font-size:13px; width:auto; font-weight:bold;">📥 سحب ورقة</button>` : ''}
+                                ${myHand.length <= 2 ? `<button class="uno-neon-glow" onclick="sayUno()" style="background:#ff7675; color:white; margin:0; padding:6px 12px; font-size:13px; width:auto; font-weight:bold;">🚨 أونو!</button>` : ''}
+                            </div>
+                        </div>
+
+                        <!-- الكروت يمين ليسار مع شريط التمرير -->
+                        <div style="display:flex; overflow-x:auto; padding:10px 0; gap:8px; justify-content:flex-start; min-height:130px; box-sizing:border-box;">
+                            ${handHTML}
+                        </div>
+                    </div>
+
+                </div>`;
+        }
+
+        async function playUnoCard(card) {
+            // Check if it is a wild card requiring color selection
+            const isWild = card.includes("جوكر") || card.includes("🌈") || card.includes("🔥") || card.includes("💧") || card.includes("🌊");
+            if (isWild) {
+                selectUnoColor(card);
+            } else {
+                submitPlayUnoCard(card, null);
+            }
+        }
+
+        function selectUnoColor(card) {
+            const modal = document.createElement('div');
+            modal.style = "position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.8); display:flex; justify-content:center; align-items:center; z-index:9999; backdrop-filter:blur(5px);";
+            modal.innerHTML = `
+                <div class="card" style="border-color: #ff7675; text-align:center; max-width:320px;">
+                    <h3>اختر اللون الجديد 🌈</h3>
+                    <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:15px; margin:20px 0;">
+                        <button class="uno-color-choice-btn" onclick="submitPlayUnoCard('${card.replace(/'/g, "\\'")}', '🔴')" style="background:#d63031; color:white; font-weight:bold;">🔴 أحمر</button>
+                        <button class="uno-color-choice-btn" onclick="submitPlayUnoCard('${card.replace(/'/g, "\\'")}', '🔵')" style="background:#0984e3; color:white; font-weight:bold;">🔵 أزرق</button>
+                        <button class="uno-color-choice-btn" onclick="submitPlayUnoCard('${card.replace(/'/g, "\\'")}', '🟡')" style="background:#fdcb6e; color:#2d3436; font-weight:bold;">🟡 أصفر</button>
+                        <button class="uno-color-choice-btn" onclick="submitPlayUnoCard('${card.replace(/'/g, "\\'")}', '🟢')" style="background:#2ecc71; color:white; font-weight:bold;">🟢 أخضر</button>
+                    </div>
+                    <button onclick="this.parentElement.parentElement.remove()" style="background:#636e72; width:100%;">إلغاء</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        async function submitPlayUnoCard(card, chosenColor) {
+            // Remove selection modal if open
+            const modals = document.querySelectorAll('div[style*="z-index: 9999"]');
+            modals.forEach(m => m.remove());
+
+            try {
+                const res = await fetch('/api/uno/play', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        room_code: currentRoom,
+                        user_id: currentUser.user_id,
+                        card: card,
+                        chosen_color: chosenColor
+                    })
+                });
+                const d = await res.json();
+                if(!d.success) alert(d.msg || "حدث خطأ");
+                else {
+                    updateRoomState();
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function drawUnoCard() {
+            try {
+                const res = await fetch('/api/uno/draw', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        room_code: currentRoom,
+                        user_id: currentUser.user_id
+                    })
+                });
+                const d = await res.json();
+                if(!d.success) alert(d.msg || "حدث خطأ");
+                else {
+                    if (d.is_playable) {
+                        // Let user choose to play the card they just drew
+                        const playIt = confirm(`سحبت ورقة: ${d.card}\nهل تريد لعبها فوراً؟`);
+                        if (playIt) {
+                            playUnoCard(d.card);
+                            return;
+                        } else {
+                            // If they choose not to play it, pass the turn manually
+                            await passUnoTurn();
+                        }
+                    }
+                    updateRoomState();
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function passUnoTurn() {
+            try {
+                await fetch('/api/uno/pass', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        room_code: currentRoom,
+                        user_id: currentUser.user_id
+                    })
+                });
+            } catch(e) { console.error(e); }
+        }
+
+        async function sayUno() {
+            try {
+                const res = await fetch('/api/uno/say_uno', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        room_code: currentRoom,
+                        user_id: currentUser.user_id
+                    })
+                });
+                const d = await res.json();
+                if(d.success) {
+                    showToast("صحت أونو بنجاح! 🚨");
+                    updateRoomState();
+                } else {
+                    alert(d.msg || "حدث خطأ");
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function catchUnoPlayer(targetId) {
+            try {
+                const res = await fetch('/api/uno/catch', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        room_code: currentRoom,
+                        user_id: currentUser.user_id,
+                        target_id: targetId
+                    })
+                });
+                const d = await res.json();
+                if(d.success) {
+                    showToast(d.msg);
+                    updateRoomState();
+                } else {
+                    alert(d.msg || "حدث خطأ");
+                }
+            } catch(e) { console.error(e); }
         }
 
         init();
