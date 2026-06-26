@@ -2859,6 +2859,15 @@ HTML_TEMPLATE = """
             }
         }
 
+        .domino-my-turn-active {
+            animation: domino-turn-glow-pulse 1.8s infinite alternate !important;
+            border-color: #00ffaa !important;
+        }
+        @keyframes domino-turn-glow-pulse {
+            from { box-shadow: 0 0 12px rgba(0, 255, 170, 0.25), inset 0 0 6px rgba(0, 255, 170, 0.15); }
+            to { box-shadow: 0 0 28px rgba(0, 255, 170, 0.7), inset 0 0 14px rgba(0, 255, 170, 0.45); }
+        }
+
         /* Responsive styling for larger screen devices */
         @media (min-width: 600px) {
             .container { max-width: 100%; width: 100%; padding: 0; }
@@ -3383,6 +3392,21 @@ HTML_TEMPLATE = """
                         </div>
                     </div>`;
                 document.getElementById('main-ui').innerHTML = html;
+            }
+
+            // تفعيل الإنارة المتوهجة والاهتزاز لتنبيه اللاعب عند بدء دوره
+            const cardEl = document.querySelector('.domino-game-card');
+            if (cardEl) {
+                if (isMyTurn) {
+                    cardEl.classList.add('domino-my-turn-active');
+                    if (!window.wasMyDominoTurn) {
+                        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+                        window.wasMyDominoTurn = true;
+                    }
+                } else {
+                    cardEl.classList.remove('domino-my-turn-active');
+                    window.wasMyDominoTurn = false;
+                }
             }
 
             // تحديث العناصر المتغيرة ديناميكياً بدون وميض
