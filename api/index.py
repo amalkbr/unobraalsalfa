@@ -1469,7 +1469,7 @@ async def get_room(room_code: str):
                 cur.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
                 room = cur.fetchone()
 
-            cur.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card, vote_limit, vote_cat FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
+            cur.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card, vote_limit, vote_cat, said_uno FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
             players = cur.fetchall()
 
         # Commit and close connection first to prevent nested deadlocks!
@@ -1485,7 +1485,7 @@ async def get_room(room_code: str):
                 with conn_new.cursor(cursor_factory=RealDictCursor) as cur_new:
                     cur_new.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
                     room = cur_new.fetchone()
-                    cur_new.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card, vote_limit, vote_cat FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
+                    cur_new.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card, vote_limit, vote_cat, said_uno FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
                     players = cur_new.fetchall()
             finally:
                 conn_new.close()
@@ -1497,7 +1497,7 @@ async def get_room(room_code: str):
                 with conn_new.cursor(cursor_factory=RealDictCursor) as cur_new:
                     cur_new.execute("SELECT * FROM rooms WHERE room_code = %s", (room_code,))
                     room = cur_new.fetchone()
-                    cur_new.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card, vote_limit, vote_cat FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
+                    cur_new.execute("SELECT user_id, player_name, is_ready, score, yellow_cards, red_card, vote_limit, vote_cat, said_uno FROM room_players WHERE room_code = %s ORDER BY join_order ASC, user_id ASC", (room_code,))
                     players = cur_new.fetchall()
             finally:
                 conn_new.close()
@@ -2817,57 +2817,43 @@ HTML_TEMPLATE = """
             to { opacity: 1; transform: scale(1); }
         }
 
-        /* تدوير شاشة الدومينو تلقائياً لتلعب بالعرض في الهواتف */
-        @media (max-width: 767px) and (orientation: portrait) {
+        /* تنسيق متجاوب للعبة الدومينو بالطول على الهواتف */
+        @media (max-width: 767px) {
             .domino-game-card {
-                position: fixed !important;
-                top: 50% !important;
-                left: 50% !important;
-                width: 95vh !important;
-                height: 95vw !important;
-                max-width: none !important;
-                transform: translate(-50%, -50%) rotate(90deg) !important;
-                transform-origin: center !important;
-                z-index: 9999 !important;
-                border-radius: 12px !important;
-                box-shadow: 0 0 30px rgba(0,0,0,0.8) !important;
-                overflow: hidden !important;
-                margin: 0 !important;
-                padding: 8px !important;
+                padding: 10px !important;
+                width: 98vw !important;
+                min-height: 85vh !important;
             }
             #domino-board {
-                min-height: 110px !important;
-                height: 110px !important;
-                padding: 8px !important;
-                gap: 8px !important;
-                margin-bottom: 8px !important;
-            }
-            #domino-player-hand-container {
-                padding: 8px !important;
-                border-radius: 12px !important;
+                min-height: 250px !important;
+                max-height: 380px !important;
+                padding: 15px 5px !important;
+                gap: 12px !important;
+                overflow-y: auto !important;
+                overflow-x: hidden !important;
             }
             .domino-tile {
-                width: 28px !important;
-                height: 56px !important;
+                width: 32px !important;
+                height: 64px !important;
             }
             #domino-board .domino-tile {
-                width: 56px !important;
-                height: 28px !important;
+                width: 64px !important;
+                height: 32px !important;
             }
             #domino-board .domino-tile.double {
-                width: 28px !important;
-                height: 56px !important;
+                width: 32px !important;
+                height: 64px !important;
             }
             .domino-tile.double {
-                width: 28px !important;
-                height: 56px !important;
+                width: 32px !important;
+                height: 64px !important;
             }
             .domino-half {
-                font-size: 13px !important;
+                font-size: 15px !important;
             }
             .domino-line::after {
-                width: 4px !important;
-                height: 4px !important;
+                width: 4.5px !important;
+                height: 4.5px !important;
             }
         }
 
@@ -3317,7 +3303,8 @@ HTML_TEMPLATE = """
 
         function renderSnakeBoardHTML(board) {
             let html = "";
-            let itemsPerRow = 5; // عدد الأحجار في كل صف (5 أحجار ممتاز لعرض شاشة الهاتف بالعرض)
+            // تحديد عدد الأحجار في الصف ديناميكياً: 3 للهواتف و 6 للشاشات الكبيرة
+            let itemsPerRow = window.innerWidth < 600 ? 3 : 6; 
             let rows = [];
             
             // تقسيم الأحجار إلى صفوف تحتوي كل منها على itemsPerRow أحجار
