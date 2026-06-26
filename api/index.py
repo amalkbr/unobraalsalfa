@@ -7457,19 +7457,48 @@ HTML_TEMPLATE = """
             checkAnnouncements();
         }
 
+        let selectedUnoPlayers = 4;
+
+        function changePlayerCount(delta) {
+            selectedUnoPlayers += delta;
+            if (selectedUnoPlayers < 2) selectedUnoPlayers = 2;
+            if (selectedUnoPlayers > 10) selectedUnoPlayers = 10;
+            
+            const display = document.getElementById('player-count-display');
+            if (display) {
+                let text = "";
+                if (selectedUnoPlayers === 2) {
+                    text = "لاعبَين 👥";
+                } else {
+                    text = `${selectedUnoPlayers} لاعبين 👥`;
+                }
+                display.innerHTML = text;
+            }
+        }
+
+        function submitUnoWithSelectedCount() {
+            submitCreateUno(selectedUnoPlayers);
+        }
+
         function createUnoRoom() {
             if (!currentUser) return alert("سجل دخولك أولاً");
+            selectedUnoPlayers = 4;
             document.getElementById('main-ui').innerHTML = `
-                <div class="card" style="border-color: #ff7675;">
+                <div class="card" style="border-color: #ff7675; max-width: 400px; margin: 0 auto;">
                     <h2>إعداد غرفة الأونو</h2>
-                    <p style="margin-bottom:20px;">اختر الحد الأقصى لعدد اللاعبين:</p>
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:20px;">
-                        <button onclick="submitCreateUno(2)" style="background:var(--success); font-size:18px; padding: 15px 10px; cursor: pointer; touch-action: manipulation;">👥 2 لاعبين</button>
-                        <button onclick="submitCreateUno(4)" style="background:var(--primary); font-size:18px; padding: 15px 10px; cursor: pointer; touch-action: manipulation;">👨‍👩‍👧‍👦 4 لاعبين</button>
-                        <button onclick="submitCreateUno(6)" style="background:#0984e3; font-size:18px; padding: 15px 10px; cursor: pointer; touch-action: manipulation;">👥 6 لاعبين</button>
-                        <button onclick="submitCreateUno(10)" style="background:#6c5ce7; font-size:18px; padding: 15px 10px; cursor: pointer; touch-action: manipulation;">🔥 10 لاعبين</button>
+                    <p style="margin-bottom:20px; color:#aaa;">حدد الحد الأقصى لعدد اللاعبين (من 2 إلى 10):</p>
+                    
+                    <div style="display:flex; align-items:center; justify-content:center; gap:20px; margin:25px 0; direction:ltr;">
+                        <button onclick="changePlayerCount(-1)" style="width: 55px; height: 55px; border-radius: 50%; font-size: 24px; background: #ff7675; color: white; display: flex; align-items: center; justify-content: center; padding: 0; margin: 0; box-shadow: 0 4px 15px rgba(255, 118, 117, 0.3); cursor: pointer; touch-action: manipulation; border: none; font-weight: bold; width:55px !important; min-width:55px; max-width:55px;">-</button>
+                        
+                        <div id="player-count-display" style="font-size: 28px; font-weight: bold; min-width: 140px; color: white; text-align: center; direction: rtl;">4 لاعبين 👥</div>
+                        
+                        <button onclick="changePlayerCount(1)" style="width: 55px; height: 55px; border-radius: 50%; font-size: 24px; background: #2ecc71; color: white; display: flex; align-items: center; justify-content: center; padding: 0; margin: 0; box-shadow: 0 4px 15px rgba(46, 204, 113, 0.3); cursor: pointer; touch-action: manipulation; border: none; font-weight: bold; width:55px !important; min-width:55px; max-width:55px;">+</button>
                     </div>
-                    <button onclick="showUnoMenu()" style="background:#636e72; padding: 12px; cursor: pointer; touch-action: manipulation; width: 100%;">إلغاء</button>
+                    
+                    <button onclick="submitUnoWithSelectedCount()" style="background: linear-gradient(135deg, #ff7675, #d63031); font-weight: bold; margin-bottom: 15px; font-size: 18px; padding: 16px; box-shadow: 0 5px 15px rgba(255, 118, 117, 0.3); cursor: pointer; touch-action: manipulation; border-radius: 18px; border: none; color: white; width:100%;">🎮 إنشاء الغرفة وتأكيد اللعب</button>
+                    
+                    <button onclick="showUnoMenu()" style="background: #636e72; padding: 12px; cursor: pointer; touch-action: manipulation; width: 100%; border-radius: 18px; border: none; color: white; font-weight: bold;">إلغاء</button>
                 </div>`;
         }
 
