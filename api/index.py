@@ -2829,33 +2829,45 @@ HTML_TEMPLATE = """
                 transform: translate(-50%, -50%) rotate(90deg) !important;
                 transform-origin: center !important;
                 z-index: 9999 !important;
-                border-radius: 15px !important;
+                border-radius: 12px !important;
                 box-shadow: 0 0 30px rgba(0,0,0,0.8) !important;
                 overflow: hidden !important;
                 margin: 0 !important;
+                padding: 8px !important;
             }
             #domino-board {
-                min-height: 120px !important;
-                padding: 10px !important;
+                min-height: 110px !important;
+                height: 110px !important;
+                padding: 8px !important;
+                gap: 8px !important;
+                margin-bottom: 8px !important;
+            }
+            #domino-player-hand-container {
+                padding: 8px !important;
+                border-radius: 12px !important;
             }
             .domino-tile {
-                width: 32px !important;
-                height: 64px !important;
+                width: 28px !important;
+                height: 56px !important;
             }
             #domino-board .domino-tile {
-                width: 64px !important;
-                height: 32px !important;
+                width: 56px !important;
+                height: 28px !important;
             }
             #domino-board .domino-tile.double {
-                width: 32px !important;
-                height: 64px !important;
+                width: 28px !important;
+                height: 56px !important;
             }
             .domino-tile.double {
-                width: 32px !important;
-                height: 64px !important;
+                width: 28px !important;
+                height: 56px !important;
             }
             .domino-half {
-                font-size: 14px !important;
+                font-size: 13px !important;
+            }
+            .domino-line::after {
+                width: 4px !important;
+                height: 4px !important;
             }
         }
 
