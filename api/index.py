@@ -8089,12 +8089,24 @@ HTML_TEMPLATE = """
             if(!window.roomData) return;
             const {room, players} = window.roomData;
             const gd = room.game_data;
+            
+            if (!gd || !gd.hands || !gd.ordered_ids) {
+                document.getElementById('main-ui').innerHTML = `
+                    <div class="card" style="border-color: #ff7675; text-align: center;">
+                        <h2 style="color: #ff7675;">جاري توزيع الكروت والتهيئة... 🃏</h2>
+                        <p style="color: #aaa; margin-top: 10px;">لحظات وستظهر يد اللعب الخاصة بك 🚀</p>
+                        <div class="loading-spinner" style="margin: 25px auto; border-top-color: #ff7675;"></div>
+                    </div>`;
+                return;
+            }
+            
             const me = players.find(p => p.user_id == currentUser.user_id);
             const myId = String(currentUser.user_id);
             const myHand = gd.hands[myId] || [];
 
-            const isMyTurn = gd.ordered_ids[gd.turn_index] == currentUser.user_id;
-            const currentTurnPlayer = players.find(p => p.user_id == gd.ordered_ids[gd.turn_index]);
+            const turnIdx = gd.turn_index ?? 0;
+            const isMyTurn = gd.ordered_ids[turnIdx] == currentUser.user_id;
+            const currentTurnPlayer = players.find(p => p.user_id == gd.ordered_ids[turnIdx]);
 
             // 1. Finished State View
             if (room.status === 'finished' || gd.phase === 'finished') {

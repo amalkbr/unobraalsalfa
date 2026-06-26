@@ -120,7 +120,7 @@ async def start_uno_game_endpoint(data: dict):
             if n < 2:
                 return {"success": False, "msg": "يجب أن يكون عدد اللاعبين 2 على الأقل"}
 
-            p_ids = [p['user_id'] for p in players]
+            p_ids = [int(p['user_id']) for p in players]
 
             # Generate deck and distribute 7 cards to each player
             all_cards = generate_deck()
